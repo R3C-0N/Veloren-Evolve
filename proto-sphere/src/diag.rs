@@ -8,24 +8,25 @@
 //! 3D. Ce sont ces invariants qui répondent du calcul, pas la relecture.
 
 use crate::cube::{
-    COS_SIN, FACE, FACE_CHUNKS, NOMS, point_sphere, replier_bloc, replier_chunk,
+    COS_SIN, FACE, FACE_CHUNKS, NOMS, RAYON, point_sphere, replier_bloc, replier_chunk,
 };
-use crate::monde::{Generateur, TAILLE_CHUNK, biome_de, point_apparition};
+use crate::monde::{Generateur, NIVEAU_MER, TAILLE_CHUNK, biome_de, point_apparition};
 use crate::vue3d::{Camera, viser};
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 use std::collections::HashSet;
 
 pub fn executer() {
     let gen = Generateur::nouveau(1);
 
     println!("Patron de cube : 6 faces de {FACE} blocs d'arête");
-    println!("tour du monde : {} blocs", 4 * FACE);
+    println!("tour du monde : {} blocs · rayon {RAYON:.0} blocs", 4 * FACE);
     println!();
 
     invariants();
     coutures(&gen);
     distorsion();
-    cout_des_coins();
+    continuite_du_deroulement();
+    derive_de_visee(&gen);
     terrain(&gen);
 }
 
@@ -235,30 +236,100 @@ fn distorsion() {
     println!();
 }
 
-fn cout_des_coins() {
-    println!("── Le défaut des huit coins ──");
+/// Le déroulement place des chunks côte à côte. Sont-ils vraiment voisins sur
+/// le cube ?
+///
+/// C'est la question que la montagne coupée pose. Une case dupliquée n'est pas
+/// seulement une copie : là où le quartier de 90° se referme, deux cases
+/// dessinées l'une à côté de l'autre appartiennent à des endroits différents du
+/// monde, et le terrain s'y coupe net.
+fn continuite_du_deroulement() {
+    println!("── Pourquoi le rendu ne déroule plus ──");
+    println!("  Le rendu place désormais chaque chunk sur la sphère, une seule fois.");
+    println!("  Voici ce que coûtait le déroulement à plat qu'il remplace :");
+    println!("  position de la caméra      adjacences   fausses   dont mal orientées");
 
-    // Caméra posée sur le chunk de coin d'une face : combien du champ de vision
-    // le déroulement doit-il inventer ?
-    for r in [4, 8, 12] {
-        let (ccu, ccv) = (0, 0);
-        let mut vus = HashSet::new();
-        let (mut total, mut doublons) = (0, 0);
+    let r = 8;
+    for (nom, f, cu, cv) in [
+        ("centre de face", 1u8, FACE_CHUNKS / 2, FACE_CHUNKS / 2),
+        ("milieu d'arête", 1, FACE_CHUNKS / 2, FACE_CHUNKS - 1),
+        ("coin", 1, 0, FACE_CHUNKS - 1),
+    ] {
+        let (mut total, mut fausses, mut tournees) = (0, 0, 0);
+
         for dv in -r..=r {
             for du in -r..=r {
-                let (fc, cu, cv, _) = replier_chunk(1, ccu + du, ccv + dv);
-                total += 1;
-                if !vus.insert((fc, cu, cv)) {
-                    doublons += 1;
+                let a = replier_chunk(f, cu + du, cv + dv);
+                for (pu, pv) in [(1, 0), (0, 1)] {
+                    let b = replier_chunk(f, cu + du + pu, cv + dv + pv);
+
+                    // Le vrai voisin de `a` dans la direction du pas, telle
+                    // qu'elle arrive dans le repère canonique de `a`.
+                    let (cos, sin) = COS_SIN[a.3 as usize];
+                    let (tu, tv) = (pu * cos - pv * sin, pu * sin + pv * cos);
+                    let vrai = replier_chunk(a.0, a.1 + tu, a.2 + tv);
+
+                    total += 1;
+                    if (vrai.0, vrai.1, vrai.2) != (b.0, b.1, b.2) {
+                        fausses += 1;
+                    } else if (a.3 + vrai.3) % 4 != b.3 {
+                        tournees += 1;
+                    }
                 }
             }
         }
+
         println!(
-            "  distance {r:>2} chunks : {doublons} chunks dupliqués sur {total} ({:.1} %)",
-            100.0 * doublons as f64 / total as f64
+            "  {nom:<24}  {total:>10}   {fausses:>7}   {tournees:>18}"
         );
     }
-    println!("  (au centre d'une face, aucun : le défaut ne se voit qu'aux coins)");
+    println!("  Ces huit fronti\u{00e8}res \u{00e9}taient la montagne coup\u{00e9}e. Le rendu sph\u{00e9}rique en a z\u{00e9}ro.");
+    println!();
+}
+
+/// Le réticule pointe-t-il le bloc qu'on surligne ?
+///
+/// C'est le test d'étanchéité de D27, et il ne tient que parce que la
+/// projection est inversible : le rayon vient de l'écran, il est redressé une
+/// fois, puis le monde n'est plus interrogé qu'à plat. Ce qui reste d'écart est
+/// le pas de marche, pas une erreur de principe.
+///
+/// La version qui marchait droit dans le repère de la face mesurait ici jusqu'à
+/// 45 blocs.
+fn derive_de_visee(gen: &Generateur) {
+    println!("── Le réticule et le bloc surligné ──");
+    println!("  position              lacet    portée   écart");
+
+    for (nom, face, u, v) in [
+        ("centre de face", 1u8, FACE / 2, FACE / 2),
+        ("près d'un coin", 1u8, 8, FACE - 8),
+    ] {
+        for lacet in [0.0f32, 0.7, 2.4] {
+            let cam = Camera {
+                face,
+                position: Vec3::new(u as f32 + 0.5, v as f32 + 0.5, (NIVEAU_MER + 40) as f32),
+                lacet,
+                tangage: -0.2,
+            };
+            let (position, avant, _) = cam.repere_3d(RAYON);
+            let avant = DVec3::new(avant.x as f64, avant.y as f64, avant.z as f64);
+
+            match viser(gen, &cam, RAYON, 400.0) {
+                None => println!("  {nom:<20}  {lacet:>5.1}         —   rien en vue"),
+                Some((f, bu, bv, bz)) => {
+                    let centre =
+                        DVec3::from_array(point_sphere(f, bu, bv)) * (RAYON + bz as f64 + 0.5);
+                    let vers = centre - position;
+                    let t = vers.length();
+                    let angle = vers.normalize().dot(avant).clamp(-1.0, 1.0).acos();
+                    println!(
+                        "  {nom:<20}  {lacet:>5.1}  {t:>8.0}   {:>5.2} blocs",
+                        t * angle.tan()
+                    );
+                }
+            }
+        }
+    }
     println!();
 }
 
@@ -305,14 +376,11 @@ fn terrain(gen: &Generateur) {
         p[2].asin().to_degrees(),
         biome_de(p[2].asin().abs() / std::f64::consts::FRAC_PI_2).nom()
     );
-    match viser(gen, &cam, 220.0) {
-        Some(b) => {
-            let d = ((b[0] as f32 - cam.position.x).powi(2)
-                + (b[1] as f32 - cam.position.y).powi(2)
-                + (b[2] as f32 - cam.position.z).powi(2))
-            .sqrt();
-            println!("    visé : {b:?} à {d:.2} blocs");
-        }
+    match viser(gen, &cam, RAYON, 260.0) {
+        Some((f, bu, bv, bz)) => println!(
+            "    visé : {bu} {bv} {bz} sur {}",
+            NOMS[f as usize]
+        ),
         None => println!("    visé : rien"),
     }
 }

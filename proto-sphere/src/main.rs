@@ -21,7 +21,7 @@ mod rendu;
 mod vue2d;
 mod vue3d;
 
-use cube::{FACE, NET_H, NET_W, vers_net};
+use cube::{FACE, NET_H, NET_W, RAYON, vers_net};
 use glam::Vec3;
 use monde::Generateur;
 use rendu::Cible;
@@ -42,7 +42,7 @@ pub struct App {
     pub(crate) reglages: Reglages,
     pub(crate) vue: Vue,
     pub(crate) vitesse: f32,
-    pub(crate) vise: Option<[i32; 3]>,
+    pub(crate) vise: Option<vue3d::Vise>,
     pub(crate) aretes: u32,
     pub(crate) ms: f32,
     pub(crate) refaire_carte: bool,
@@ -83,11 +83,10 @@ impl App {
             gen,
             graine,
             reglages: Reglages {
-                rayon_courbure: 1500.0,
-                distance_rendu: 8,
+                distance_rendu: 10,
                 champ: 70.0,
                 teinte_chunks: false,
-                montrer_defaut: false,
+                aplatissement: 1.0,
             },
             vue: Vue::Trois,
             vitesse: 24.0,
@@ -122,12 +121,8 @@ impl App {
         self.aller(face, u, v);
     }
 
-    pub(crate) fn compteurs(&self) -> (usize, usize, usize) {
-        (
-            self.vue3d.chunks_dessines,
-            self.vue3d.chunks_en_memoire(),
-            self.vue3d.doublons,
-        )
+    pub(crate) fn compteurs(&self) -> (usize, usize) {
+        (self.vue3d.chunks_dessines, self.vue3d.chunks_en_memoire())
     }
 
     fn entrees(&mut self, ctx: &egui::Context, dt: f32, glisse: egui::Vec2, actif: bool) {
@@ -266,7 +261,8 @@ impl eframe::App for App {
             .ajuster(&etat.device, &mut etat.renderer.write(), taille);
 
         self.vise = if self.vue == Vue::Trois {
-            vue3d::viser(&self.gen, &self.cam, 220.0)
+            let rayon = RAYON * self.reglages.aplatissement as f64;
+            vue3d::viser(&self.gen, &self.cam, rayon, 260.0)
         } else {
             None
         };
@@ -318,13 +314,10 @@ fn hauteur_de_vol(gen: &Generateur, face: u8, u: i32, v: i32) -> f32 {
 pub(crate) const MILIEU_ARETE: (u8, i32, i32) = (1, FACE / 2, FACE - 2);
 pub(crate) const COIN: (u8, i32, i32) = (1, 2, FACE - 3);
 
-/// `--ou <lieu>` et `--defaut` : de quoi rejouer exactement la même vue d'une
+/// `--ou <lieu>` et `--teinte` : de quoi rejouer exactement la même vue d'une
 /// fois sur l'autre, sans passer par la souris.
 fn depart(app: &mut App) {
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--defaut") {
-        app.reglages.montrer_defaut = true;
-    }
     if args.iter().any(|a| a == "--teinte") {
         app.reglages.teinte_chunks = true;
     }

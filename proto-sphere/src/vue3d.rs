@@ -1,31 +1,32 @@
-//! Vue 3D : c'est ici qu'on juge l'illusion, et le prix du cube.
+//! Vue 3D : c'est ici qu'on juge l'illusion — sauf qu'elle n'en est plus une.
 //!
-//! Les chunks sont maillés une fois, en coordonnées locales à leur face, puis
-//! dessinés à un décalage relatif à la caméra recalculé chaque image. Ce
-//! décalage porte toute la topologie : le monde est **déroulé** dans le repère
-//! de la face où se trouve la caméra, en prolongeant ce repère au-delà de ses
-//! bords. Une face voisine arrive comme un voisin, tournée d'un quart de tour
-//! si l'arête l'exige.
+//! Chaque chunk est dessiné **une seule fois, à sa vraie place sur la
+//! planète** : ses coordonnées de face passent par la projection cube → sphère,
+//! la même que `cube::direction`. Il n'y a plus de plan déroulé, donc plus
+//! aucune duplication et plus aucune fausse adjacence — ce qui était le prix du
+//! déroulement à plat, et ce qui coupait les montagnes près des coins.
 //!
-//! C'est aussi ici que le défaut des huit coins se voit. Autour d'un coin, le
-//! plan déroulé offre 360° là où la surface n'en a que 270° : les 90° en trop
-//! retombent sur du terrain déjà placé. Le prototype ne cache pas cette
-//! duplication, il la détecte et laisse le menu décider si on la montre.
+//! Ce que la logique garde de plat, elle le garde entièrement : la caméra vit
+//! dans le repère de sa face, la visée s'y calcule, et le déplacement aussi.
+//! Seul le rendu connaît la sphère. C'est exactement la règle de D27, appliquée
+//! plus strictement qu'avant.
 
 use crate::chunk::Chunk;
-use crate::cube::{COS_SIN, replier_bloc, replier_chunk};
+use crate::cube::{
+    BASES, FACE, RAYON, depuis_direction, direction, replier_bloc, replier_chunk,
+};
 use crate::maillage::{self, Sommet};
-use crate::monde::{Bloc, Generateur, HAUTEUR_CHUNK, TAILLE_CHUNK};
+use crate::monde::{Bloc, Generateur, HAUTEUR_CHUNK, TAILLE_CHUNK, TAILLE_CHUNK as TC};
 use crate::rendu::{FORMAT_COULEUR, FORMAT_PROFONDEUR};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{DVec3, Mat4, Vec3};
 use std::collections::{HashMap, HashSet};
 use wgpu::util::DeviceExt;
 
 const ALIGNEMENT: u64 = 256;
 const CHUNKS_MAX: u64 = 4096;
 /// Chunks générés par image : au-delà, le déplacement saccade.
-const BUDGET_GENERATION: usize = 6;
+const BUDGET_GENERATION: usize = 8;
 
 pub const CIEL: [f32; 4] = [0.42, 0.60, 0.82, 1.0];
 
@@ -36,15 +37,19 @@ pub type Cle = (u8, i32, i32);
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Globaux {
     vue_projection: [[f32; 4]; 4],
+    camera: [f32; 4],
     params: [f32; 4],
+    planete: [f32; 4],
     ciel: [f32; 4],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct UnifChunk {
-    decalage: [f32; 4],
-    rotation: [f32; 4],
+    base_r: [f32; 4],
+    base_h: [f32; 4],
+    base_n: [f32; 4],
+    origine: [f32; 4],
     teinte: [f32; 4],
 }
 
@@ -63,9 +68,6 @@ pub struct Vue3d {
     surligneur: MailleGpu,
     chunks: HashMap<Cle, Option<MailleGpu>>,
     pub chunks_dessines: usize,
-    /// Chunks placés deux fois dans la même image : la surface que le défaut
-    /// des coins oblige à dupliquer.
-    pub doublons: usize,
 }
 
 impl Vue3d {
@@ -177,9 +179,6 @@ impl Vue3d {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                // Les recollements du cube sont des rotations, jamais des
-                // réflexions : l'orientation des triangles est préservée, donc
-                // l'élimination des faces arrière reste valable partout.
                 cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth: false,
                 polygon_mode: wgpu::PolygonMode::Fill,
@@ -206,7 +205,6 @@ impl Vue3d {
             surligneur: cube_surligneur(device),
             chunks: HashMap::new(),
             chunks_dessines: 0,
-            doublons: 0,
         }
     }
 
@@ -224,112 +222,114 @@ impl Vue3d {
         gen: &Generateur,
         cam: &Camera,
         reglages: &Reglages,
-        vise: Option<[i32; 3]>,
+        vise: Option<Vise>,
     ) {
         let (largeur, hauteur) = cible.taille;
         let aspect = largeur as f32 / hauteur as f32;
-        let portee = (reglages.distance_rendu * TAILLE_CHUNK) as f32 * 1.5;
-        let projection = Mat4::perspective_rh(reglages.champ.to_radians(), aspect, 0.1, portee);
-        let vue = Mat4::look_to_rh(Vec3::ZERO, cam.avant(), Vec3::Z);
+        let rayon = RAYON * reglages.aplatissement as f64;
+        let portee = (reglages.distance_rendu * TAILLE_CHUNK) as f32 * 1.4;
+
+        let (position, avant, haut) = cam.repere_3d(rayon);
+        let projection = Mat4::perspective_rh(reglages.champ.to_radians(), aspect, 0.2, portee);
+        let vue = Mat4::look_to_rh(Vec3::ZERO, avant, haut);
 
         queue.write_buffer(
             &self.buf_globaux,
             0,
             bytemuck::bytes_of(&Globaux {
                 vue_projection: (projection * vue).to_cols_array_2d(),
+                camera: [position.x as f32, position.y as f32, position.z as f32, 0.0],
                 params: [
-                    reglages.rayon_courbure,
                     portee * 0.45,
-                    portee * 0.95,
+                    portee * 0.98,
                     if reglages.teinte_chunks { 1.0 } else { 0.0 },
+                    0.0,
                 ],
+                planete: [FACE as f32, rayon as f32, 0.0, 0.0],
                 ciel: CIEL,
             }),
         );
 
-        // --- Dérouler le monde autour de la caméra ---------------------------
+        // --- Quels chunks ----------------------------------------------------
+        //
+        // On énumère toujours un rectangle autour de la caméra dans le repère
+        // de sa face, mais uniquement pour *trouver* les chunks : près d'un
+        // coin, plusieurs cases du rectangle désignent le même chunk, et le
+        // `HashSet` les fond en une. Chacun est ensuite dessiné à sa vraie
+        // place, une fois.
         let r = reglages.distance_rendu;
         let ccu = (cam.position.x / TAILLE_CHUNK as f32).floor() as i32;
         let ccv = (cam.position.y / TAILLE_CHUNK as f32).floor() as i32;
 
-        // On classe par distance avant d'attribuer : le placement le plus proche
-        // de la caméra gagne, les suivants sont les doublons du défaut de coin.
-        let mut candidats: Vec<(Cle, f32, [f32; 3], u8)> = Vec::new();
+        let mut vus: HashSet<Cle> = HashSet::new();
+        let mut candidats: Vec<(Cle, f32)> = Vec::new();
+
         for dv in -r..=r {
             for du in -r..=r {
-                let (vu, vv) = (ccu + du, ccv + dv);
-                let (fc, cuc, cvc, k) = replier_chunk(cam.face, vu, vv);
-
-                let ou = (vu * TAILLE_CHUNK) as f32 - cam.position.x;
-                let ov = (vv * TAILLE_CHUNK) as f32 - cam.position.y;
-                let dist = (ou + 16.0).hypot(ov + 16.0);
-                if dist > portee {
+                let (fc, cu, cv, _) = replier_chunk(cam.face, ccu + du, ccv + dv);
+                if !vus.insert((fc, cu, cv)) {
                     continue;
                 }
-                candidats.push(((fc, cuc, cvc), dist, [ou, ov, -cam.position.z], k));
+                let centre = direction(
+                    fc,
+                    (cu * TC) as f64 + 16.0,
+                    (cv * TC) as f64 + 16.0,
+                );
+                let c = DVec3::from_array(centre) * (rayon + crate::monde::NIVEAU_MER as f64);
+                let dist = (c - position).length() as f32;
+                if dist > portee + 64.0 {
+                    continue;
+                }
+                candidats.push(((fc, cu, cv), dist));
             }
         }
         candidats.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         let mut visibles: Vec<(Cle, UnifChunk)> = Vec::new();
-        let mut manquants: Vec<(Cle, f32)> = Vec::new();
-        let mut vus: HashSet<Cle> = HashSet::new();
-        let mut doublons = 0;
+        let mut manquants: Vec<Cle> = Vec::new();
 
-        for (cle, dist, decalage, k) in candidats {
-            let doublon = !vus.insert(cle);
-            if doublon {
-                doublons += 1;
-                if reglages.montrer_defaut {
-                    // On laisse le trou : les 90° manquants apparaissent tels
-                    // qu'ils sont, plutôt que comblés par une copie.
-                    continue;
-                }
-            }
-
-            if !self.chunks.contains_key(&cle) {
-                manquants.push((cle, dist));
+        for (cle, _) in &candidats {
+            if !self.chunks.contains_key(cle) {
+                manquants.push(*cle);
                 continue;
             }
-
-            // Le maillage est stocké dans le repère canonique de sa face ; le
-            // déroulé est celui de la caméra. On tourne donc de −k.
-            let (cos, sin) = COS_SIN[((4 - k) % 4) as usize];
+            let b = BASES[cle.0 as usize];
             visibles.push((
-                cle,
+                *cle,
                 UnifChunk {
-                    decalage: [decalage[0], decalage[1], decalage[2], 0.0],
-                    rotation: [cos as f32, sin as f32, 0.0, 0.0],
-                    teinte: teinte_chunk(cle, doublon),
+                    base_r: [b.r[0] as f32, b.r[1] as f32, b.r[2] as f32, 0.0],
+                    base_h: [b.h[0] as f32, b.h[1] as f32, b.h[2] as f32, 0.0],
+                    base_n: [b.n[0] as f32, b.n[1] as f32, b.n[2] as f32, 0.0],
+                    origine: [(cle.1 * TC) as f32, (cle.2 * TC) as f32, 0.0, 0.0],
+                    teinte: teinte_chunk(*cle),
                 },
             ));
         }
-        self.doublons = doublons;
 
-        manquants.sort_by(|a, b| a.1.total_cmp(&b.1));
-        for (cle, _) in manquants.into_iter().take(BUDGET_GENERATION) {
+        for cle in manquants.into_iter().take(BUDGET_GENERATION) {
             let chunk = Chunk::generer(gen, cle.0, cle.1, cle.2);
             let (sommets, indices) = maillage::mailler(&chunk);
             self.chunks.insert(cle, televerser(device, &sommets, &indices));
         }
 
         // On garde une marge : revenir sur ses pas ne doit pas tout regénérer.
-        if self.chunks.len() > (2 * r as usize + 6).pow(2) {
+        if self.chunks.len() > (2 * r as usize + 8).pow(2) {
             self.chunks.retain(|cle, _| vus.contains(cle));
         }
 
-        // --- Le surligneur, calculé à plat puis courbé comme le reste ---------
-        if let Some(b) = vise {
+        // --- Le surligneur ----------------------------------------------------
+        //
+        // Il est calculé à plat par `viser`, puis passe par la même projection
+        // que le terrain : c'est un « chunk » d'un bloc de côté.
+        if let Some((fc, bu, bv, bz)) = vise {
+            let base = BASES[fc as usize];
             visibles.push((
                 (u8::MAX, i32::MIN, i32::MIN),
                 UnifChunk {
-                    decalage: [
-                        b[0] as f32 - cam.position.x,
-                        b[1] as f32 - cam.position.y,
-                        b[2] as f32 - cam.position.z,
-                        0.0,
-                    ],
-                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    base_r: [base.r[0] as f32, base.r[1] as f32, base.r[2] as f32, 0.0],
+                    base_h: [base.h[0] as f32, base.h[1] as f32, base.h[2] as f32, 0.0],
+                    base_n: [base.n[0] as f32, base.n[1] as f32, base.n[2] as f32, 0.0],
+                    origine: [bu as f32, bv as f32, bz as f32, 0.0],
                     teinte: [1.0, 1.0, 1.0, 1.0],
                 },
             ));
@@ -418,13 +418,11 @@ fn televerser(device: &wgpu::Device, sommets: &[Sommet], indices: &[u32]) -> Opt
 fn cube_surligneur(device: &wgpu::Device) -> MailleGpu {
     let mut sommets = Vec::new();
     let mut indices = Vec::new();
-    let (a, b) = (-0.03f32, 1.03f32);
+    let (a, b) = (-0.04f32, 1.04f32);
     let coins = [
         [a, a, a], [b, a, a], [b, b, a], [a, b, a],
         [a, a, b], [b, a, b], [b, b, b], [a, b, b],
     ];
-    // Faces orientées vers l'extérieur : le surligneur passe par le même
-    // pipeline que le terrain, élimination des faces arrière comprise.
     let faces = [
         [0usize, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4],
         [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7],
@@ -439,20 +437,21 @@ fn cube_surligneur(device: &wgpu::Device) -> MailleGpu {
     televerser(device, &sommets, &indices).expect("cube non vide")
 }
 
-fn teinte_chunk(cle: Cle, doublon: bool) -> [f32; 4] {
-    // Le terrain dupliqué par le défaut des coins vire au rouge : on voit ce
-    // que le déroulement doit inventer.
-    if doublon {
-        return [1.6, 0.5, 0.5, 1.0];
-    }
-    let h = (cle.1.wrapping_mul(73_856_093) ^ cle.2.wrapping_mul(19_349_663))
-        .wrapping_add(cle.0 as i32 * 83_492_791) as u32;
-    [
-        0.6 + (h & 0xFF) as f32 / 400.0,
-        0.6 + ((h >> 8) & 0xFF) as f32 / 400.0,
-        0.6 + ((h >> 16) & 0xFF) as f32 / 400.0,
-        1.0,
-    ]
+/// Une teinte par face, nuancée par chunk : le passage d'une face à l'autre se
+/// voit, et les frontières de chunks avec.
+fn teinte_chunk(cle: Cle) -> [f32; 4] {
+    const FACES: [[f32; 3]; 6] = [
+        [1.5, 0.7, 0.7],
+        [0.7, 1.5, 0.7],
+        [0.7, 0.7, 1.5],
+        [1.4, 1.4, 0.6],
+        [1.4, 0.6, 1.4],
+        [0.6, 1.4, 1.4],
+    ];
+    let c = FACES[cle.0 as usize];
+    let h = (cle.1.wrapping_mul(73_856_093) ^ cle.2.wrapping_mul(19_349_663)) as u32;
+    let n = 0.85 + (h & 0xFF) as f32 / 850.0;
+    [c[0] * n, c[1] * n, c[2] * n, 1.0]
 }
 
 // --------------------------------------------------------------------------
@@ -460,7 +459,7 @@ fn teinte_chunk(cle: Cle, doublon: bool) -> [f32; 4] {
 // --------------------------------------------------------------------------
 
 pub struct Camera {
-    /// La face où se trouve la caméra. Tout le déroulé se fait dans son repère.
+    /// La face où se trouve la caméra. C'est son repère qui fait loi.
     pub face: u8,
     /// Position en blocs, dans le repère de `face`.
     pub position: Vec3,
@@ -469,6 +468,8 @@ pub struct Camera {
 }
 
 impl Camera {
+    /// Direction de marche, **dans le repère plat de la face**. C'est celle-ci
+    /// que le déplacement et la visée emploient — jamais la 3D.
     pub fn avant(&self) -> Vec3 {
         let (sl, cl) = self.lacet.sin_cos();
         let (st, ct) = self.tangage.sin_cos();
@@ -478,6 +479,36 @@ impl Camera {
     pub fn droite(&self) -> Vec3 {
         let (sl, cl) = self.lacet.sin_cos();
         Vec3::new(sl, -cl, 0.0)
+    }
+
+    /// Le repère de la caméra sur la planète : position, direction de visée et
+    /// verticale locale.
+    ///
+    /// Le lacet et le tangage sont les mêmes qu'à plat — ils sont simplement
+    /// lus dans le plan tangent au lieu du plan de la face. Le réticule pointe
+    /// donc là où la visée à plat calcule, aux quelques blocs de dérive près que
+    /// mesure `--diag`.
+    pub fn repere_3d(&self, rayon: f64) -> (DVec3, Vec3, Vec3) {
+        let (u, v) = (self.position.x as f64, self.position.y as f64);
+        let haut = DVec3::from_array(direction(self.face, u, v));
+        let position = haut * (rayon + self.position.z as f64);
+
+        // Tangente le long de +u, redressée pour être orthogonale à la
+        // verticale ; la tangente le long de +v s'en déduit, ce qui garantit un
+        // repère direct sans dépendre de l'orthogonalité de la projection.
+        let voisin = DVec3::from_array(direction(self.face, u + 1.0, v));
+        let est = (voisin - haut * voisin.dot(haut)).normalize();
+        let nord = haut.cross(est);
+
+        let (sl, cl) = (self.lacet as f64).sin_cos();
+        let (st, ct) = (self.tangage as f64).sin_cos();
+        let avant = (est * (ct * cl) + nord * (ct * sl) + haut * st).normalize();
+
+        (
+            position,
+            Vec3::new(avant.x as f32, avant.y as f32, avant.z as f32),
+            Vec3::new(haut.x as f32, haut.y as f32, haut.z as f32),
+        )
     }
 
     /// Replie la position dans le patron, et rend le nombre de quarts de tour.
@@ -495,7 +526,7 @@ impl Camera {
         // La part fractionnaire tourne aussi, autour du centre du bloc.
         let fu = self.position.x - bu as f32 - 0.5;
         let fv = self.position.y - bv as f32 - 0.5;
-        let (cos, sin) = COS_SIN[k as usize];
+        let (cos, sin) = crate::cube::COS_SIN[k as usize];
         let (cos, sin) = (cos as f32, sin as f32);
 
         self.face = fc;
@@ -507,42 +538,57 @@ impl Camera {
 }
 
 pub struct Reglages {
-    pub rayon_courbure: f32,
     pub distance_rendu: i32,
     pub champ: f32,
     pub teinte_chunks: bool,
-    /// Laisser le trou de 90° aux coins au lieu de le combler par une copie.
-    pub montrer_defaut: bool,
+    /// Multiplie le rayon de rendu : le monde grossit et s'aplatit d'autant.
+    /// Réglage de debug — il ment sur la taille des blocs, et c'est le seul
+    /// endroit du programme qui s'y autorise.
+    pub aplatissement: f32,
 }
 
-/// Raycast à pas fixe dans le plan déroulé. C'est la règle de D27 : la
-/// sélection de bloc ne lit jamais une position courbée, seul son affichage se
-/// courbe.
-pub fn viser(gen: &Generateur, cam: &Camera, portee: f32) -> Option<[i32; 3]> {
-    let dir = cam.avant();
-    let mut colonne: Option<((i32, i32), (i32, crate::monde::Biome))> = None;
-    let pas = 0.15;
+/// Le bloc visé : face, puis position dans cette face.
+pub type Vise = (u8, i32, i32, i32);
+
+/// Le rayon de visée part du réticule, donc de l'écran, donc d'une géométrie
+/// courbe. Il est **redressé une fois** — `depuis_direction` inverse la
+/// projection — puis le monde est interrogé à plat, case par case.
+///
+/// C'est la règle de D27 dans le bon sens. La version précédente marchait
+/// droit dans le repère de la face en espérant que cela revienne au même :
+/// `--diag` mesurait jusqu'à 45 blocs d'écart entre le réticule et le bloc
+/// surligné. Une droite du repère plat n'est pas une droite à l'écran, et
+/// aucune bonne volonté ne rend une projection inversible par accident.
+pub fn viser(gen: &Generateur, cam: &Camera, rayon: f64, portee: f32) -> Option<Vise> {
+    let (origine, avant, _) = cam.repere_3d(rayon);
+    let avant = DVec3::new(avant.x as f64, avant.y as f64, avant.z as f64);
+
+    let mut colonne: Option<(Cle, (i32, crate::monde::Biome))> = None;
+    let pas = 0.12;
     let mut t = 0.0;
     // Tant qu'on n'a pas vu d'air, on est dans un bloc : viser depuis
     // l'intérieur d'une montagne ou depuis le fond de l'eau ne surligne rien.
     let mut vu_air = false;
 
-    while t < portee {
+    while t < portee as f64 {
         t += pas;
-        let p = cam.position + dir * t;
-        let (bu, bv, bz) = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        let p = origine + avant * t;
+        let bz = (p.length() - rayon).floor() as i32;
         if !(0..HAUTEUR_CHUNK).contains(&bz) {
             continue;
         }
-        let cle = (bu, bv);
+
+        let (f, u, v) = depuis_direction(p.normalize().to_array());
+        let (fc, bu, bv, _) = replier_bloc(f, u.floor() as i32, v.floor() as i32);
+        let cle = (fc, bu, bv);
         if colonne.map(|(c, _)| c) != Some(cle) {
-            colonne = Some((cle, gen.colonne(cam.face, bu, bv)));
+            colonne = Some((cle, gen.colonne(fc, bu, bv)));
         }
         let (sol, biome) = colonne.unwrap().1;
         if gen.bloc(sol, biome, bz) == Bloc::Air {
             vu_air = true;
         } else if vu_air {
-            return Some([bu, bv, bz]);
+            return Some((fc, bu, bv, bz));
         }
     }
     None

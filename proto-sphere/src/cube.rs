@@ -18,9 +18,20 @@
 use crate::monde::TAILLE_CHUNK;
 
 /// Arête d'une face, en chunks.
-pub const FACE_CHUNKS: i32 = 24;
+pub const FACE_CHUNKS: i32 = 96;
 /// Arête d'une face, en blocs.
 pub const FACE: i32 = FACE_CHUNKS * TAILLE_CHUNK;
+
+/// Rayon de la planète, en blocs.
+///
+/// Il n'est pas libre : une face couvre exactement un quart de tour, donc pour
+/// qu'un pas de grille mesure un bloc au centre d'une face, il faut
+/// `R = 2·arête/π`. Le tour du monde vaut alors `2πR = 4·arête`, ce qui est bien
+/// le nombre de faces qu'on traverse en faisant le tour de l'équateur.
+///
+/// C'est le prix du rendu en vraie 3D : la rondeur n'est plus un réglage, c'est
+/// la taille du monde.
+pub const RAYON: f64 = 2.0 * FACE as f64 / std::f64::consts::PI;
 
 pub const PATRON_COLS: i32 = 4;
 pub const PATRON_LIGNES: i32 = 3;
@@ -205,11 +216,18 @@ pub fn depuis_net(x: i32, y: i32) -> Option<(u8, i32, i32)> {
 /// les cases à angle constant plutôt qu'à distance constante sur le plan
 /// tangent. `--diag` chiffre ce qu'il reste de distorsion.
 pub fn point_sphere(face: u8, u: i32, v: i32) -> [f64; 3] {
+    // Le centre de la case `u` est à la coordonnée continue `u + 0,5`.
+    direction(face, u as f64 + 0.5, v as f64 + 0.5)
+}
+
+/// La même chose pour une coordonnée de face continue. C'est cette fonction que
+/// le vertex shader reproduit, à l'identique : elle est la seule définition de
+/// la forme du monde.
+pub fn direction(face: u8, u: f64, v: f64) -> [f64; 3] {
     let b = BASES[face as usize];
     let quart = std::f64::consts::FRAC_PI_4;
-    let a = ((2 * u + 1) as f64 / FACE as f64 - 1.0) * quart;
-    let c = ((2 * v + 1) as f64 / FACE as f64 - 1.0) * quart;
-    let (ta, tc) = (a.tan(), c.tan());
+    let ta = (((2.0 * u / FACE as f64) - 1.0) * quart).tan();
+    let tc = (((2.0 * v / FACE as f64) - 1.0) * quart).tan();
 
     let p = [
         b.n[0] as f64 + b.r[0] as f64 * ta + b.h[0] as f64 * tc,
@@ -218,6 +236,35 @@ pub fn point_sphere(face: u8, u: i32, v: i32) -> [f64; 3] {
     ];
     let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
     [p[0] / l, p[1] / l, p[2] / l]
+}
+
+/// L'inverse de [`direction`] : de quel endroit du monde vient une direction 3D.
+///
+/// C'est ce qui rend la projection **inversible**, et cette propriété n'est pas
+/// un agrément : elle est ce qui permet à la visée de rester exacte. Un rayon
+/// venu de l'écran est courbe par nature ; il est redressé ici, une fois, avant
+/// que le monde ne soit interrogé — et le monde, lui, n'est jamais interrogé
+/// qu'à plat.
+pub fn depuis_direction(d: [f64; 3]) -> (u8, f64, f64) {
+    let projete = |v: V3| d[0] * v[0] as f64 + d[1] * v[1] as f64 + d[2] * v[2] as f64;
+
+    // La face est celle dont la normale domine.
+    let mut face = 0u8;
+    let mut meilleur = f64::MIN;
+    for f in 0..6u8 {
+        let dot = projete(BASES[f as usize].n);
+        if dot > meilleur {
+            meilleur = dot;
+            face = f;
+        }
+    }
+
+    let b = BASES[face as usize];
+    let n = projete(b.n);
+    let quart = std::f64::consts::FRAC_PI_4;
+    let u = ((projete(b.r) / n).atan() / quart + 1.0) * FACE as f64 / 2.0;
+    let v = ((projete(b.h) / n).atan() / quart + 1.0) * FACE as f64 / 2.0;
+    (face, u, v)
 }
 
 /// Les huit coins du cube, identifiés par le triplet de signes de leur position.

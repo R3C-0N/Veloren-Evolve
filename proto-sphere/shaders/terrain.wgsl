@@ -1,25 +1,31 @@
-// Terrain : la grille reste plate, seul le rendu se courbe (D27).
+// Terrain : la grille reste plate, la géométrie du rendu est la vraie sphère
+// du cube (D27).
 //
-// Les positions arrivent locales au chunk. `bloc.decalage` porte la position du
-// chunk RELATIVE À LA CAMÉRA, déjà repliée par le CPU, et `bloc.rotation` le
-// quart de tour que le repliement lui a fait subir — un chunk atteint en
-// franchissant une arête du cube arrive tourné.
+// Il n'y a plus de plan déroulé. Chaque chunk est dessiné une fois, à sa place
+// sur la planète : ses coordonnées de face passent par la même projection
+// cube → sphère que `cube::direction` côté CPU, à l'identique. C'est ce qui
+// supprime les fausses adjacences — un chunk n'est jamais placé ailleurs qu'où
+// il est.
 //
-// La caméra est donc à l'origine, ce qui évite les pertes de précision et rend
-// les recollements invisibles : une face d'à côté arrive avec un petit
-// décalage, pas avec la largeur du monde.
+// Ce que ça coûte : la rondeur n'est plus un réglage, c'est la taille du monde.
 
 struct Globaux {
     vue_projection: mat4x4<f32>,
-    // x = rayon de courbure (0 = plat) · y = début brouillard · z = fin · w = teinte chunks
+    // xyz = position 3D de la caméra
+    camera: vec4<f32>,
+    // x = début brouillard · y = fin · z = teinte des chunks · w = libre
     params: vec4<f32>,
+    // x = arête d'une face en blocs · y = rayon de rendu
+    planete: vec4<f32>,
     ciel: vec4<f32>,
 };
 
 struct Chunk {
-    decalage: vec4<f32>,
-    // xy = (cos, sin) du quart de tour à appliquer aux coordonnées locales
-    rotation: vec4<f32>,
+    base_r: vec4<f32>,
+    base_h: vec4<f32>,
+    base_n: vec4<f32>,
+    // xy = coin du chunk en coordonnées de face · z = altitude ajoutée
+    origine: vec4<f32>,
     teinte: vec4<f32>,
 };
 
@@ -32,47 +38,39 @@ struct Sortie {
     @location(1) distance: f32,
 };
 
-const CENTRE: vec2<f32> = vec2<f32>(16.0, 16.0);
+const QUART: f32 = 0.78539816;
 
 @vertex
 fn vs_main(@location(0) local: vec3<f32>, @location(1) couleur: vec3<f32>) -> Sortie {
-    // Le quart de tour se prend autour du centre du chunk : un carré tourné
-    // d'un quart de tour autour de son centre retombe sur lui-même, donc le
-    // décalage du chunk n'a pas à en tenir compte.
-    let l = local.xy - CENTRE;
-    let c = bloc.rotation.x;
-    let s = bloc.rotation.y;
-    let tourne = vec2<f32>(c * l.x - s * l.y, s * l.x + c * l.y) + CENTRE;
+    let arete = g.planete.x;
+    let rayon = g.planete.y;
 
-    let rel = vec3<f32>(
-        bloc.decalage.x + tourne.x,
-        bloc.decalage.y + tourne.y,
-        bloc.decalage.z + local.z,
-    );
+    let u = bloc.origine.x + local.x;
+    let v = bloc.origine.y + local.y;
 
-    // La courbure, et rien d'autre. Elle ne dépend que de la distance à la
-    // caméra : elle ne sait rien des arêtes du cube, et c'est pourtant elle qui
-    // les arrondit. Aucune position lue ici ne redescend vers le CPU — le
-    // raycast et la sélection de bloc travaillent à plat.
-    let rayon = g.params.x;
-    var p = rel;
-    let d = length(rel.xy);
-    if (rayon > 0.0) {
-        let dd = min(d, rayon);
-        p.z = p.z - (rayon - sqrt(max(rayon * rayon - dd * dd, 0.0)));
-    }
+    // Ajustement tangent : les cases sont réparties à angle constant, pas à
+    // distance constante sur le plan tangent. C'est ce qui borne la distorsion
+    // du centre d'une face à son coin.
+    let a = tan((2.0 * u / arete - 1.0) * QUART);
+    let b = tan((2.0 * v / arete - 1.0) * QUART);
+
+    let dir = normalize(bloc.base_n.xyz + bloc.base_r.xyz * a + bloc.base_h.xyz * b);
+
+    // La caméra est ramenée à l'origine : les positions valent quelques
+    // milliers, les écarts quelques centaines, et f32 suffit largement.
+    let p = dir * (rayon + bloc.origine.z + local.z) - g.camera.xyz;
 
     var out: Sortie;
     out.position = g.vue_projection * vec4<f32>(p, 1.0);
-    out.couleur = mix(couleur, couleur * bloc.teinte.rgb, g.params.w);
-    out.distance = d;
+    out.couleur = mix(couleur, couleur * bloc.teinte.rgb, g.params.z);
+    out.distance = length(p);
     return out;
 }
 
 @fragment
 fn fs_main(entree: Sortie) -> @location(0) vec4<f32> {
     let brume = clamp(
-        (entree.distance - g.params.y) / max(g.params.z - g.params.y, 1.0),
+        (entree.distance - g.params.x) / max(g.params.y - g.params.x, 1.0),
         0.0,
         1.0,
     );

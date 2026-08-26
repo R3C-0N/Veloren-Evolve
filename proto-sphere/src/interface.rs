@@ -1,13 +1,14 @@
 //! Le menu de debug.
 //!
 //! Il n'est pas décoratif : chaque réglage correspond à une chose que D27
-//! affirme et qu'on veut pouvoir mettre en défaut d'un clic — la courbure comme
-//! pur fait de rendu, la position brute face à la position repliée, et les trois
-//! endroits du monde où la topologie se voit : une arête, un coin, une calotte.
+//! affirme et qu'on veut pouvoir mettre en défaut d'un clic — la position brute
+//! face à la position repliée, et les trois endroits du monde où la topologie
+//! se voit : une arête, un coin, une calotte.
 
-use crate::cube::{FACE, NOMS, replier_bloc};
+use crate::cube::{FACE, NOMS, RAYON, replier_bloc};
 use crate::monde::{TAILLE_CHUNK, biome_de};
-use crate::{App, COIN, MILIEU_ARETE, Vue};
+use crate::{COIN, MILIEU_ARETE, Vue};
+use crate::App;
 
 impl App {
     pub(crate) fn menu(&mut self, ui: &mut egui::Ui) {
@@ -23,50 +24,45 @@ impl App {
         // --- Vue ------------------------------------------------------------
         ui.horizontal(|ui| {
             ui.label("Vue");
-            ui.selectable_value(&mut self.vue, Vue::Trois, "3D — l'illusion");
+            ui.selectable_value(&mut self.vue, Vue::Trois, "3D — la planète");
             ui.selectable_value(&mut self.vue, Vue::Deux, "2D — le patron");
         });
         ui.label(egui::RichText::new("F1 pour basculer").weak().small());
         ui.separator();
 
-        // --- Courbure -------------------------------------------------------
-        ui.strong("Courbure du rendu");
-        let mut plat = self.reglages.rayon_courbure <= 0.0;
-        if ui.checkbox(&mut plat, "Plat (rayon infini)").changed() {
-            self.reglages.rayon_courbure = if plat { 0.0 } else { 1500.0 };
-        }
-        ui.add_enabled(
-            !plat,
-            egui::Slider::new(&mut self.reglages.rayon_courbure, 300.0..=6000.0)
-                .text("rayon (blocs)")
-                .logarithmic(true),
-        );
+        // --- La planète ------------------------------------------------------
+        ui.strong("La planète");
+        egui::Grid::new("planete").num_columns(2).show(ui, |ui| {
+            ui.label("rayon");
+            ui.monospace(format!("{:.0} blocs", RAYON));
+            ui.end_row();
+            ui.label("tour du monde");
+            ui.monospace(format!("{} blocs", 4 * FACE));
+            ui.end_row();
+            ui.label("faces");
+            ui.monospace(format!("6 × {} chunks", crate::cube::FACE_CHUNKS));
+            ui.end_row();
+        });
         ui.label(
             egui::RichText::new(
-                "C'est elle qui arrondit les arêtes du cube, sans rien savoir \
-                 d'elles. Et rien de ce réglage ne redescend dans la logique : \
-                 le raycast vise toujours à plat.",
+                "La rondeur n'est plus un réglage : chaque chunk est dessiné à \
+                 sa vraie place sur la sphère. C'est ce qui supprime les fausses \
+                 adjacences des coins — et c'est pour ça que le rayon vaut la \
+                 taille du monde, et rien d'autre.",
             )
             .weak()
             .small(),
         );
-        ui.separator();
-
-        // --- Le défaut des coins --------------------------------------------
-        ui.strong("Le défaut des huit coins");
-        ui.checkbox(
-            &mut self.reglages.montrer_defaut,
-            "Laisser le trou de 90° au lieu de le combler",
-        );
-        ui.checkbox(
-            &mut self.reglages.teinte_chunks,
-            "Teinter les chunks (les dupliqués en rouge)",
+        ui.add(
+            egui::Slider::new(&mut self.reglages.aplatissement, 1.0..=12.0)
+                .text("aplatir (×)")
+                .logarithmic(true),
         );
         ui.label(
             egui::RichText::new(
-                "Trois faces se rejoignent à un coin : 270°, quand le plan \
-                 déroulé en offre 360°. Ce qui manque est soit un trou, soit une \
-                 copie. Il n'y a pas de troisième option.",
+                "Réglage de debug : gonfler le rayon aplatit l'horizon, au prix \
+                 d'un mensonge sur la taille des blocs. Le seul endroit du \
+                 programme qui s'y autorise.",
             )
             .weak()
             .small(),
@@ -76,10 +72,11 @@ impl App {
         // --- Rendu ----------------------------------------------------------
         ui.strong("Rendu");
         ui.add(
-            egui::Slider::new(&mut self.reglages.distance_rendu, 2..=16).text("distance (chunks)"),
+            egui::Slider::new(&mut self.reglages.distance_rendu, 2..=20).text("distance (chunks)"),
         );
         ui.add(egui::Slider::new(&mut self.reglages.champ, 40.0..=110.0).text("champ (°)"));
-        ui.add(egui::Slider::new(&mut self.vitesse, 4.0..=120.0).text("vitesse"));
+        ui.add(egui::Slider::new(&mut self.vitesse, 4.0..=400.0).text("vitesse").logarithmic(true));
+        ui.checkbox(&mut self.reglages.teinte_chunks, "Teinter les chunks (une teinte par face)");
         ui.separator();
 
         // --- Monde ----------------------------------------------------------
@@ -94,15 +91,6 @@ impl App {
                 self.refaire_carte = true;
             }
         });
-        ui.label(
-            egui::RichText::new(format!(
-                "6 faces de {} chunks d'arête · tour du monde {} blocs",
-                crate::cube::FACE_CHUNKS,
-                4 * FACE
-            ))
-            .weak()
-            .small(),
-        );
 
         ui.add_space(4.0);
         ui.label("Aller voir :");
@@ -158,9 +146,7 @@ impl App {
             ui.end_row();
 
             ui.label("biome");
-            ui.monospace(
-                biome_de(latitude.abs() / std::f64::consts::FRAC_PI_2).nom(),
-            );
+            ui.monospace(biome_de(latitude.abs() / std::f64::consts::FRAC_PI_2).nom());
             ui.end_row();
 
             ui.label("arêtes franchies");
@@ -169,7 +155,7 @@ impl App {
 
             ui.label("bloc visé");
             ui.monospace(match self.vise {
-                Some(b) => format!("{}  {}  {}", b[0], b[1], b[2]),
+                Some((f, u, v, z)) => format!("{}  {}  {}  ·  {}", u, v, z, NOMS[f as usize]),
                 None => "—".to_string(),
             });
             ui.end_row();
@@ -183,7 +169,7 @@ impl App {
         ui.separator();
 
         // --- Compteurs ------------------------------------------------------
-        let (dessines, memoire, doublons) = self.compteurs();
+        let (dessines, memoire) = self.compteurs();
         ui.strong("Compteurs");
         egui::Grid::new("compteurs").num_columns(2).show(ui, |ui| {
             ui.label("image");
@@ -194,9 +180,6 @@ impl App {
             ui.end_row();
             ui.label("chunks en mémoire");
             ui.monospace(format!("{}", memoire));
-            ui.end_row();
-            ui.label("chunks dupliqués");
-            ui.monospace(format!("{}", doublons));
             ui.end_row();
         });
 

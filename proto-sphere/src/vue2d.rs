@@ -15,7 +15,7 @@ use crate::rendu::FORMAT_COULEUR;
 use bytemuck::{Pod, Zeroable};
 
 /// Un texel pour six blocs.
-const PAS: i32 = 6;
+const PAS: i32 = 24;
 pub const CARTE_W: u32 = (NET_W / PAS) as u32;
 pub const CARTE_H: u32 = (NET_H / PAS) as u32;
 /// Côté d'une face, en texels.

@@ -140,10 +140,10 @@ impl Generateur {
 
         let c = self.continents.get(echelle(p, 2.2));
         let terres = palier(-0.06, 0.22, c);
-        let r = self.relief.get(echelle(p, 9.0)) * 0.5 + 0.5;
-        let d = self.detail.get(echelle(p, 26.0));
+        let r = self.relief.get(echelle(p, 22.0)) * 0.5 + 0.5;
+        let d = self.detail.get(echelle(p, 80.0));
 
-        let mut h = NIVEAU_MER as f64 - 9.0 + terres * (13.0 + 38.0 * r) + d * 3.0;
+        let mut h = NIVEAU_MER as f64 - 9.0 + terres * (13.0 + 46.0 * r) + d * 5.0;
 
         // D24 : les pôles sont des glaciers plats. Ce sont désormais de vraies
         // calottes, au centre de deux faces opposées.
@@ -173,15 +173,15 @@ impl Generateur {
     }
 }
 
+/// La bordure qu'on s'interdit : apparaître au bord d'une face, c'est
+/// commencer la partie sur une couture.
+const RETRAIT: i32 = FACE / 8;
+
 /// Le point d'apparition : la première terre ferme de la bande de prairie,
 /// cherchée sur une face équatoriale. Rien ne garantit qu'une latitude donnée
 /// soit émergée — la carte est faite de bruit, pas de promesses.
-/// La bordure qu'on s'interdit : apparaître sur un coin de cube, c'est
-/// commencer la partie dans le seul endroit défectueux du monde.
-const RETRAIT: i32 = 96;
-
 pub fn point_apparition(gen: &Generateur) -> (u8, i32, i32) {
-    let pas = 8;
+    let pas = 32;
     for face in [1u8, 0, 2, 3] {
         for v in (RETRAIT..FACE - RETRAIT).step_by(pas) {
             for u in (RETRAIT..FACE - RETRAIT).step_by(pas) {
