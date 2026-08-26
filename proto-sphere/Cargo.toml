@@ -19,6 +19,8 @@ wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
 glam = { version = "0.30", features = ["bytemuck"] }
 noise = "0.9"
+# Uniquement pour le mode film : encoder les images en JPEG.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 # La generation de terrain est inutilisable sans optimisation, meme en debug.
 [profile.dev]

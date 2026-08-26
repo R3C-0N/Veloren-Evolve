@@ -15,6 +15,7 @@ mod chunk;
 mod conforme;
 mod cube;
 mod diag;
+mod film;
 mod interface;
 mod maillage;
 mod monde;
@@ -53,6 +54,7 @@ pub struct App {
     vue2d: Vue2d,
     cible: Cible,
     horloge: Instant,
+    film: Option<film::Film>,
 }
 
 impl App {
@@ -86,8 +88,9 @@ impl App {
             reglages: Reglages {
                 distance_rendu: 10,
                 champ: 70.0,
-                teinte_chunks: false,
+                teinte_chunks: 0.0,
                 aplatissement: 1.0,
+                budget: 8,
             },
             vue: Vue::Trois,
             vitesse: 24.0,
@@ -100,6 +103,7 @@ impl App {
             vue2d,
             cible,
             horloge: Instant::now(),
+            film: None,
         }
     }
 
@@ -240,6 +244,10 @@ impl eframe::App for App {
                 }
             });
 
+        if self.film.is_some() {
+            self.tourner_le_film(ctx, frame);
+            return;
+        }
         self.entrees(ctx, dt, glisse, actif);
 
         let etat = frame.wgpu_render_state().expect("moteur wgpu").clone();
@@ -305,6 +313,57 @@ impl eframe::App for App {
     }
 }
 
+impl App {
+    /// Une image du film : avancer sur la trajectoire, tout générer, rendre,
+    /// relire, enregistrer.
+    ///
+    /// Rien n'est budgété ici : on veut le monde complet à chaque image,
+    /// quitte à ce que la première prenne une seconde.
+    fn tourner_le_film(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let etat = frame.wgpu_render_state().expect("moteur wgpu").clone();
+        self.cible.ajuster(
+            &etat.device,
+            &mut etat.renderer.write(),
+            (film::LARGEUR, film::HAUTEUR),
+        );
+
+        let Some(mut bobine) = self.film.take() else { return };
+        if !bobine.avancer(&self.gen, &mut self.cam) {
+            bobine.ecrire_journal();
+            println!("film terminé : {} images dans {}", bobine.image, bobine.dossier);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // Deux passes : la première génère les chunks entrés dans le champ,
+        // la seconde les dessine. Sans cela, chaque image manquerait la
+        // bordure que le déplacement vient de découvrir.
+        for _ in 0..2 {
+            let mut encodeur = etat.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor { label: Some("film") },
+            );
+            self.vue3d.dessiner(
+                &etat.device,
+                &etat.queue,
+                &mut encodeur,
+                &self.cible,
+                &self.gen,
+                &self.cam,
+                &self.reglages,
+                None,
+            );
+            etat.queue.submit(Some(encodeur.finish()));
+        }
+
+        bobine.poser(&self.cible.relire(&etat.device, &etat.queue));
+        if bobine.image % 20 == 0 {
+            println!("  image {} sur {}", bobine.image, film::IMAGES);
+        }
+        self.film = Some(bobine);
+        ctx.request_repaint();
+    }
+}
+
 /// Altitude où poser la caméra : au-dessus du sol, jamais sous l'eau, et assez
 /// haut pour que l'horizon soit dans le champ — c'est lui qu'on vient juger.
 fn hauteur_de_vol(gen: &Generateur, face: u8, u: i32, v: i32) -> f32 {
@@ -339,7 +398,16 @@ fn terre_pres(gen: &Generateur, face: u8, u: i32, v: i32) -> (u8, i32, i32) {
 fn depart(app: &mut App) {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--teinte") {
-        app.reglages.teinte_chunks = true;
+        app.reglages.teinte_chunks = 1.0;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--film") {
+        let dossier = args.get(i + 1).cloned().unwrap_or_else(|| "film".into());
+        let bobine = film::Film::nouveau(dossier);
+        app.cam = bobine.debut(&app.gen);
+        app.film = Some(bobine);
+        app.reglages.budget = 4096;
+        app.reglages.distance_rendu = 9;
+        app.reglages.teinte_chunks = 0.45;
     }
     if args.iter().any(|a| a == "--ras") {
         // Au ras du sol : c'est la seule distance à laquelle la forme d'une

@@ -26,8 +26,6 @@ use wgpu::util::DeviceExt;
 
 const ALIGNEMENT: u64 = 256;
 const CHUNKS_MAX: u64 = 4096;
-/// Chunks générés par image : au-delà, le déplacement saccade.
-const BUDGET_GENERATION: usize = 8;
 
 pub const CIEL: [f32; 4] = [0.42, 0.60, 0.82, 1.0];
 
@@ -262,7 +260,7 @@ impl Vue3d {
                 params: [
                     portee * 0.45,
                     portee * 0.98,
-                    if reglages.teinte_chunks { 1.0 } else { 0.0 },
+                    reglages.teinte_chunks,
                     0.0,
                 ],
                 planete: [FACE as f32, rayon as f32, crate::conforme::N as f32, 0.0],
@@ -335,7 +333,7 @@ impl Vue3d {
             ));
         }
 
-        for cle in manquants.into_iter().take(BUDGET_GENERATION) {
+        for cle in manquants.into_iter().take(reglages.budget) {
             let chunk = Chunk::generer(gen, cle.0, cle.1, cle.2);
             let (sommets, indices) = maillage::mailler(&chunk);
             self.chunks.insert(cle, televerser(device, &sommets, &indices));
@@ -615,11 +613,17 @@ impl Camera {
 pub struct Reglages {
     pub distance_rendu: i32,
     pub champ: f32,
-    pub teinte_chunks: bool,
+    /// Dosage de la teinte par face, de 0 à 1. Un interrupteur suffit à
+    /// l'écran ; le film en veut juste assez pour lire la topologie sans
+    /// perdre les couleurs du terrain.
+    pub teinte_chunks: f32,
     /// Multiplie le rayon de rendu : le monde grossit et s'aplatit d'autant.
     /// Réglage de debug — il ment sur la taille des blocs, et c'est le seul
     /// endroit du programme qui s'y autorise.
     pub aplatissement: f32,
+    /// Chunks générés par image. Au-delà d'une poignée le déplacement
+    /// saccade ; en mode film on veut au contraire tout, tout de suite.
+    pub budget: usize,
 }
 
 /// Le bloc visé : face, puis position dans cette face.

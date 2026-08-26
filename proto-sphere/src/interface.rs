@@ -76,7 +76,13 @@ impl App {
         );
         ui.add(egui::Slider::new(&mut self.reglages.champ, 40.0..=110.0).text("champ (°)"));
         ui.add(egui::Slider::new(&mut self.vitesse, 4.0..=400.0).text("vitesse").logarithmic(true));
-        ui.checkbox(&mut self.reglages.teinte_chunks, "Teinter les chunks (une teinte par face)");
+        let mut teinte = self.reglages.teinte_chunks > 0.0;
+        if ui
+            .checkbox(&mut teinte, "Teinter les chunks (une teinte par face)")
+            .changed()
+        {
+            self.reglages.teinte_chunks = if teinte { 1.0 } else { 0.0 };
+        }
         ui.separator();
 
         // --- Monde ----------------------------------------------------------
