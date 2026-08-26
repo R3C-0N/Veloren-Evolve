@@ -8,9 +8,11 @@
 //! 3D. Ce sont ces invariants qui répondent du calcul, pas la relecture.
 
 use crate::cube::{
-    COS_SIN, FACE, FACE_CHUNKS, NOMS, RAYON, point_sphere, replier_bloc, replier_chunk,
+    COS_SIN, FACE, FACE_CHUNKS, NOMS, RAYON, direction, point_sphere, replier_bloc,
+    replier_chunk,
 };
 use crate::monde::{Generateur, NIVEAU_MER, TAILLE_CHUNK, biome_de, point_apparition};
+use crate::conforme;
 use crate::vue3d::{Camera, viser};
 use glam::{DVec3, Vec3};
 use std::collections::HashSet;
@@ -19,12 +21,16 @@ pub fn executer() {
     let gen = Generateur::nouveau(1);
 
     println!("Patron de cube : 6 faces de {FACE} blocs d'arête");
-    println!("tour du monde : {} blocs · rayon {RAYON:.0} blocs", 4 * FACE);
+    println!(
+        "tour du monde : {:.0} blocs · rayon {RAYON:.0} blocs",
+        std::f64::consts::TAU * RAYON
+    );
     println!();
 
     invariants();
     coutures(&gen);
     distorsion();
+    projection_conforme();
     continuite_du_deroulement();
     derive_de_visee(&gen);
     terrain(&gen);
@@ -149,17 +155,23 @@ fn verdict(ok: bool) -> &'static str { if ok { "OK" } else { "ÉCHEC" } }
 
 fn coutures(gen: &Generateur) {
     println!("── Les douze recollements ──");
-    println!("  face      bord      dénivelé couture   dénivelé ordinaire   écart angulaire");
+    println!("  (mesuré sur les 7/8 centraux de chaque bord : les coins sont");
+    println!("   singuliers par construction et relèvent d'une autre mesure)");
+    println!("  face      bord      dénivelé couture   dénivelé ordinaire   écart de pas");
 
     let (mut pire_h, mut pire_a) = (0.0f64, 0.0f64);
 
     for f in 0..6u8 {
         for (bord, nom) in [(0, "+u"), (1, "−u"), (2, "+v"), (3, "−v")] {
-            let (mut somme_couture, mut somme_ordinaire, mut angle_max) = (0.0, 0.0, 0.0f64);
+            let (mut somme_couture, mut somme_ordinaire, mut pire_pas) = (0.0, 0.0, 0.0f64);
             let n = 96;
 
+            // On saute les extrémités : elles touchent les coins, où la
+            // taille des cases s'effondre légitimement. Ce que la couture
+            // doit prouver, c'est qu'elle ne coupe pas — pas que le coin est
+            // régulier, ce qu'il n'est pas et ne peut pas être.
             for i in 0..n {
-                let w = i * FACE / n;
+                let w = FACE / 16 + i * (FACE * 7 / 8) / n;
                 // Trois cases alignées, perpendiculaires au bord : la deuxième
                 // est la dernière de la face, la troisième est de l'autre côté
                 // du recollement. Comparer ces deux pas-là, et pas un pas pris
@@ -180,13 +192,19 @@ fn coutures(gen: &Generateur) {
                 .abs() as f64;
 
                 // Le pas qui franchit le recollement doit mesurer, sur la
-                // sphère, ce que mesure n'importe quel autre pas.
-                angle_max = angle_max.max(angle(f, dedans, dehors));
+                // sphère, ce que mesure le pas juste à côté. Le comparer au
+                // pas du centre de la face n'aurait plus de sens : la
+                // projection conforme fait varier la taille des cases, et un
+                // écart légitime passerait pour une discontinuité.
+                let voisin = angle(f, avant, dedans);
+                if voisin > 0.0 {
+                    let r = angle(f, dedans, dehors) / voisin;
+                    pire_pas = pire_pas.max(r.max(1.0 / r));
+                }
             }
 
             let (hc, ho) = (somme_couture / n as f64, somme_ordinaire / n as f64);
-            let ordinaire = angle(f, (FACE / 2, FACE / 2), (FACE / 2 + 1, FACE / 2));
-            let ecart = angle_max / ordinaire;
+            let ecart = pire_pas;
             pire_h = pire_h.max(hc / ho.max(1e-9));
             pire_a = pire_a.max(ecart);
 
@@ -233,6 +251,99 @@ fn distorsion() {
         angle(1, (0, 0), (1, 0))
     );
     println!("  (la grille équirectangulaire précédente : non bornée aux pôles)");
+    println!();
+
+    // --- Le cisaillement -------------------------------------------------
+    //
+    // Une case reste-t-elle carrée ? Les lignes de coordonnées d'une face du
+    // cube ne se coupent à angle droit qu'en son centre. Ailleurs, la case est
+    // un losange — et un bloc de voxel avec elle.
+    println!("── Cisaillement : la case est-elle carrée ? ──");
+    println!("  endroit                        angle des côtés   rapport des côtés");
+
+    let mesure = |u: f64, v: f64| -> (f64, f64) {
+        let p = DVec3::from_array(direction(1, u, v));
+        let tu = DVec3::from_array(direction(1, u + 0.5, v)) - p;
+        let tv = DVec3::from_array(direction(1, u, v + 0.5)) - p;
+        let angle = tu.normalize().dot(tv.normalize()).clamp(-1.0, 1.0).acos();
+        (angle.to_degrees(), tu.length() / tv.length())
+    };
+
+    let f = FACE as f64;
+    for (nom, u, v) in [
+        ("centre de face", f / 2.0, f / 2.0),
+        ("milieu d'une arête", 0.5, f / 2.0),
+        ("à mi-chemin du coin", f / 4.0, f / 4.0),
+        ("coin de face", 0.5, 0.5),
+    ] {
+        let (angle, rapport) = mesure(u, v);
+        println!("  {nom:<28}   {angle:>13.1}°   {rapport:>17.3}");
+    }
+    println!("  90° = carré partout : c'est ce que la projection conforme achète.");
+    println!();
+}
+
+/// La table conforme mérite-t-elle qu'on s'y fie ?
+///
+/// Elle est intégrée numériquement, donc elle ne vaut que ce que valent ses
+/// vérifications. Il y en a trois : le coin doit tomber où la théorie le dit,
+/// la projection doit être inversible au bloc près, et un pas de grille doit
+/// mesurer un bloc au centre d'une face.
+fn projection_conforme() {
+    println!("── La table conforme ──");
+
+    let (mx, my) = crate::conforme::coin_mesure();
+    let (ax, ay) = crate::conforme::coin_attendu();
+    println!("  côté de la table                  : {} × {}", conforme::N, conforme::N);
+    println!("  coin mesuré                       : {mx:.6}  {my:.6}");
+    println!("  coin attendu — (1+i)/(√3+1)       : {ax:.6}  {ay:.6}");
+    println!(
+        "  écart                             : {:.2e}",
+        ((mx - ax).powi(2) + (my - ay).powi(2)).sqrt()
+    );
+
+    // Aller-retour : projeter puis dé-projeter doit rendre la case de départ.
+    let (mut pire, mut ou) = (0.0f64, (0u8, 0, 0));
+    for f in 0..6u8 {
+        for u in (4..FACE - 4).step_by(97) {
+            for v in (4..FACE - 4).step_by(101) {
+                let d = direction(f, u as f64 + 0.5, v as f64 + 0.5);
+                let (f2, u2, v2) = crate::cube::depuis_direction(d);
+                let e = if f2 == f {
+                    ((u2 - u as f64 - 0.5).powi(2) + (v2 - v as f64 - 0.5).powi(2)).sqrt()
+                } else {
+                    f64::INFINITY
+                };
+                if e > pire {
+                    pire = e;
+                    ou = (f, u, v);
+                }
+            }
+        }
+    }
+    println!(
+        "  aller-retour, écart maximal       : {pire:.4} bloc (face {}, {} {})",
+        NOMS[ou.0 as usize], ou.1, ou.2
+    );
+
+    // La taille d'un bloc, du centre d'une face vers un coin.
+    println!("  taille d'un bloc, du centre au coin :");
+    let f = FACE as f64;
+    let reference = {
+        let a = DVec3::from_array(direction(1, f / 2.0, f / 2.0));
+        let b = DVec3::from_array(direction(1, f / 2.0 + 1.0, f / 2.0));
+        (b - a).length() * RAYON
+    };
+    for part in [0.0, 0.5, 0.8, 0.95, 0.999] {
+        let (u, v) = (f / 2.0 * (1.0 + part), f / 2.0 * (1.0 + part));
+        let a = DVec3::from_array(direction(1, u, v));
+        let b = DVec3::from_array(direction(1, u + 1.0, v));
+        println!(
+            "    {:>5.1} % du chemin : {:.3} bloc",
+            part * 100.0,
+            (b - a).length() * RAYON / reference
+        );
+    }
     println!();
 }
 

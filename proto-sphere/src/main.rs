@@ -12,6 +12,7 @@
 //! 3. que le défaut de 90° des huit coins soit supportable en jeu.
 
 mod chunk;
+mod conforme;
 mod cube;
 mod diag;
 mod interface;
@@ -63,7 +64,7 @@ impl App {
 
         let graine = 1;
         let gen = Generateur::nouveau(graine);
-        let vue3d = Vue3d::nouvelle(&etat.device);
+        let vue3d = Vue3d::nouvelle(&etat.device, &etat.queue);
         let vue2d = Vue2d::nouvelle(&etat.device, &etat.queue, &gen);
         let cible = Cible::nouvelle(&etat.device, &mut etat.renderer.write(), (1280, 720));
 
@@ -314,24 +315,57 @@ fn hauteur_de_vol(gen: &Generateur, face: u8, u: i32, v: i32) -> f32 {
 pub(crate) const MILIEU_ARETE: (u8, i32, i32) = (1, FACE / 2, FACE - 2);
 pub(crate) const COIN: (u8, i32, i32) = (1, 2, FACE - 3);
 
-/// `--ou <lieu>` et `--teinte` : de quoi rejouer exactement la même vue d'une
-/// fois sur l'autre, sans passer par la souris.
+/// La terre ferme la plus proche d'un endroit donné, s'il y en a dans les
+/// parages. Un coin de cube tombe souvent en mer, et une étendue d'eau plate
+/// ne montre pas la forme de ses cases — or c'est elle qu'on vient juger.
+fn terre_pres(gen: &Generateur, face: u8, u: i32, v: i32) -> (u8, i32, i32) {
+    let mut meilleur = (face, u, v);
+    let mut distance = i32::MAX;
+    for dv in (-1400..=1400).step_by(28) {
+        for du in (-1400..=1400).step_by(28) {
+            let (sol, _) = gen.colonne(face, u + du, v + dv);
+            let d = du * du + dv * dv;
+            if sol > monde::NIVEAU_MER + 3 && d < distance {
+                distance = d;
+                meilleur = (face, u + du, v + dv);
+            }
+        }
+    }
+    meilleur
+}
+
+/// `--ou <lieu>`, `--teinte` et `--ras` : de quoi rejouer exactement la même
+/// vue d'une fois sur l'autre, sans passer par la souris.
 fn depart(app: &mut App) {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--teinte") {
         app.reglages.teinte_chunks = true;
     }
+    if args.iter().any(|a| a == "--ras") {
+        // Au ras du sol : c'est la seule distance à laquelle la forme d'une
+        // case se voit.
+        let sol = app.gen.hauteur(
+            app.cam.face,
+            app.cam.position.x as i32,
+            app.cam.position.y as i32,
+        );
+        app.cam.position.z = sol.max(monde::NIVEAU_MER as f32) + 3.0;
+        app.cam.tangage = -0.30;
+        app.reglages.distance_rendu = 5;
+    }
     if let Some(i) = args.iter().position(|a| a == "--ou") {
         match args.get(i + 1).map(String::as_str) {
             Some("coin") => {
-                app.aller(COIN.0, COIN.1, COIN.2);
-                // Regarder *vers* le coin : c'est au-delà de lui que le
-                // déroulement doit inventer ses 90°.
+                let (f, u, v) = terre_pres(&app.gen, COIN.0, COIN.1, COIN.2);
+                app.aller(f, u, v);
                 app.cam.lacet = 2.36;
                 app.cam.tangage = -0.45;
-                app.cam.position.z += 40.0;
             }
-            Some("arete") => app.aller(MILIEU_ARETE.0, MILIEU_ARETE.1, MILIEU_ARETE.2),
+            Some("arete") => {
+                let (f, u, v) =
+                    terre_pres(&app.gen, MILIEU_ARETE.0, MILIEU_ARETE.1, MILIEU_ARETE.2);
+                app.aller(f, u, v);
+            }
             Some("nord") => app.aller(4, FACE / 2, FACE / 2),
             Some("sud") => app.aller(5, FACE / 2, FACE / 2),
             _ => {}

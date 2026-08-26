@@ -37,7 +37,7 @@ impl App {
             ui.monospace(format!("{:.0} blocs", RAYON));
             ui.end_row();
             ui.label("tour du monde");
-            ui.monospace(format!("{} blocs", 4 * FACE));
+            ui.monospace(format!("{:.0} blocs", std::f64::consts::TAU * RAYON));
             ui.end_row();
             ui.label("faces");
             ui.monospace(format!("6 × {} chunks", crate::cube::FACE_CHUNKS));

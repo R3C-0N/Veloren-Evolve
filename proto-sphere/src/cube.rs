@@ -24,14 +24,14 @@ pub const FACE: i32 = FACE_CHUNKS * TAILLE_CHUNK;
 
 /// Rayon de la planète, en blocs.
 ///
-/// Il n'est pas libre : une face couvre exactement un quart de tour, donc pour
-/// qu'un pas de grille mesure un bloc au centre d'une face, il faut
-/// `R = 2·arête/π`. Le tour du monde vaut alors `2πR = 4·arête`, ce qui est bien
-/// le nombre de faces qu'on traverse en faisant le tour de l'équateur.
+/// Il n'est pas libre. La projection conforme fixe le rapport entre un pas de
+/// grille et un arc de sphère ; on choisit `R` pour qu'un bloc mesure un bloc
+/// **au centre d'une face**, ce qui donne `R = arête/(4K)`. Ailleurs le bloc
+/// est plus petit — c'est ce que coûte la conformité.
 ///
 /// C'est le prix du rendu en vraie 3D : la rondeur n'est plus un réglage, c'est
 /// la taille du monde.
-pub const RAYON: f64 = 2.0 * FACE as f64 / std::f64::consts::PI;
+pub const RAYON: f64 = FACE as f64 / (4.0 * crate::conforme::K);
 
 pub const PATRON_COLS: i32 = 4;
 pub const PATRON_LIGNES: i32 = 3;
@@ -223,19 +223,21 @@ pub fn point_sphere(face: u8, u: i32, v: i32) -> [f64; 3] {
 /// La même chose pour une coordonnée de face continue. C'est cette fonction que
 /// le vertex shader reproduit, à l'identique : elle est la seule définition de
 /// la forme du monde.
+///
+/// Elle ne calcule rien : elle lit la table conforme (voir
+/// [`crate::conforme`]), que le shader lit aussi, aux mêmes octets près.
 pub fn direction(face: u8, u: f64, v: f64) -> [f64; 3] {
     let b = BASES[face as usize];
-    let quart = std::f64::consts::FRAC_PI_4;
-    let ta = (((2.0 * u / FACE as f64) - 1.0) * quart).tan();
-    let tc = (((2.0 * v / FACE as f64) - 1.0) * quart).tan();
+    let d = crate::conforme::table().direction_locale(
+        2.0 * u / FACE as f64 - 1.0,
+        2.0 * v / FACE as f64 - 1.0,
+    );
 
-    let p = [
-        b.n[0] as f64 + b.r[0] as f64 * ta + b.h[0] as f64 * tc,
-        b.n[1] as f64 + b.r[1] as f64 * ta + b.h[1] as f64 * tc,
-        b.n[2] as f64 + b.r[2] as f64 * ta + b.h[2] as f64 * tc,
-    ];
-    let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
-    [p[0] / l, p[1] / l, p[2] / l]
+    [
+        b.r[0] as f64 * d[0] + b.h[0] as f64 * d[1] + b.n[0] as f64 * d[2],
+        b.r[1] as f64 * d[0] + b.h[1] as f64 * d[1] + b.n[1] as f64 * d[2],
+        b.r[2] as f64 * d[0] + b.h[2] as f64 * d[1] + b.n[2] as f64 * d[2],
+    ]
 }
 
 /// L'inverse de [`direction`] : de quel endroit du monde vient une direction 3D.
@@ -260,11 +262,13 @@ pub fn depuis_direction(d: [f64; 3]) -> (u8, f64, f64) {
     }
 
     let b = BASES[face as usize];
-    let n = projete(b.n);
-    let quart = std::f64::consts::FRAC_PI_4;
-    let u = ((projete(b.r) / n).atan() / quart + 1.0) * FACE as f64 / 2.0;
-    let v = ((projete(b.h) / n).atan() / quart + 1.0) * FACE as f64 / 2.0;
-    (face, u, v)
+    let locale = [projete(b.r), projete(b.h), projete(b.n)];
+    let (s, t) = crate::conforme::table().depuis_locale(locale);
+    (
+        face,
+        (s + 1.0) * FACE as f64 / 2.0,
+        (t + 1.0) * FACE as f64 / 2.0,
+    )
 }
 
 /// Les huit coins du cube, identifiés par le triplet de signes de leur position.

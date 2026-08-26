@@ -20,7 +20,7 @@ use crate::monde::{Bloc, Generateur, HAUTEUR_CHUNK, TAILLE_CHUNK, TAILLE_CHUNK a
 use crate::rendu::{FORMAT_COULEUR, FORMAT_PROFONDEUR};
 use bytemuck::{Pod, Zeroable};
 use glam::{DVec3, Mat4, Vec3};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use wgpu::util::DeviceExt;
 
 const ALIGNEMENT: u64 = 256;
@@ -71,7 +71,7 @@ pub struct Vue3d {
 }
 
 impl Vue3d {
-    pub fn nouvelle(device: &wgpu::Device) -> Self {
+    pub fn nouvelle(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("terrain"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/terrain.wgsl").into()),
@@ -79,16 +79,28 @@ impl Vue3d {
 
         let layout_globaux = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globaux"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
         });
 
         let layout_chunks = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -121,13 +133,20 @@ impl Vue3d {
             mapped_at_creation: false,
         });
 
+        let vue_conforme = texture_conforme(device, queue);
         let bg_globaux = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globaux"),
             layout: &layout_globaux,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buf_globaux.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buf_globaux.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&vue_conforme),
+                },
+            ],
         });
 
         let bg_chunks = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -245,42 +264,51 @@ impl Vue3d {
                     if reglages.teinte_chunks { 1.0 } else { 0.0 },
                     0.0,
                 ],
-                planete: [FACE as f32, rayon as f32, 0.0, 0.0],
+                planete: [FACE as f32, rayon as f32, crate::conforme::N as f32, 0.0],
                 ciel: CIEL,
             }),
         );
 
         // --- Quels chunks ----------------------------------------------------
         //
-        // On énumère toujours un rectangle autour de la caméra dans le repère
-        // de sa face, mais uniquement pour *trouver* les chunks : près d'un
-        // coin, plusieurs cases du rectangle désignent le même chunk, et le
-        // `HashSet` les fond en une. Chacun est ensuite dessiné à sa vraie
-        // place, une fois.
+        // Par proche en proche, en marchant sur la surface. Balayer un
+        // rectangle dans le repère de la caméra ne suffit pas : près d'un
+        // coin, ce rectangle recouvre deux fois certaines régions et **en
+        // manque d'autres** — le trou se voyait à l'écran. Un parcours en
+        // largeur ne peut ni sauter un voisin ni en visiter deux fois.
         let r = reglages.distance_rendu;
         let ccu = (cam.position.x / TAILLE_CHUNK as f32).floor() as i32;
         let ccv = (cam.position.y / TAILLE_CHUNK as f32).floor() as i32;
 
-        let mut vus: HashSet<Cle> = HashSet::new();
-        let mut candidats: Vec<(Cle, f32)> = Vec::new();
+        let distance = |cle: Cle| {
+            let c = DVec3::from_array(direction(
+                cle.0,
+                (cle.1 * TC) as f64 + 16.0,
+                (cle.2 * TC) as f64 + 16.0,
+            )) * (rayon + crate::monde::NIVEAU_MER as f64);
+            (c - position).length() as f32
+        };
 
-        for dv in -r..=r {
-            for du in -r..=r {
-                let (fc, cu, cv, _) = replier_chunk(cam.face, ccu + du, ccv + dv);
-                if !vus.insert((fc, cu, cv)) {
-                    continue;
+        let depart = {
+            let (f, u, v, _) = replier_chunk(cam.face, ccu, ccv);
+            (f, u, v)
+        };
+        let mut vus: HashSet<Cle> = HashSet::from([depart]);
+        let mut file = VecDeque::from([depart]);
+        let mut candidats: Vec<(Cle, f32)> = Vec::new();
+        let limite = portee + 64.0;
+
+        while let Some(cle) = file.pop_front() {
+            let d = distance(cle);
+            if d > limite {
+                continue;
+            }
+            candidats.push((cle, d));
+            for (du, dv) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (f, u, v, _) = replier_chunk(cle.0, cle.1 + du, cle.2 + dv);
+                if vus.insert((f, u, v)) {
+                    file.push_back((f, u, v));
                 }
-                let centre = direction(
-                    fc,
-                    (cu * TC) as f64 + 16.0,
-                    (cv * TC) as f64 + 16.0,
-                );
-                let c = DVec3::from_array(centre) * (rayon + crate::monde::NIVEAU_MER as f64);
-                let dist = (c - position).length() as f32;
-                if dist > portee + 64.0 {
-                    continue;
-                }
-                candidats.push(((fc, cu, cv), dist));
             }
         }
         candidats.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -313,7 +341,7 @@ impl Vue3d {
         }
 
         // On garde une marge : revenir sur ses pas ne doit pas tout regénérer.
-        if self.chunks.len() > (2 * r as usize + 8).pow(2) {
+        if self.chunks.len() > 3 * (2 * r as usize + 8).pow(2) {
             self.chunks.retain(|cle, _| vus.contains(cle));
         }
 
@@ -393,6 +421,43 @@ impl Vue3d {
         }
         self.chunks_dessines = dessines;
     }
+}
+
+/// La table conforme, telle quelle, en texture. Le shader la lit avec les
+/// mêmes octets et la même bilinéaire que le CPU : c'est cette identité qui
+/// garde le réticule sur le bloc surligné.
+fn texture_conforme(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+    let n = crate::conforme::N as u32;
+    let (octets, pas) = crate::conforme::table().octets();
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("projection conforme"),
+        size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rg32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &octets,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(pas),
+            rows_per_image: Some(n),
+        },
+        wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+    );
+
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 fn televerser(device: &wgpu::Device, sommets: &[Sommet], indices: &[u32]) -> Option<MailleGpu> {
