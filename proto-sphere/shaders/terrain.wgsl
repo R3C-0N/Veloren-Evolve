@@ -39,14 +39,14 @@ struct Sortie {
     @location(1) distance: f32,
 };
 
-/// La table conforme, lue exactement comme le CPU la lit : même échantillons,
-/// même interpolation bilinéaire. Si les deux divergeaient d'un texel, la
-/// visée se remettrait à dériver.
-///
-/// `textureLoad` plutôt qu'un échantillonneur : une texture 32 bits flottante
-/// n'est pas filtrable partout, et on ne veut de toute façon rien d'autre
-/// qu'une bilinéaire écrite à la main.
-fn zeta_de(s: f32, t: f32) -> vec2<f32> {
+// La table de projection, lue exactement comme le CPU la lit : mêmes
+// échantillons, même interpolation bilinéaire. Si les deux divergeaient d'un
+// texel, la visée se remettrait à dériver.
+//
+// `textureLoad` plutôt qu'un échantillonneur : une texture 32 bits flottante
+// n'est pas filtrable partout, et on ne veut de toute façon rien d'autre
+// qu'une bilinéaire écrite à la main.
+fn tangent_de(s: f32, t: f32) -> vec2<f32> {
     let n = g.planete.z - 1.0;
     let x = clamp((s + 1.0) * 0.5 * n, 0.0, n - 0.0001);
     let y = clamp((t + 1.0) * 0.5 * n, 0.0, n - 0.0001);
@@ -70,16 +70,11 @@ fn vs_main(@location(0) local: vec3<f32>, @location(1) couleur: vec3<f32>) -> So
     let u = bloc.origine.x + local.x;
     let v = bloc.origine.y + local.y;
 
-    // Projection conforme : la case reste carrée, c'est sa taille qui varie.
-    // `zeta` est la coordonnée stéréographique dans le repère de la face ; la
-    // stéréographique inverse la ramène sur la sphère.
-    let z = zeta_de(2.0 * u / arete - 1.0, 2.0 * v / arete - 1.0);
-    let n2 = 1.0 + z.x * z.x + z.y * z.y;
-    let locale = vec3<f32>(2.0 * z.x, 2.0 * z.y, 1.0 - z.x * z.x - z.y * z.y) / n2;
-
+    // La table donne les coordonnées du plan tangent gnomonique ; la
+    // direction s'en tire d'une normalisation.
+    let ab = tangent_de(2.0 * u / arete - 1.0, 2.0 * v / arete - 1.0);
     let dir = normalize(
-        bloc.base_r.xyz * locale.x + bloc.base_h.xyz * locale.y
-            + bloc.base_n.xyz * locale.z,
+        bloc.base_n.xyz + bloc.base_r.xyz * ab.x + bloc.base_h.xyz * ab.y,
     );
 
     // La caméra est ramenée à l'origine : les positions valent quelques

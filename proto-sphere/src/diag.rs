@@ -281,6 +281,70 @@ fn distorsion() {
     }
     println!("  90° = carré partout : c'est ce que la projection conforme achète.");
     println!();
+
+    // --- Le raccord ne doit ni pincer ni replier la carte ------------------
+    //
+    // Mélanger deux cartes est facile à faire de travers : si les deux
+    // divergent trop là où le poids change vite, le terme de raccord domine la
+    // dérivée, la case s'écrase, et au pire la carte se replie sur elle-même.
+    // Un déterminant négatif signerait un pli — et un monde qui se recouvre.
+    println!("── Le raccord aux coins ──");
+    let mut pire_pincement = (f64::MAX, 0.0f64, 0.0f64);
+    let mut det_mini = f64::MAX;
+    let pas = 4.0 / (conforme::N - 1) as f64;
+
+    let mut s = -1.0 + pas;
+    while s < 1.0 - pas {
+        let mut t = -1.0 + pas;
+        while t < 1.0 - pas {
+            let p = conforme::table().ab(s, t);
+            let ds = conforme::table().ab(s + pas, t);
+            let dt = conforme::table().ab(s, t + pas);
+            let (jx, jy) = ((ds.0 - p.0, ds.1 - p.1), (dt.0 - p.0, dt.1 - p.1));
+
+            let det = jx.0 * jy.1 - jy.0 * jx.1;
+            det_mini = det_mini.min(det / (pas * pas));
+
+            let aire = (jx.0 * jx.0 + jx.1 * jx.1).sqrt().min(
+                (jy.0 * jy.0 + jy.1 * jy.1).sqrt(),
+            ) / pas;
+            if aire < pire_pincement.0 {
+                pire_pincement = (aire, s, t);
+            }
+            t += pas;
+        }
+        s += pas;
+    }
+
+    println!(
+        "  déterminant minimal du jacobien   : {det_mini:.4}  ({})",
+        if det_mini > 0.0 { "aucun pli" } else { "PLI — la carte se recouvre" }
+    );
+    println!(
+        "  côté de case le plus court        : {:.3} (en {:.3}, {:.3})",
+        pire_pincement.0, pire_pincement.1, pire_pincement.2
+    );
+
+    // Jusqu'où le losange se voit-il ? On mesure la distance au coin au-delà de
+    // laquelle l'angle est revenu sous 95°, sur la diagonale de la face.
+    let mut limite = 0.0f64;
+    let mut d = 0.001;
+    while d < 1.0 {
+        let (s, t) = (1.0 - d / 2.0f64.sqrt(), 1.0 - d / 2.0f64.sqrt());
+        let p = DVec3::from_array(direction(1, (s + 1.0) * FACE as f64 / 2.0, (t + 1.0) * FACE as f64 / 2.0));
+        let a = DVec3::from_array(direction(1, (s + 1.0) * FACE as f64 / 2.0 + 1.0, (t + 1.0) * FACE as f64 / 2.0));
+        let b = DVec3::from_array(direction(1, (s + 1.0) * FACE as f64 / 2.0, (t + 1.0) * FACE as f64 / 2.0 + 1.0));
+        let angle = (a - p).normalize().dot((b - p).normalize()).clamp(-1.0, 1.0).acos();
+        if (angle.to_degrees() - 90.0).abs() > 5.0 {
+            limite = d;
+        }
+        d += 0.002;
+    }
+    println!(
+        "  zone où la case sort de 90° ± 5°  : rayon {:.0} blocs autour de chaque coin",
+        limite * FACE as f64 / 2.0
+    );
+    println!();
 }
 
 /// La table conforme mérite-t-elle qu'on s'y fie ?
@@ -292,14 +356,19 @@ fn distorsion() {
 fn projection_conforme() {
     println!("── La table conforme ──");
 
-    let (mx, my) = crate::conforme::coin_mesure();
-    let (ax, ay) = crate::conforme::coin_attendu();
+    let (mx, my) = conforme::table().coin_brut;
+    let (ax, ay) = conforme::coin_attendu();
     println!("  côté de la table                  : {} × {}", conforme::N, conforme::N);
-    println!("  coin mesuré                       : {mx:.6}  {my:.6}");
-    println!("  coin attendu — (1+i)/(√3+1)       : {ax:.6}  {ay:.6}");
+    println!("  ζ au coin, mesuré                 : {mx:.6}  {my:.6}");
+    println!("  ζ au coin, attendu — (1+i)/(√3+1) : {ax:.6}  {ay:.6}");
     println!(
-        "  écart                             : {:.2e}",
+        "  écart d'intégration               : {:.2e}",
         ((mx - ax).powi(2) + (my - ay).powi(2)).sqrt()
+    );
+    println!(
+        "  raccord équiangulaire aux coins    : rayon {:.2} de face, soit {:.0} blocs",
+        conforme::raccord(),
+        conforme::raccord() * FACE as f64 / 2.0
     );
 
     // Aller-retour : projeter puis dé-projeter doit rendre la case de départ.
