@@ -181,6 +181,35 @@ pub fn replier_bloc(face: u8, u: i32, v: i32) -> (u8, i32, i32, u8) {
     replier(face, u, v, FACE)
 }
 
+/// Le repliement, pour une position **continue**.
+///
+/// Même chemin que [`replier_bloc`], plus la rotation de la part
+/// fractionnaire autour du centre de sa case. C'est cette version qui rend le
+/// franchissement d'un bord continu, et pas seulement exact case par case :
+/// sans elle, tout ce qui échantillonne le voisinage — à commencer par le
+/// repère de la caméra — se fait tronquer au bord de la face.
+pub fn replier_continu(face: u8, u: f64, v: f64) -> (u8, f64, f64, u8) {
+    let (bu, bv) = (u.floor() as i32, v.floor() as i32);
+    let (fc, cu, cv, k) = replier_bloc(face, bu, bv);
+
+    let (fu, fv) = (u - bu as f64 - 0.5, v - bv as f64 - 0.5);
+    let (cos, sin) = COS_SIN[k as usize];
+    let (cos, sin) = (cos as f64, sin as f64);
+    (
+        fc,
+        cu as f64 + 0.5 + (fu * cos - fv * sin),
+        cv as f64 + 0.5 + (fu * sin + fv * cos),
+        k,
+    )
+}
+
+/// La direction, pour une position de face quelconque — **hors de la face
+/// aussi**, auquel cas elle est repliée d'abord.
+pub fn direction_continue(face: u8, u: f64, v: f64) -> [f64; 3] {
+    let (f, u, v, _) = replier_continu(face, u, v);
+    direction(f, u, v)
+}
+
 pub fn replier_chunk(face: u8, cu: i32, cv: i32) -> (u8, i32, i32, u8) {
     replier(face, cu, cv, FACE_CHUNKS)
 }

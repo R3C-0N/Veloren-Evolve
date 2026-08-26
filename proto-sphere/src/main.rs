@@ -192,7 +192,7 @@ impl App {
             .clamp(1.0, monde::HAUTEUR_CHUNK as f32 - 2.0);
 
         // Le seul endroit où la topologie touche le joueur.
-        if self.cam.replier() != 0 {
+        if self.cam.replier() {
             self.aretes += 1;
         }
     }

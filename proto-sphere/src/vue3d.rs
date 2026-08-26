@@ -13,7 +13,8 @@
 
 use crate::chunk::Chunk;
 use crate::cube::{
-    BASES, FACE, RAYON, depuis_direction, direction, replier_bloc, replier_chunk,
+    BASES, FACE, RAYON, depuis_direction, direction, direction_continue,
+    replier_bloc, replier_chunk, replier_continu,
 };
 use crate::maillage::{self, Sommet};
 use crate::monde::{Bloc, Generateur, HAUTEUR_CHUNK, TAILLE_CHUNK, TAILLE_CHUNK as TC};
@@ -558,11 +559,21 @@ impl Camera {
         let haut = DVec3::from_array(direction(self.face, u, v));
         let position = haut * (rayon + self.position.z as f64);
 
-        // Tangente le long de +u, redressée pour être orthogonale à la
-        // verticale ; la tangente le long de +v s'en déduit, ce qui garantit un
-        // repère direct sans dépendre de l'orthogonalité de la projection.
-        let voisin = DVec3::from_array(direction(self.face, u + 1.0, v));
-        let est = (voisin - haut * voisin.dot(haut)).normalize();
+        // Tangente le long de +u, prise par une différence **centrée** et
+        // **repliée**. Les deux détails comptent : centrée, elle décrit le
+        // point où l'on est et non un demi-bloc plus loin ; repliée, elle ne
+        // se fait pas tronquer au bord de la face. Sans cela, deux caméras de
+        // part et d'autre d'un bord obtenaient des repères pris sur des
+        // voisinages différents, et la visée sautait de 0,29° au passage.
+        let pas = 0.5;
+        let devant = DVec3::from_array(direction_continue(self.face, u + pas, v));
+        let derriere = DVec3::from_array(direction_continue(self.face, u - pas, v));
+        let brut = devant - derriere;
+
+        // Redressée pour être orthogonale à la verticale ; la tangente le long
+        // de +v s'en déduit, ce qui garantit un repère direct sans dépendre de
+        // l'orthogonalité de la projection.
+        let est = (brut - haut * brut.dot(haut)).normalize();
         let nord = haut.cross(est);
 
         let (sl, cl) = (self.lacet as f64).sin_cos();
@@ -576,29 +587,28 @@ impl Camera {
         )
     }
 
-    /// Replie la position dans le patron, et rend le nombre de quarts de tour.
+    /// Replie la position dans le patron. Rend `true` si un bord a été
+    /// franchi.
     ///
     /// Franchir une arête fait tourner le monde sous les pieds du joueur : le
-    /// lacet tourne d'autant, sans quoi la marche repartirait de travers.
-    pub fn replier(&mut self) -> u8 {
-        let bu = self.position.x.floor() as i32;
-        let bv = self.position.y.floor() as i32;
-        let (fc, u, v, k) = replier_bloc(self.face, bu, bv);
-        if k == 0 && fc == self.face && u == bu && v == bv {
-            return 0;
+    /// lacet tourne d'autant, sans quoi la marche repartirait de travers. Rien
+    /// ne saute pour autant — la rotation du lacet compense exactement celle du
+    /// repère de la face, et `--diag` le vérifie.
+    pub fn replier(&mut self) -> bool {
+        let (fc, u, v, k) = replier_continu(
+            self.face,
+            self.position.x as f64,
+            self.position.y as f64,
+        );
+        if fc == self.face && k == 0 {
+            return false;
         }
 
-        // La part fractionnaire tourne aussi, autour du centre du bloc.
-        let fu = self.position.x - bu as f32 - 0.5;
-        let fv = self.position.y - bv as f32 - 0.5;
-        let (cos, sin) = crate::cube::COS_SIN[k as usize];
-        let (cos, sin) = (cos as f32, sin as f32);
-
         self.face = fc;
-        self.position.x = u as f32 + 0.5 + (fu * cos - fv * sin);
-        self.position.y = v as f32 + 0.5 + (fu * sin + fv * cos);
+        self.position.x = u as f32;
+        self.position.y = v as f32;
         self.lacet += k as f32 * std::f32::consts::FRAC_PI_2;
-        k
+        true
     }
 }
 

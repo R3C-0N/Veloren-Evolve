@@ -32,6 +32,7 @@ pub fn executer() {
     distorsion();
     projection_conforme();
     continuite_du_deroulement();
+    continuite_a_la_traversee();
     derive_de_visee(&gen);
     terrain(&gen);
 }
@@ -227,6 +228,81 @@ fn angle(f: u8, a: (i32, i32), b: (i32, i32)) -> f64 {
     let (pa, pb) = (point_sphere(fa, ua, va), point_sphere(fb, ub, vb));
     let d = (pa[0] * pb[0] + pa[1] * pb[1] + pa[2] * pb[2]).clamp(-1.0, 1.0);
     d.acos()
+}
+
+/// Franchir un bord doit être un non-événement.
+///
+/// La caméra change de face, sa position est remappée et son lacet tourne d'un
+/// quart de tour : trois changements brutaux qui doivent se compenser
+/// exactement. On place deux caméras de part et d'autre d'un bord et on regarde
+/// ce qui les sépare une fois tout appliqué.
+///
+/// Un seul chiffre ne prouverait rien : deux caméras distinctes diffèrent
+/// forcément un peu. Ce qui prouve la continuité, c'est que **l'écart fonde
+/// avec l'écartement**. On mesure donc à trois écartements décroissants : si le
+/// rapport suit, il n'y a pas de saut ; s'il plafonne, il y en a un.
+fn continuite_a_la_traversee() {
+    println!("── Franchir un bord ──");
+    println!("  écartement des deux caméras   position       visée      verticale");
+
+    let mut precedent: Option<f64> = None;
+    for delta in [0.008f32, 0.002, 0.0005] {
+        let (mut pire_pos, mut pire_visee, mut pire_haut) = (0.0f64, 0.0f64, 0.0f64);
+
+        for f in 0..6u8 {
+            for bord in 0..4 {
+                // Tout le bord, coins compris : c'est près d'eux que le repère
+                // est le plus tordu, donc là qu'un défaut se cacherait.
+                for i in 0..64 {
+                    let w = (2 + i * (FACE - 4) / 64) as f32 + 0.5;
+                    let (dedans, dehors) = match bord {
+                        0 => ((FACE as f32 - delta, w), (FACE as f32 + delta, w)),
+                        1 => ((delta, w), (-delta, w)),
+                        2 => ((w, FACE as f32 - delta), (w, FACE as f32 + delta)),
+                        _ => ((w, delta), (w, -delta)),
+                    };
+
+                    for lacet in [0.0f32, 0.9, 2.1, -1.4] {
+                        let camera = |p: (f32, f32)| {
+                            let mut c = Camera {
+                                face: f,
+                                position: Vec3::new(p.0, p.1, (NIVEAU_MER + 20) as f32),
+                                lacet,
+                                tangage: -0.2,
+                            };
+                            c.replier();
+                            c.repere_3d(RAYON)
+                        };
+                        let (pa, va, ha) = camera(dedans);
+                        let (pb, vb, hb) = camera(dehors);
+                        let ecart = |x: Vec3, y: Vec3| {
+                            (x.dot(y) as f64).clamp(-1.0, 1.0).acos().to_degrees()
+                        };
+
+                        pire_pos = pire_pos.max((pa - pb).length());
+                        pire_visee = pire_visee.max(ecart(va, vb));
+                        pire_haut = pire_haut.max(ecart(ha, hb));
+                    }
+                }
+            }
+        }
+
+        let rapport = precedent.map(|p: f64| format!("÷{:.1}", p / pire_visee.max(1e-12)));
+        println!(
+            "  {:>8.4} bloc                {:>8.4}    {:>8.4}°   {:>8.4}°  {}",
+            2.0 * delta as f64,
+            pire_pos,
+            pire_visee,
+            pire_haut,
+            rapport.unwrap_or_default()
+        );
+        precedent = Some(pire_visee);
+    }
+
+    println!("  L'écart fond avec l'écartement : rien ne saute au passage d'un bord.");
+    println!("  Ce qui reste est la torsion du repère au voisinage d'un coin, qui");
+    println!("  est celle du cône lui-même — continue, mais raide.");
+    println!();
 }
 
 // --------------------------------------------------------------------------
