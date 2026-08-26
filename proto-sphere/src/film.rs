@@ -5,12 +5,18 @@
 //! seule une suite d'images le montre, et c'est la seule chose que `--diag` ne
 //! sait pas dire.
 //!
-//! La trajectoire passe **par le coin lui-même**, en diagonale : le chemin
-//! quitte une face par une arête puis une seconde, à quelques blocs du point
+//! La trajectoire passe **à côté du coin**, en diagonale : le chemin quitte
+//! une face par une arête puis une seconde, à une douzaine de blocs du point
 //! où trois faces se rejoignent. C'est le pire endroit du monde, donc le seul
 //! qui vaille d'être filmé.
+//!
+//! **À côté, et pas au travers**, et le détail compte. Viser l'apex
+//! exactement, c'est faire sortir `u` et `v` de la face à la même image : le
+//! point de sortie n'est plus déterminé par la géométrie mais par l'ordre dans
+//! lequel le repliement les résout. C'est un cas dégénéré, de mesure nulle, et
+//! le filmer reviendrait à filmer une convention plutôt qu'un monde.
 
-use crate::cube::{FACE, NOMS, point_sphere, replier_bloc};
+use crate::cube::{FACE, NOMS, RAYON, point_sphere, replier_bloc};
 use crate::monde::{Generateur, NIVEAU_MER};
 use crate::vue3d::Camera;
 use glam::Vec3;
@@ -25,10 +31,19 @@ pub const IMAGES: usize = 120;
 /// Longueur du trajet, en blocs. Il commence avant le coin et finit après.
 const TRAJET: f32 = 620.0;
 
+/// De combien le trajet évite l'apex, en blocs. Assez pour que les deux
+/// arêtes soient franchies à des instants distincts, assez peu pour qu'on
+/// passe bel et bien au coin.
+const EVITEMENT: f32 = 12.0;
+
 pub struct Film {
     pub image: usize,
     pub dossier: String,
     pub journal: Vec<Etape>,
+    precedente: Option<glam::Vec3>,
+    /// Longueur de chaque pas. Elle n'est pas constante : voir [`cadence`].
+    pas: Vec<f32>,
+    parcouru: f32,
 }
 
 pub struct Etape {
@@ -37,12 +52,23 @@ pub struct Etape {
     pub v: i32,
     pub latitude: f64,
     pub franchissement: bool,
+    pub distance: f32,
+    /// Rotation de la visée depuis l'image précédente, en degrés. C'est la
+    /// grandeur dont on discute : autant la mesurer plutôt que la commenter.
+    pub rotation: f64,
 }
 
 impl Film {
     pub fn nouveau(dossier: String) -> Self {
         std::fs::create_dir_all(&dossier).expect("dossier du film");
-        Self { image: 0, dossier, journal: Vec::new() }
+        Self {
+            image: 0,
+            dossier,
+            journal: Vec::new(),
+            precedente: None,
+            pas: cadence(),
+            parcouru: 0.0,
+        }
     }
 
     /// Pose la caméra au début du trajet, en diagonale vers un coin.
@@ -58,7 +84,11 @@ impl Film {
 
         let mut cam = Camera {
             face,
-            position: Vec3::new(cu as f32 + su * recul, cv as f32 + sv * recul, 0.0),
+            position: Vec3::new(
+                cu as f32 + su * (recul + EVITEMENT),
+                cv as f32 + sv * recul,
+                0.0,
+            ),
             // Cap constant vers le coin. Le repliement le fera tourner d'un
             // quart de tour au franchissement ; c'est justement ce qu'on filme.
             lacet: (-sv).atan2(-su),
@@ -74,10 +104,10 @@ impl Film {
             return false;
         }
 
-        let pas = TRAJET / IMAGES as f32;
+        let pas = self.pas[self.image];
+        self.parcouru += pas;
         let cap = Vec3::new(cam.lacet.cos(), cam.lacet.sin(), 0.0);
-        cam.position += cap * pas;
-        let franchissement = cam.replier();
+        let franchissement = cam.avancer(cap * pas) > 0;
 
         // L'altitude suit le relief, mais de loin : un suivi sec ferait
         // tressauter l'image à chaque colline.
@@ -89,12 +119,23 @@ impl Film {
             cam.position.x.floor() as i32,
             cam.position.y.floor() as i32,
         );
+        // La visée, en 3D : c'est elle qui doit varier doucement, et c'est
+        // elle que le lecteur du film pourra regarder image par image.
+        let (_, visee, _) = cam.repere_3d(RAYON);
+        let rotation = self
+            .precedente
+            .map(|p| (p.dot(visee) as f64).clamp(-1.0, 1.0).acos().to_degrees())
+            .unwrap_or(0.0);
+        self.precedente = Some(visee);
+
         self.journal.push(Etape {
             face: f,
             u,
             v,
             latitude: point_sphere(f, u, v)[2].asin().to_degrees(),
             franchissement,
+            distance: self.parcouru,
+            rotation,
         });
         self.image += 1;
         true
@@ -130,18 +171,46 @@ impl Film {
             let virgule = if i + 1 == self.journal.len() { "" } else { "," };
             writeln!(
                 f,
-                r#"  {{"face":"{}","u":{},"v":{},"latitude":{:.1},"franchissement":{}}}{}"#,
+                r#"  {{"face":"{}","u":{},"v":{},"latitude":{:.1},"franchissement":{},"rotation":{:.2},"distance":{:.0}}}{}"#,
                 NOMS[e.face as usize],
                 e.u,
                 e.v,
                 e.latitude,
                 e.franchissement,
+                e.rotation,
+                e.distance,
                 virgule
             )
             .unwrap();
         }
         writeln!(f, "]").unwrap();
     }
+}
+
+/// La longueur de chaque pas, en blocs.
+///
+/// Elle n'est pas constante, et ce n'est pas de la mise en scène. Près du coin,
+/// le cisaillement de la grille fait tourner la visée vite — c'est réel, et
+/// documenté par D27. Un pas uniforme de cinq blocs échantillonne ce virage une
+/// seule fois et le donne à voir comme un saut, ce qu'il n'est pas. On ralentit
+/// donc là où il se passe quelque chose : c'est la seule façon de filmer une
+/// chose rapide sans la déformer.
+fn cadence() -> Vec<f32> {
+    let centre = IMAGES as f32 * 0.47;
+    let largeur = IMAGES as f32 * 0.16;
+
+    let mut poids: Vec<f32> = (0..IMAGES)
+        .map(|i| {
+            let x = (i as f32 - centre) / largeur;
+            0.10 + 0.90 * (1.0 - (-x * x).exp())
+        })
+        .collect();
+
+    let somme: f32 = poids.iter().sum();
+    for p in &mut poids {
+        *p *= TRAJET / somme;
+    }
+    poids
 }
 
 /// Le coin du cube le mieux pourvu en terres, parmi les huit.

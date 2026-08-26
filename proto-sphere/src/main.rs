@@ -112,7 +112,7 @@ impl App {
         self.cam.face = face;
         self.cam.position.x = u as f32 + 0.5;
         self.cam.position.y = v as f32 + 0.5;
-        self.cam.replier();
+        let _ = self.cam.replier();
         self.cam.position.z = hauteur_de_vol(
             &self.gen,
             self.cam.face,
@@ -187,18 +187,17 @@ impl App {
         let pas = self.vitesse * facteur * dt;
         let dir = self.cam.avant();
         let droite = self.cam.droite();
-        self.cam.position += dir * (avant * pas) + droite * (cote * pas);
-        self.cam.position.z += vertical * pas;
+        let mut deplacement = dir * (avant * pas) + droite * (cote * pas);
+        deplacement.z += vertical * pas;
+
+        // Le seul endroit où la topologie touche le joueur — et elle le touche
+        // par un déplacement découpé, pas par un saut suivi d'un repliement.
+        self.aretes += self.cam.avancer(deplacement);
         self.cam.position.z = self
             .cam
             .position
             .z
             .clamp(1.0, monde::HAUTEUR_CHUNK as f32 - 2.0);
-
-        // Le seul endroit où la topologie touche le joueur.
-        if self.cam.replier() {
-            self.aretes += 1;
-        }
     }
 }
 

@@ -270,7 +270,7 @@ fn continuite_a_la_traversee() {
                                 lacet,
                                 tangage: -0.2,
                             };
-                            c.replier();
+                            let _ = c.replier();
                             c.repere_3d(RAYON)
                         };
                         let (pa, va, ha) = camera(dedans);

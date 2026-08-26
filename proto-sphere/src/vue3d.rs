@@ -563,14 +563,21 @@ impl Camera {
         // se fait pas tronquer au bord de la face. Sans cela, deux caméras de
         // part et d'autre d'un bord obtenaient des repères pris sur des
         // voisinages différents, et la visée sautait de 0,29° au passage.
+        // Tangente le long de +u, prise par une différence **centrée** et
+        // **repliée** : centrée, elle décrit le point où l'on est ; repliée, elle
+        // ne se fait pas tronquer au bord de la face.
+        //
+        // Le repère est ensuite redressé. Employer les tangentes brutes serait
+        // plus fidèle au paramétrage — elles se coupent à 120° près d'un coin —
+        // mais cela reporte le cisaillement dans la visée elle-même, et le
+        // balancement mesuré près d'un coin double. Le repère redressé le
+        // concentre au franchissement au lieu de l'étaler ; à défaut de pouvoir
+        // le supprimer, c'est le moindre mal.
         let pas = 0.5;
         let devant = DVec3::from_array(direction_continue(self.face, u + pas, v));
         let derriere = DVec3::from_array(direction_continue(self.face, u - pas, v));
         let brut = devant - derriere;
 
-        // Redressée pour être orthogonale à la verticale ; la tangente le long
-        // de +v s'en déduit, ce qui garantit un repère direct sans dépendre de
-        // l'orthogonalité de la projection.
         let est = (brut - haut * brut.dot(haut)).normalize();
         let nord = haut.cross(est);
 
@@ -585,29 +592,95 @@ impl Camera {
         )
     }
 
-    /// Replie la position dans le patron. Rend `true` si un bord a été
-    /// franchi.
+    /// Replie la position dans le patron. Rend le nombre de quarts de tour si
+    /// un bord a été franchi.
     ///
     /// Franchir une arête fait tourner le monde sous les pieds du joueur : le
     /// lacet tourne d'autant, sans quoi la marche repartirait de travers. Rien
     /// ne saute pour autant — la rotation du lacet compense exactement celle du
     /// repère de la face, et `--diag` le vérifie.
-    pub fn replier(&mut self) -> bool {
+    ///
+    /// **Cette compensation n'est exacte que pour un bord à la fois.** Un
+    /// déplacement qui sort par deux bords d'un coup passe par
+    /// [`Self::avancer`], qui le découpe.
+    pub fn replier(&mut self) -> Option<u8> {
         let (fc, u, v, k) = replier_continu(
             self.face,
             self.position.x as f64,
             self.position.y as f64,
         );
         if fc == self.face && k == 0 {
-            return false;
+            return None;
         }
 
         self.face = fc;
         self.position.x = u as f32;
         self.position.y = v as f32;
         self.lacet += k as f32 * std::f32::consts::FRAC_PI_2;
-        true
+        Some(k)
     }
+
+    /// Avance de `deplacement`, **en s'arrêtant à chaque bord franchi**.
+    ///
+    /// Sans ce découpage, un pas de plusieurs blocs qui sort de la face par
+    /// deux bords à la fois laisse le repliement résoudre `u` puis `v`. Or
+    /// franchir le bord `+u` en un point dont le `v` est déjà dehors, c'est
+    /// franchir un prolongement virtuel de ce bord, qui ne correspond à rien
+    /// sur la surface : le résultat ne dépend plus de la géométrie mais de
+    /// l'ordre du code. Cela se voyait — la vue tournait de 60° d'un coup en
+    /// passant près d'un coin.
+    ///
+    /// Découpé, chaque repliement redevient un vrai franchissement d'arête,
+    /// donc exact. Rend le nombre de bords franchis.
+    pub fn avancer(&mut self, deplacement: Vec3) -> u32 {
+        let mut reste = deplacement;
+        let mut franchis = 0;
+
+        for _ in 0..8 {
+            let t = premiere_sortie(self.position, reste);
+            if t >= 1.0 {
+                self.position += reste;
+                break;
+            }
+
+            // On se pose juste au-delà du bord, sinon le repliement ne le voit
+            // pas : un millième de bloc suffit, et reste sous la résolution de
+            // l'affichage.
+            let horizontal = (reste.x * reste.x + reste.y * reste.y).sqrt();
+            let marge = 2e-3 / horizontal.max(1e-6);
+            let part = (t + marge).min(1.0);
+
+            self.position += reste * part;
+            reste *= 1.0 - part;
+
+            if let Some(k) = self.replier() {
+                franchis += 1;
+                // Le reste du déplacement change de repère avec la caméra.
+                let (cos, sin) = crate::cube::COS_SIN[k as usize];
+                let (cos, sin) = (cos as f32, sin as f32);
+                reste = Vec3::new(
+                    reste.x * cos - reste.y * sin,
+                    reste.x * sin + reste.y * cos,
+                    reste.z,
+                );
+            }
+        }
+        franchis
+    }
+}
+
+/// Fraction du déplacement au bout de laquelle on quitte la face, ou plus de
+/// `1` si on y reste.
+fn premiere_sortie(p: Vec3, d: Vec3) -> f32 {
+    let mut t = f32::INFINITY;
+    for (c, v) in [(p.x, d.x), (p.y, d.y)] {
+        if v > 0.0 {
+            t = t.min((FACE as f32 - c) / v);
+        } else if v < 0.0 {
+            t = t.min(-c / v);
+        }
+    }
+    t.max(0.0)
 }
 
 pub struct Reglages {
