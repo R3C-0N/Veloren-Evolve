@@ -1,15 +1,18 @@
 //! proto-sphere — banc d'essai de D27.
 //!
-//! Une grille plate dont les bords sont recollés, rendue avec une courbure
+//! Le monde est le patron d'un cube : six faces carrées dans une grille plate,
+//! recollées par des rotations d'un quart de tour, rendues avec une courbure
 //! d'horizon. Deux vues, un seul générateur : la 3D juge l'illusion, la carte
 //! 2D juge la topologie.
 //!
 //! Ce que le prototype cherche à réfuter, plus qu'à montrer :
-//! 1. qu'une couture puisse rester invisible sans cas particulier ;
+//! 1. qu'un recollement puisse rester invisible sans cas particulier ;
 //! 2. que la courbure puisse rester un fait de rendu, sans fuir dans la
-//!    sélection de bloc.
+//!    sélection de bloc ;
+//! 3. que le défaut de 90° des huit coins soit supportable en jeu.
 
 mod chunk;
+mod cube;
 mod diag;
 mod interface;
 mod maillage;
@@ -18,8 +21,9 @@ mod rendu;
 mod vue2d;
 mod vue3d;
 
+use cube::{FACE, NET_H, NET_W, vers_net};
 use glam::Vec3;
-use monde::{BLOCS_H, BLOCS_W, Generateur};
+use monde::Generateur;
 use rendu::Cible;
 use std::time::Instant;
 use vue2d::Vue2d;
@@ -39,7 +43,7 @@ pub struct App {
     pub(crate) vue: Vue,
     pub(crate) vitesse: f32,
     pub(crate) vise: Option<[i32; 3]>,
-    pub(crate) plis: u32,
+    pub(crate) aretes: u32,
     pub(crate) ms: f32,
     pub(crate) refaire_carte: bool,
     pub(crate) oublier_chunks: bool,
@@ -63,29 +67,32 @@ impl App {
         let vue2d = Vue2d::nouvelle(&etat.device, &etat.queue, &gen);
         let cible = Cible::nouvelle(&etat.device, &mut etat.renderer.write(), (1280, 720));
 
-        // Départ sur la terre ferme de la bande de prairie (D24).
-        let (ax, ay) = monde::point_apparition(&gen);
-        let (x, y) = (ax as f32 + 0.5, ay as f32 + 0.5);
-        let z = hauteur_de_vol(&gen, ax, ay);
+        let (face, u, v) = monde::point_apparition(&gen);
 
         Self {
-            gen,
-            graine,
             cam: Camera {
-                position: Vec3::new(x, y, z),
+                face,
+                position: Vec3::new(
+                    u as f32 + 0.5,
+                    v as f32 + 0.5,
+                    hauteur_de_vol(&gen, face, u, v),
+                ),
                 lacet: 0.0,
                 tangage: -0.22,
             },
+            gen,
+            graine,
             reglages: Reglages {
                 rayon_courbure: 1500.0,
                 distance_rendu: 8,
                 champ: 70.0,
                 teinte_chunks: false,
+                montrer_defaut: false,
             },
             vue: Vue::Trois,
             vitesse: 24.0,
             vise: None,
-            plis: 0,
+            aretes: 0,
             ms: 0.0,
             refaire_carte: false,
             oublier_chunks: false,
@@ -96,25 +103,31 @@ impl App {
         }
     }
 
-    /// Pose la caméra au-dessus du sol, à une position quelconque du monde.
-    pub(crate) fn aller(&mut self, x: f32, y: f32) {
-        self.cam.position.x = x;
-        self.cam.position.y = y;
+    /// Pose la caméra au-dessus du sol, quelque part sur le cube.
+    pub(crate) fn aller(&mut self, face: u8, u: i32, v: i32) {
+        self.cam.face = face;
+        self.cam.position.x = u as f32 + 0.5;
+        self.cam.position.y = v as f32 + 0.5;
         self.cam.replier();
         self.cam.position.z = hauteur_de_vol(
             &self.gen,
+            self.cam.face,
             self.cam.position.x as i32,
             self.cam.position.y as i32,
         );
     }
 
     pub(crate) fn aller_apparition(&mut self) {
-        let (x, y) = monde::point_apparition(&self.gen);
-        self.aller(x as f32 + 0.5, y as f32 + 0.5);
+        let (face, u, v) = monde::point_apparition(&self.gen);
+        self.aller(face, u, v);
     }
 
-    pub(crate) fn chunks(&self) -> (usize, usize) {
-        (self.vue3d.chunks_dessines, self.vue3d.chunks_en_memoire())
+    pub(crate) fn compteurs(&self) -> (usize, usize, usize) {
+        (
+            self.vue3d.chunks_dessines,
+            self.vue3d.chunks_en_memoire(),
+            self.vue3d.doublons,
+        )
     }
 
     fn entrees(&mut self, ctx: &egui::Context, dt: f32, glisse: egui::Vec2, actif: bool) {
@@ -183,7 +196,9 @@ impl App {
             .clamp(1.0, monde::HAUTEUR_CHUNK as f32 - 2.0);
 
         // Le seul endroit où la topologie touche le joueur.
-        self.plis += self.cam.replier();
+        if self.cam.replier() != 0 {
+            self.aretes += 1;
+        }
     }
 }
 
@@ -194,7 +209,7 @@ impl eframe::App for App {
         self.ms = self.ms * 0.9 + dt * 1000.0 * 0.1;
 
         egui::SidePanel::right("debug")
-            .default_width(300.0)
+            .default_width(320.0)
             .show(ctx, |ui| self.menu(ui));
 
         let mut zone = egui::Rect::NOTHING;
@@ -231,10 +246,7 @@ impl eframe::App for App {
 
         self.entrees(ctx, dt, glisse, actif);
 
-        let etat = frame
-            .wgpu_render_state()
-            .expect("moteur wgpu")
-            .clone();
+        let etat = frame.wgpu_render_state().expect("moteur wgpu").clone();
 
         if self.oublier_chunks {
             self.oublier_chunks = false;
@@ -276,15 +288,19 @@ impl eframe::App for App {
                 &self.reglages,
                 self.vise,
             ),
-            Vue::Deux => self.vue2d.dessiner(
-                &etat.queue,
-                &mut encodeur,
-                &self.cible,
-                [
-                    self.cam.position.x / BLOCS_W as f32,
-                    1.0 - self.cam.position.y / BLOCS_H as f32,
-                ],
-            ),
+            Vue::Deux => {
+                let (nx, ny) = vers_net(
+                    self.cam.face,
+                    self.cam.position.x as i32,
+                    self.cam.position.y as i32,
+                );
+                self.vue2d.dessiner(
+                    &etat.queue,
+                    &mut encodeur,
+                    &self.cible,
+                    [nx as f32 / NET_W as f32, 1.0 - ny as f32 / NET_H as f32],
+                )
+            }
         }
 
         etat.queue.submit(Some(encodeur.finish()));
@@ -294,8 +310,40 @@ impl eframe::App for App {
 
 /// Altitude où poser la caméra : au-dessus du sol, jamais sous l'eau, et assez
 /// haut pour que l'horizon soit dans le champ — c'est lui qu'on vient juger.
-fn hauteur_de_vol(gen: &Generateur, x: i32, y: i32) -> f32 {
-    gen.hauteur(x, y).max(monde::NIVEAU_MER as f32) + 34.0
+fn hauteur_de_vol(gen: &Generateur, face: u8, u: i32, v: i32) -> f32 {
+    gen.hauteur(face, u, v).max(monde::NIVEAU_MER as f32) + 34.0
+}
+
+/// Le milieu d'une arête et un coin de face, pour les boutons du menu.
+pub(crate) const MILIEU_ARETE: (u8, i32, i32) = (1, FACE / 2, FACE - 2);
+pub(crate) const COIN: (u8, i32, i32) = (1, 2, FACE - 3);
+
+/// `--ou <lieu>` et `--defaut` : de quoi rejouer exactement la même vue d'une
+/// fois sur l'autre, sans passer par la souris.
+fn depart(app: &mut App) {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--defaut") {
+        app.reglages.montrer_defaut = true;
+    }
+    if args.iter().any(|a| a == "--teinte") {
+        app.reglages.teinte_chunks = true;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--ou") {
+        match args.get(i + 1).map(String::as_str) {
+            Some("coin") => {
+                app.aller(COIN.0, COIN.1, COIN.2);
+                // Regarder *vers* le coin : c'est au-delà de lui que le
+                // déroulement doit inventer ses 90°.
+                app.cam.lacet = 2.36;
+                app.cam.tangage = -0.45;
+                app.cam.position.z += 40.0;
+            }
+            Some("arete") => app.aller(MILIEU_ARETE.0, MILIEU_ARETE.1, MILIEU_ARETE.2),
+            Some("nord") => app.aller(4, FACE / 2, FACE / 2),
+            Some("sud") => app.aller(5, FACE / 2, FACE / 2),
+            _ => {}
+        }
+    }
 }
 
 fn main() -> eframe::Result<()> {
@@ -307,14 +355,18 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1440.0, 900.0])
-            .with_title("proto-sphere — D27 : grille plate à topologie sphérique"),
+            .with_inner_size([1340.0, 760.0])
+            .with_title("proto-sphere — D27 : le monde est le patron d'un cube"),
         ..Default::default()
     };
 
     eframe::run_native(
         "proto-sphere",
         options,
-        Box::new(|cc| Ok(Box::new(App::nouvelle(cc)))),
+        Box::new(|cc| {
+            let mut app = App::nouvelle(cc);
+            depart(&mut app);
+            Ok(Box::new(app))
+        }),
     )
 }

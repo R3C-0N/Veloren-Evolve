@@ -1,69 +1,23 @@
-//! Le monde : une grille plate dont les bords sont recolles (D27).
+//! Le terrain : blocs, biomes, altitude.
 //!
-//! Tout accede au monde par [`plier_bloc`]. C'est la discipline qui fait la
-//! demonstration : la continuite aux coutures n'est pas un correctif applique
-//! apres coup, c'est une propriete du seul chemin d'acces qui existe.
+//! La topologie est dans [`crate::cube`] ; ici on ne fait que la traverser.
+//! Tout accès au monde passe par `replier_bloc`, si bien que demander
+//! l'altitude d'une case hors de sa face rend l'altitude de la case du cube qui
+//! s'y trouve réellement. La continuité aux coutures n'est pas un correctif
+//! appliqué après coup : c'est une propriété du seul chemin d'accès qui existe.
 //!
-//! Le champ de bruit, lui, vit sur une vraie sphere : les coordonnees de grille
-//! sont converties en longitude/latitude puis en un point de la sphere unite,
-//! ou le bruit est echantillonne en 3D. Le champ est donc continu partout, y
-//! compris aux poles, sans qu'aucune formule spherique ne redescende jamais
-//! dans la logique de jeu.
+//! Le champ de bruit vit sur la sphère circonscrite au cube, échantillonné en
+//! 3D. Deux cases voisines du patron, de part et d'autre d'un recollement,
+//! tombent sur deux points voisins de la sphère — et les huit coins ne posent
+//! aucun problème au bruit, puisque les trois faces y touchent un seul et même
+//! point.
 
+use crate::cube::{FACE, point_sphere, replier_bloc};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 pub const TAILLE_CHUNK: i32 = 32;
 pub const HAUTEUR_CHUNK: i32 = 128;
-
-/// Largeur du monde en chunks. Doit etre paire : le recollement polaire decale
-/// d'une demi-largeur.
-pub const MONDE_W: i32 = 64;
-/// Hauteur du monde en chunks, d'un pole a l'autre.
-pub const MONDE_H: i32 = 32;
-
-pub const BLOCS_W: i32 = MONDE_W * TAILLE_CHUNK;
-pub const BLOCS_H: i32 = MONDE_H * TAILLE_CHUNK;
-
 pub const NIVEAU_MER: i32 = 40;
-
-// --------------------------------------------------------------------------
-// Topologie
-// --------------------------------------------------------------------------
-
-/// Ramene une position de bloc arbitraire dans le monde canonique, et rend le
-/// nombre de plis polaires traverses.
-///
-/// - Est-ouest : `x` modulo la largeur, a `y` constant.
-/// - Nord-sud : franchir un pole replie `y` sur lui-meme et decale `x` d'une
-///   demi-largeur. Traverser le pole nord, c'est ressortir sur le meridien
-///   oppose en marchant a l'envers — exactement ce que fait une sphere.
-pub fn plier_bloc(x: i32, y: i32) -> (i32, i32, u32) {
-    plier(x, y, BLOCS_W, BLOCS_H)
-}
-
-/// Meme repliement, a l'echelle du chunk.
-pub fn plier_chunk(cx: i32, cy: i32) -> (i32, i32, u32) {
-    plier(cx, cy, MONDE_W, MONDE_H)
-}
-
-fn plier(mut x: i32, mut y: i32, w: i32, h: i32) -> (i32, i32, u32) {
-    let mut plis = 0;
-    loop {
-        if y < 0 {
-            y = -1 - y;
-            x += w / 2;
-            plis += 1;
-        } else if y >= h {
-            y = 2 * h - 1 - y;
-            x += w / 2;
-            plis += 1;
-        } else {
-            break;
-        }
-    }
-    (x.rem_euclid(w), y, plis)
-}
 
 // --------------------------------------------------------------------------
 // Blocs
@@ -84,7 +38,7 @@ pub enum Bloc {
 impl Bloc {
     pub fn plein(self) -> bool { self != Bloc::Air }
 
-    /// Couleur en espace lineaire — la cible de rendu est en sRGB et se charge
+    /// Couleur en espace linéaire — la cible de rendu est en sRGB et se charge
     /// de l'encodage.
     pub fn couleur(self) -> [f32; 3] {
         match self {
@@ -116,7 +70,7 @@ impl Biome {
     pub fn nom(self) -> &'static str {
         match self {
             Biome::Prairie => "prairie",
-            Biome::Tempere => "tempere",
+            Biome::Tempere => "tempéré",
             Biome::Neigeux => "neigeux",
             Biome::Glacier => "glacier",
         }
@@ -131,45 +85,27 @@ impl Biome {
     }
 }
 
-/// Distance a l'equateur, de 0 (equateur) a 1 (pole).
-fn latitude01(y: i32) -> f64 {
-    let t = (y as f64 + 0.5) / BLOCS_H as f64;
-    ((t - 0.5) * 2.0).abs()
-}
-
-/// Distance a l'equateur de la bande de prairie : le milieu d'un hemisphere
-/// (D24). C'est la que le jeu commence.
+/// Distance à l'équateur de la bande de prairie : le milieu d'un hémisphère
+/// (D24). C'est là que le jeu commence.
 pub const LATITUDE_PRAIRIE: f64 = 0.45;
 
-pub fn biome(y: i32) -> Biome {
-    let d = latitude01(y);
-    if d > 0.86 {
+/// Les bandes se prennent de la **latitude vraie**, jamais d'une coordonnée de
+/// grille. C'est ce qui fait que les calottes polaires tombent au centre des
+/// faces `+Z` et `−Z` au lieu de s'étaler en bandes.
+pub fn biome_de(latitude01: f64) -> Biome {
+    if latitude01 > 0.86 {
         Biome::Glacier
-    } else if d > 0.66 {
+    } else if latitude01 > 0.66 {
         Biome::Neigeux
-    } else if (d - LATITUDE_PRAIRIE).abs() < 0.13 {
+    } else if (latitude01 - LATITUDE_PRAIRIE).abs() < 0.13 {
         Biome::Prairie
     } else {
         Biome::Tempere
     }
 }
 
-/// Le point d'apparition : la premiere terre ferme rencontree en parcourant la
-/// bande de prairie de l'hemisphere nord. Rien ne garantit qu'une latitude
-/// donnee soit emergee — la carte est faite de bruit, pas de promesses.
-pub fn point_apparition(gen: &Generateur) -> (i32, i32) {
-    let y = ((0.5 - LATITUDE_PRAIRIE / 2.0) * BLOCS_H as f64) as i32;
-    for dx in 0..BLOCS_W {
-        let x = (BLOCS_W / 4 + dx).rem_euclid(BLOCS_W);
-        if gen.hauteur(x, y) > NIVEAU_MER as f32 + 4.0 {
-            return (x, y);
-        }
-    }
-    (BLOCS_W / 4, y)
-}
-
 // --------------------------------------------------------------------------
-// Generation
+// Génération
 // --------------------------------------------------------------------------
 
 pub struct Generateur {
@@ -178,19 +114,11 @@ pub struct Generateur {
     detail: Fbm<Perlin>,
 }
 
-/// Point de la sphere unite correspondant a une case de la grille.
-fn point_sphere(x: f64, y: f64) -> [f64; 3] {
-    let lon = x / BLOCS_W as f64 * TAU;
-    let lat = (y + 0.5) / BLOCS_H as f64 * PI - FRAC_PI_2;
-    let (slat, clat) = lat.sin_cos();
-    let (slon, clon) = lon.sin_cos();
-    [clat * clon, clat * slon, slat]
-}
-
 fn echelle(p: [f64; 3], k: f64) -> [f64; 3] { [p[0] * k, p[1] * k, p[2] * k] }
 
 fn palier(bas: f64, haut: f64, v: f64) -> f64 {
-    (((v - bas) / (haut - bas)).clamp(0.0, 1.0)).powi(2) * (3.0 - 2.0 * ((v - bas) / (haut - bas)).clamp(0.0, 1.0))
+    let t = ((v - bas) / (haut - bas)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 impl Generateur {
@@ -202,10 +130,13 @@ impl Generateur {
         }
     }
 
-    /// Altitude du sol, pour une position de bloc quelconque.
-    pub fn hauteur(&self, x: i32, y: i32) -> f32 {
-        let (wx, wy, _) = plier_bloc(x, y);
-        let p = point_sphere(wx as f64, wy as f64);
+    /// Altitude du sol et biome, pour une position de face quelconque —
+    /// y compris hors de la face, que `replier_bloc` ramène.
+    pub fn colonne(&self, face: u8, u: i32, v: i32) -> (i32, Biome) {
+        let (f, u, v, _) = replier_bloc(face, u, v);
+        let p = point_sphere(f, u, v);
+        // Latitude vraie, ramenée entre 0 (équateur) et 1 (pôle).
+        let latitude01 = p[2].asin().abs() / std::f64::consts::FRAC_PI_2;
 
         let c = self.continents.get(echelle(p, 2.2));
         let terres = palier(-0.06, 0.22, c);
@@ -214,21 +145,19 @@ impl Generateur {
 
         let mut h = NIVEAU_MER as f64 - 9.0 + terres * (13.0 + 38.0 * r) + d * 3.0;
 
-        // D24 : les poles sont des glaciers plats. L'aplatissement sert aussi a
-        // masquer la distorsion de la grille la ou les meridiens se rejoignent.
-        let polaire = palier(0.84, 0.97, latitude01(wy));
+        // D24 : les pôles sont des glaciers plats. Ce sont désormais de vraies
+        // calottes, au centre de deux faces opposées.
+        let polaire = palier(0.84, 0.97, latitude01);
         h = h * (1.0 - polaire) + (NIVEAU_MER as f64 + 5.0) * polaire;
 
-        h as f32
+        (
+            (h.round() as i32).clamp(1, HAUTEUR_CHUNK - 2),
+            biome_de(latitude01),
+        )
     }
 
-    /// Une colonne : altitude du sol et bloc de surface.
-    pub fn colonne(&self, x: i32, y: i32) -> (i32, Biome) {
-        let (_, wy, _) = plier_bloc(x, y);
-        (
-            (self.hauteur(x, y).round() as i32).clamp(1, HAUTEUR_CHUNK - 2),
-            biome(wy),
-        )
+    pub fn hauteur(&self, face: u8, u: i32, v: i32) -> f32 {
+        self.colonne(face, u, v).0 as f32
     }
 
     pub fn bloc(&self, sol: i32, biome: Biome, z: i32) -> Bloc {
@@ -242,4 +171,26 @@ impl Generateur {
             Bloc::Roche
         }
     }
+}
+
+/// Le point d'apparition : la première terre ferme de la bande de prairie,
+/// cherchée sur une face équatoriale. Rien ne garantit qu'une latitude donnée
+/// soit émergée — la carte est faite de bruit, pas de promesses.
+/// La bordure qu'on s'interdit : apparaître sur un coin de cube, c'est
+/// commencer la partie dans le seul endroit défectueux du monde.
+const RETRAIT: i32 = 96;
+
+pub fn point_apparition(gen: &Generateur) -> (u8, i32, i32) {
+    let pas = 8;
+    for face in [1u8, 0, 2, 3] {
+        for v in (RETRAIT..FACE - RETRAIT).step_by(pas) {
+            for u in (RETRAIT..FACE - RETRAIT).step_by(pas) {
+                let (sol, biome) = gen.colonne(face, u, v);
+                if biome == Biome::Prairie && sol > NIVEAU_MER + 4 {
+                    return (face, u, v);
+                }
+            }
+        }
+    }
+    (1, FACE / 2, FACE / 2)
 }

@@ -1,13 +1,12 @@
-// Vue 2D : le monde entier de dessus, avec ses coutures tracees.
+// Vue 2D : le patron du cube, avec ses recollements appariés par la couleur.
 //
-// C'est ici qu'on juge la topologie. Un relief qui se coupe net sur une couture
-// se voit immediatement ; un anneau d'ocean sur le pourtour signalerait qu'un
-// bord de carte s'est reintroduit.
+// Presque tout est peint dans la texture côté CPU, où la disposition du patron
+// est connue. Il ne reste ici que le marqueur de caméra.
 
 struct Carte {
     // xy = coin bas-gauche en NDC · zw = coin haut-droit
     cadre: vec4<f32>,
-    // xy = position de la camera en uv · z = epaisseur des traits en uv · w = inutilise
+    // xy = position de la caméra en uv · z = un texel en uv · w = inutilisé
     camera: vec4<f32>,
 };
 
@@ -38,26 +37,11 @@ fn vs_main(@builtin(vertex_index) i: u32) -> Sortie {
 @fragment
 fn fs_main(entree: Sortie) -> @location(0) vec4<f32> {
     var couleur = textureSample(texture_carte, echantillonneur, entree.uv).rgb;
+
     let e = c.camera.z;
-    let uv = entree.uv;
-
-    // Couture est-ouest : les deux bords verticaux sont le meme meridien.
-    if (uv.x < e || uv.x > 1.0 - e) {
-        couleur = mix(couleur, vec3<f32>(1.0, 0.85, 0.2), 0.85);
-    }
-    // Poles : les bords horizontaux se recollent sur eux-memes, decales.
-    if (uv.y < e || uv.y > 1.0 - e) {
-        couleur = mix(couleur, vec3<f32>(0.4, 0.8, 1.0), 0.85);
-    }
-    // Le meridien d'une demi-largeur : la ou ressort qui franchit un pole.
-    if (abs(uv.x - 0.5) < e * 0.6 && fract(uv.y * 60.0) < 0.5) {
-        couleur = mix(couleur, vec3<f32>(0.4, 0.8, 1.0), 0.6);
-    }
-
-    // Marqueur de la camera.
-    let d = abs(uv - c.camera.xy);
-    if ((d.x < e * 4.0 && d.y < e * 1.0) || (d.y < e * 4.0 && d.x < e * 1.0)) {
-        couleur = vec3<f32>(1.0, 0.2, 0.2);
+    let d = abs(entree.uv - c.camera.xy);
+    if ((d.x < e * 5.0 && d.y < e * 1.2) || (d.y < e * 5.0 && d.x < e * 1.2)) {
+        couleur = vec3<f32>(1.0, 0.15, 0.15);
     }
 
     return vec4<f32>(couleur, 1.0);
