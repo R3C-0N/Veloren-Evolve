@@ -1,0 +1,4 @@
+# Le prototype ne compile pas le moteur : il n'a pas besoin du nightly epingle
+# par Veloren a la racine du depot.
+[toolchain]
+channel = "stable"

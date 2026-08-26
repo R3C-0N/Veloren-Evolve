@@ -1,0 +1,28 @@
+[package]
+name = "proto-sphere"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+description = "Banc d'essai de D27 : grille plate a topologie spherique"
+
+# Crate autonome. Il vit dans le depot Veloren parce que le code du projet y va
+# (D1), mais il n'appartient pas au workspace de Veloren : cette table vide en
+# fait sa propre racine, donc son Cargo.lock et sa toolchain sont a lui.
+[workspace]
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
+egui = "0.31"
+egui-wgpu = "0.31"
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.30", features = ["bytemuck"] }
+noise = "0.9"
+
+# La generation de terrain est inutilisable sans optimisation, meme en debug.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
