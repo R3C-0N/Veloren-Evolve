@@ -39,6 +39,8 @@ const EVITEMENT: f32 = 12.0;
 pub struct Film {
     pub image: usize,
     pub dossier: String,
+    /// Viser le point triple exactement, au lieu de le longer.
+    pub apex: bool,
     pub journal: Vec<Etape>,
     precedente: Option<glam::Vec3>,
     /// Longueur de chaque pas. Elle n'est pas constante : voir [`cadence`].
@@ -64,6 +66,7 @@ impl Film {
         Self {
             image: 0,
             dossier,
+            apex: false,
             journal: Vec::new(),
             precedente: None,
             pas: cadence(),
@@ -71,29 +74,55 @@ impl Film {
         }
     }
 
-    /// Pose la caméra au début du trajet, en diagonale vers un coin.
+    /// Pose la caméra au début du trajet.
     ///
     /// Le coin est choisi, pas décrété : sur huit, la plupart tombent en pleine
     /// mer, et une étendue d'eau ne montre rien. On prend celui qui a le plus
     /// de terres autour.
+    ///
+    /// Le départ, lui, se construit **en remontant le trajet à l'envers**. La
+    /// marche suit désormais une géodésique et non une ligne de grille : une
+    /// distance comptée en coordonnées ne dit plus combien d'images il faudra
+    /// pour arriver, et le coin tombait au sixième du film au lieu du milieu.
+    /// On part donc de la cible, on s'en éloigne du recul voulu, et on fait
+    /// demi-tour.
     pub fn debut(&self, gen: &Generateur) -> Camera {
         let (face, cu, cv) = meilleur_coin(gen);
-        let recul = TRAJET * 0.45 / 2.0f32.sqrt();
         let su = if cu == 0 { 1.0f32 } else { -1.0 };
         let sv = if cv == 0 { 1.0f32 } else { -1.0 };
+
+        // La cible : le coin lui-même, ou un point de l'arête à `EVITEMENT`
+        // blocs de lui. Le trajet, qui est une géodésique, passe alors à cette
+        // distance du point triple.
+        let ecart = if self.apex { 0.0 } else { EVITEMENT };
 
         let mut cam = Camera {
             face,
             position: Vec3::new(
-                cu as f32 + su * (recul + EVITEMENT),
-                cv as f32 + sv * recul,
-                0.0,
+                cu as f32 - su * 1.0,
+                cv as f32 + sv * (ecart + 1.0),
+                (NIVEAU_MER + 48) as f32,
             ),
-            // Cap constant vers le coin. Le repliement le fera tourner d'un
-            // quart de tour au franchissement ; c'est justement ce qu'on filme.
-            lacet: (-sv).atan2(-su),
+            regard: Vec3::X,
             tangage: -0.28,
         };
+
+        // Dos au coin, vers le centre de la face, puis on recule.
+        let centre = Vec3::from_array(
+            crate::cube::direction(face, FACE as f64 / 2.0, FACE as f64 / 2.0)
+                .map(|x| x as f32),
+        );
+        cam.viser_point(centre);
+
+        let recul = TRAJET * 0.45;
+        let pas = 2.0f32;
+        for _ in 0..(recul / pas) as usize {
+            let (du, dv) = cam.vers_coordonnees(cam.avant_plat() * pas);
+            cam.avancer(Vec3::new(du, dv, 0.0));
+        }
+
+        // Demi-tour : le regard vit dans le monde, l'inverser suffit.
+        cam.regard = -cam.avant_plat();
         cam.position.z = altitude(gen, &cam);
         cam
     }
@@ -106,8 +135,10 @@ impl Film {
 
         let pas = self.pas[self.image];
         self.parcouru += pas;
-        let cap = Vec3::new(cam.lacet.cos(), cam.lacet.sin(), 0.0);
-        let franchissement = cam.avancer(cap * pas) > 0;
+
+        // On avance dans le monde, puis on redresse vers les coordonnées.
+        let (du, dv) = cam.vers_coordonnees(cam.avant_plat() * pas);
+        let franchissement = cam.avancer(Vec3::new(du, dv, 0.0)) > 0;
 
         // L'altitude suit le relief, mais de loin : un suivi sec ferait
         // tressauter l'image à chaque colline.

@@ -32,7 +32,7 @@ pub fn executer() {
     distorsion();
     projection_conforme();
     continuite_du_deroulement();
-    continuite_a_la_traversee();
+    marcher_a_travers_les_bords();
     derive_de_visee(&gen);
     terrain(&gen);
 }
@@ -230,78 +230,86 @@ fn angle(f: u8, a: (i32, i32), b: (i32, i32)) -> f64 {
     d.acos()
 }
 
-/// Franchir un bord doit être un non-événement.
+/// Marcher à travers un bord, et mesurer ce que la visée fait à chaque pas.
 ///
-/// La caméra change de face, sa position est remappée et son lacet tourne d'un
-/// quart de tour : trois changements brutaux qui doivent se compenser
-/// exactement. On place deux caméras de part et d'autre d'un bord et on regarde
-/// ce qui les sépare une fois tout appliqué.
+/// L'ancien test comparait deux caméras posées à un millième de bloc de part et
+/// d'autre du bord, de même cap. À cette distance leurs deux tangentes
+/// enjambent l'arête et se ressemblent forcément : il mesurait la continuité de
+/// la projection, pas celle du transport. Il a certifié continu un
+/// franchissement qui faisait sauter la visée de 25,6°.
 ///
-/// Un seul chiffre ne prouverait rien : deux caméras distinctes diffèrent
-/// forcément un peu. Ce qui prouve la continuité, c'est que **l'écart fonde
-/// avec l'écartement**. On mesure donc à trois écartements décroissants : si le
-/// rapport suit, il n'y a pas de saut ; s'il plafonne, il y en a un.
-fn continuite_a_la_traversee() {
-    println!("── Franchir un bord ──");
-    println!("  écartement des deux caméras   position       visée      verticale");
+/// **Une mesure qui ne bouge pas n'est pas une mesure qui prouve.** Celle-ci
+/// marche, pas à pas, comme le joueur — c'est la seule qui voie ce qu'il voit.
+fn marcher_a_travers_les_bords() {
+    println!("── Marcher à travers un bord ──");
+    println!("  distance au coin    rotation par pas    pire endroit");
 
-    let mut precedent: Option<f64> = None;
-    for delta in [0.008f32, 0.002, 0.0005] {
-        let (mut pire_pos, mut pire_visee, mut pire_haut) = (0.0f64, 0.0f64, 0.0f64);
+    // Cap sortant, par bord : +u, −u, +v, −v.
+    let sortie = [
+        0.0f32,
+        std::f32::consts::PI,
+        std::f32::consts::FRAC_PI_2,
+        -std::f32::consts::FRAC_PI_2,
+    ];
+
+    for recul in [2.0f32, 12.0, 60.0] {
+        let mut pire = 0.0f64;
+        let mut ou = (0u8, 0usize, 0.0f32);
 
         for f in 0..6u8 {
-            for bord in 0..4 {
-                // Tout le bord, coins compris : c'est près d'eux que le repère
-                // est le plus tordu, donc là qu'un défaut se cacherait.
-                for i in 0..64 {
-                    let w = (2 + i * (FACE - 4) / 64) as f32 + 0.5;
-                    let (dedans, dehors) = match bord {
-                        0 => ((FACE as f32 - delta, w), (FACE as f32 + delta, w)),
-                        1 => ((delta, w), (-delta, w)),
-                        2 => ((w, FACE as f32 - delta), (w, FACE as f32 + delta)),
-                        _ => ((w, delta), (w, -delta)),
+            for (bord, cap) in sortie.iter().enumerate() {
+                for biais in [0.0f32, 0.7, -0.7] {
+                    let depart = match bord {
+                        0 => (FACE as f32 - 6.0, recul),
+                        1 => (6.0, recul),
+                        2 => (recul, FACE as f32 - 6.0),
+                        _ => (recul, 6.0),
                     };
 
-                    for lacet in [0.0f32, 0.9, 2.1, -1.4] {
-                        let camera = |p: (f32, f32)| {
-                            let mut c = Camera {
-                                face: f,
-                                position: Vec3::new(p.0, p.1, (NIVEAU_MER + 20) as f32),
-                                lacet,
-                                tangage: -0.2,
-                            };
-                            let _ = c.replier();
-                            c.repere_3d(RAYON)
-                        };
-                        let (pa, va, ha) = camera(dedans);
-                        let (pb, vb, hb) = camera(dehors);
-                        let ecart = |x: Vec3, y: Vec3| {
-                            (x.dot(y) as f64).clamp(-1.0, 1.0).acos().to_degrees()
-                        };
+                    let mut cam = Camera {
+                        face: f,
+                        position: Vec3::new(depart.0, depart.1, (NIVEAU_MER + 20) as f32),
+                        regard: Vec3::X,
+                        tangage: -0.2,
+                    };
+                    cam.poser_cap(cap + biais);
 
-                        pire_pos = pire_pos.max((pa - pb).length());
-                        pire_visee = pire_visee.max(ecart(va, vb));
-                        pire_haut = pire_haut.max(ecart(ha, hb));
+                    let mut precedente: Option<Vec3> = None;
+                    for _ in 0..14 {
+                        let (du, dv) = cam.vers_coordonnees(cam.avant_plat());
+                        cam.avancer(Vec3::new(du, dv, 0.0));
+
+                        let (_, visee, _) = cam.repere_3d(RAYON);
+                        if let Some(avant) = precedente {
+                            let angle = (avant.dot(visee) as f64)
+                                .clamp(-1.0, 1.0)
+                                .acos()
+                                .to_degrees();
+                            if angle > pire {
+                                pire = angle;
+                                ou = (f, bord, biais);
+                            }
+                        }
+                        precedente = Some(visee);
                     }
                 }
             }
         }
 
-        let rapport = precedent.map(|p: f64| format!("÷{:.1}", p / pire_visee.max(1e-12)));
         println!(
-            "  {:>8.4} bloc                {:>8.4}    {:>8.4}°   {:>8.4}°  {}",
-            2.0 * delta as f64,
-            pire_pos,
-            pire_visee,
-            pire_haut,
-            rapport.unwrap_or_default()
+            "  {recul:>6.0} blocs         {pire:>10.3}°/bloc    face {}, bord {}, biais {:+.1}",
+            NOMS[ou.0 as usize],
+            ["+u", "−u", "+v", "−v"][ou.1],
+            ou.2
         );
-        precedent = Some(pire_visee);
     }
 
-    println!("  L'écart fond avec l'écartement : rien ne saute au passage d'un bord.");
-    println!("  Ce qui reste est la torsion du repère au voisinage d'un coin, qui");
-    println!("  est celle du cône lui-même — continue, mais raide.");
+    // Un pas d'un bloc sur une géodésique fait tourner la visée de l'angle
+    // parcouru, ni plus ni moins : c'est le plancher, et il est calculable.
+    println!(
+        "  Plancher géométrique : {:.3}°/bloc (un bloc sur un rayon de {RAYON:.0}).",
+        (1.0 / RAYON).to_degrees()
+    );
     println!();
 }
 
@@ -554,24 +562,25 @@ fn continuite_du_deroulement() {
 /// 45 blocs.
 fn derive_de_visee(gen: &Generateur) {
     println!("── Le réticule et le bloc surligné ──");
-    println!("  position              lacet    portée   écart");
+    println!("  position                cap    portée   écart");
 
     for (nom, face, u, v) in [
         ("centre de face", 1u8, FACE / 2, FACE / 2),
         ("près d'un coin", 1u8, 8, FACE - 8),
     ] {
-        for lacet in [0.0f32, 0.7, 2.4] {
-            let cam = Camera {
+        for cap in [0.0f32, 0.7, 2.4] {
+            let mut cam = Camera {
                 face,
                 position: Vec3::new(u as f32 + 0.5, v as f32 + 0.5, (NIVEAU_MER + 40) as f32),
-                lacet,
+                regard: Vec3::X,
                 tangage: -0.2,
             };
+            cam.poser_cap(cap);
             let (position, avant, _) = cam.repere_3d(RAYON);
             let avant = DVec3::new(avant.x as f64, avant.y as f64, avant.z as f64);
 
             match viser(gen, &cam, RAYON, 400.0) {
-                None => println!("  {nom:<20}  {lacet:>5.1}         —   rien en vue"),
+                None => println!("  {nom:<20}  {cap:>5.1}         —   rien en vue"),
                 Some((f, bu, bv, bz)) => {
                     let centre =
                         DVec3::from_array(point_sphere(f, bu, bv)) * (RAYON + bz as f64 + 0.5);
@@ -579,7 +588,7 @@ fn derive_de_visee(gen: &Generateur) {
                     let t = vers.length();
                     let angle = vers.normalize().dot(avant).clamp(-1.0, 1.0).acos();
                     println!(
-                        "  {nom:<20}  {lacet:>5.1}  {t:>8.0}   {:>5.2} blocs",
+                        "  {nom:<20}  {cap:>5.1}  {t:>8.0}   {:>5.2} blocs",
                         t * angle.tan()
                     );
                 }
@@ -622,7 +631,7 @@ fn terrain(gen: &Generateur) {
             v as f32 + 0.5,
             sol.max(crate::monde::NIVEAU_MER as f32) + 6.0,
         ),
-        lacet: 0.0,
+        regard: Vec3::X,
         tangage: -0.15,
     };
     let p = point_sphere(face, u, v);

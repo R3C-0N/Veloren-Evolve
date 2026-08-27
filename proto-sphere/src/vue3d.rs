@@ -523,67 +523,80 @@ fn teinte_chunk(cle: Cle) -> [f32; 4] {
 // --------------------------------------------------------------------------
 
 pub struct Camera {
-    /// La face où se trouve la caméra. C'est son repère qui fait loi.
+    /// La face où se trouve la caméra. C'est son repère qui fait loi pour tout
+    /// ce qui interroge le monde.
     pub face: u8,
     /// Position en blocs, dans le repère de `face`.
     pub position: Vec3,
-    pub lacet: f32,
+    /// Direction du regard, horizontale, unitaire, **dans le monde**.
+    ///
+    /// Surtout pas un cap rangé dans la grille. Rangée dans la grille,
+    /// l'orientation hérite de son cisaillement : près d'un coin les tangentes
+    /// se coupent à 120° et non à 90°, si bien qu'un quart de tour en
+    /// coordonnées n'est plus un quart de tour dans le monde. Aucune
+    /// compensation ne rattrape ça — la visée sautait de 25,6° au
+    /// franchissement.
+    ///
+    /// Un vecteur du monde, lui, n'a pas à savoir dans quelles coordonnées on
+    /// l'exprime. Le franchissement devient un non-événement pour
+    /// l'orientation, par construction.
+    pub regard: Vec3,
     pub tangage: f32,
 }
 
 impl Camera {
-    /// Direction de marche, **dans le repère plat de la face**. C'est celle-ci
-    /// que le déplacement et la visée emploient — jamais la 3D.
-    pub fn avant(&self) -> Vec3 {
-        let (sl, cl) = self.lacet.sin_cos();
-        let (st, ct) = self.tangage.sin_cos();
-        Vec3::new(ct * cl, ct * sl, st)
+    /// La verticale locale et les deux tangentes du paramétrage, **telles
+    /// quelles** — non orthogonalisées, donc à 120° l'une de l'autre près d'un
+    /// coin. C'est leur non-orthogonalité qui rend la décomposition juste.
+    ///
+    /// Les tangentes sont mises à l'échelle du monde : une unité de coordonnée
+    /// y vaut sa vraie longueur en blocs, laquelle varie de 0,69 à 1,00 selon
+    /// l'endroit de la face.
+    fn base(&self) -> (DVec3, DVec3, DVec3) {
+        let (u, v) = (self.position.x as f64, self.position.y as f64);
+        let haut = DVec3::from_array(direction(self.face, u, v));
+
+        // Différence centrée sur un bloc, et **repliée** : elle ne se fait pas
+        // tronquer au bord de la face.
+        let tangente = |du: f64, dv: f64| {
+            let devant = DVec3::from_array(direction_continue(self.face, u + du, v + dv));
+            let derriere = DVec3::from_array(direction_continue(self.face, u - du, v - dv));
+            let t = (devant - derriere) * RAYON;
+            t - haut * t.dot(haut)
+        };
+        (haut, tangente(0.5, 0.0), tangente(0.0, 0.5))
     }
 
-    pub fn droite(&self) -> Vec3 {
-        let (sl, cl) = self.lacet.sin_cos();
-        Vec3::new(sl, -cl, 0.0)
+    fn regard_redresse(&self, haut: DVec3) -> DVec3 {
+        let r = DVec3::new(
+            self.regard.x as f64,
+            self.regard.y as f64,
+            self.regard.z as f64,
+        );
+        let plat = r - haut * r.dot(haut);
+        if plat.length_squared() > 1e-12 {
+            plat.normalize()
+        } else {
+            // Regard exactement vertical : n'importe quelle horizontale fera
+            // l'affaire, autant prendre celle de la grille.
+            self.base().1.normalize()
+        }
     }
 
     /// Le repère de la caméra sur la planète : position, direction de visée et
     /// verticale locale.
     ///
-    /// Le lacet et le tangage sont les mêmes qu'à plat — ils sont simplement
-    /// lus dans le plan tangent au lieu du plan de la face. Le réticule pointe
-    /// donc là où la visée à plat calcule, aux quelques blocs de dérive près que
-    /// mesure `--diag`.
+    /// Le regard est redressé contre la verticale avant usage. Ce redressement
+    /// **est** le transport parallèle discret : c'est lui qui garde le
+    /// mouvement fluide quand la caméra se déplace sur la sphère.
     pub fn repere_3d(&self, rayon: f64) -> (DVec3, Vec3, Vec3) {
         let (u, v) = (self.position.x as f64, self.position.y as f64);
         let haut = DVec3::from_array(direction(self.face, u, v));
         let position = haut * (rayon + self.position.z as f64);
 
-        // Tangente le long de +u, prise par une différence **centrée** et
-        // **repliée**. Les deux détails comptent : centrée, elle décrit le
-        // point où l'on est et non un demi-bloc plus loin ; repliée, elle ne
-        // se fait pas tronquer au bord de la face. Sans cela, deux caméras de
-        // part et d'autre d'un bord obtenaient des repères pris sur des
-        // voisinages différents, et la visée sautait de 0,29° au passage.
-        // Tangente le long de +u, prise par une différence **centrée** et
-        // **repliée** : centrée, elle décrit le point où l'on est ; repliée, elle
-        // ne se fait pas tronquer au bord de la face.
-        //
-        // Le repère est ensuite redressé. Employer les tangentes brutes serait
-        // plus fidèle au paramétrage — elles se coupent à 120° près d'un coin —
-        // mais cela reporte le cisaillement dans la visée elle-même, et le
-        // balancement mesuré près d'un coin double. Le repère redressé le
-        // concentre au franchissement au lieu de l'étaler ; à défaut de pouvoir
-        // le supprimer, c'est le moindre mal.
-        let pas = 0.5;
-        let devant = DVec3::from_array(direction_continue(self.face, u + pas, v));
-        let derriere = DVec3::from_array(direction_continue(self.face, u - pas, v));
-        let brut = devant - derriere;
-
-        let est = (brut - haut * brut.dot(haut)).normalize();
-        let nord = haut.cross(est);
-
-        let (sl, cl) = (self.lacet as f64).sin_cos();
+        let regard = self.regard_redresse(haut);
         let (st, ct) = (self.tangage as f64).sin_cos();
-        let avant = (est * (ct * cl) + nord * (ct * sl) + haut * st).normalize();
+        let avant = (regard * ct + haut * st).normalize();
 
         (
             position,
@@ -592,17 +605,88 @@ impl Camera {
         )
     }
 
+    /// La droite de la caméra, dans le monde.
+    pub fn droite(&self) -> Vec3 {
+        let (haut, _, _) = self.base();
+        let d = self.regard_redresse(haut).cross(haut);
+        Vec3::new(d.x as f32, d.y as f32, d.z as f32)
+    }
+
+    /// Le regard, horizontal, dans le monde.
+    pub fn avant_plat(&self) -> Vec3 {
+        let (haut, _, _) = self.base();
+        let r = self.regard_redresse(haut);
+        Vec3::new(r.x as f32, r.y as f32, r.z as f32)
+    }
+
+    /// Fait tourner le regard autour de la verticale locale.
+    pub fn tourner(&mut self, angle: f32) {
+        let (haut, _, _) = self.base();
+        let r = self.regard_redresse(haut);
+        let (s, c) = (angle as f64).sin_cos();
+        let tourne = (r * c + haut.cross(r) * s).normalize();
+        self.regard = Vec3::new(tourne.x as f32, tourne.y as f32, tourne.z as f32);
+    }
+
+    /// Pose le regard depuis un angle lu dans le repère de la face.
+    ///
+    /// Commodité d'amorçage — pour les téléportations et les tests — et rien de
+    /// plus : passé l'amorçage, le regard ne repasse plus jamais par la grille.
+    pub fn poser_cap(&mut self, angle: f32) {
+        let (haut, tu, _) = self.base();
+        let est = (tu - haut * tu.dot(haut)).normalize();
+        let nord = haut.cross(est);
+        let (s, c) = (angle as f64).sin_cos();
+        let r = (est * c + nord * s).normalize();
+        self.regard = Vec3::new(r.x as f32, r.y as f32, r.z as f32);
+    }
+
+    /// Tourne le regard vers une direction du monde, projetée sur l'horizon.
+    ///
+    /// C'est ainsi qu'on vise un lieu depuis que le cap vit dans le monde :
+    /// poser un angle dans le repère de la face ne désigne plus un endroit, car
+    /// la marche suit une géodésique et non une ligne de grille.
+    pub fn viser_point(&mut self, cible: Vec3) {
+        let (haut, _, _) = self.base();
+        let c = DVec3::new(cible.x as f64, cible.y as f64, cible.z as f64);
+        let plat = c - haut * c.dot(haut);
+        if plat.length_squared() > 1e-12 {
+            let r = plat.normalize();
+            self.regard = Vec3::new(r.x as f32, r.y as f32, r.z as f32);
+        }
+    }
+
+    /// Décompose un déplacement tangent du monde sur les deux tangentes de la
+    /// grille, en unités de coordonnée.
+    ///
+    /// Système 2×2 sur la matrice de Gram. Les tangentes ne sont jamais
+    /// parallèles — 60° au pire, à un coin — donc le déterminant reste sain.
+    ///
+    /// C'est le seul endroit où le déplacement consulte la projection : le
+    /// redressement à l'entrée que la règle de D27 prévoit. Le monde, lui,
+    /// n'est toujours interrogé qu'à plat.
+    pub fn vers_coordonnees(&self, d3: Vec3) -> (f32, f32) {
+        let (haut, tu, tv) = self.base();
+        let d = DVec3::new(d3.x as f64, d3.y as f64, d3.z as f64);
+        let d = d - haut * d.dot(haut);
+
+        let (guu, guv, gvv) = (tu.dot(tu), tu.dot(tv), tv.dot(tv));
+        let det = guu * gvv - guv * guv;
+        if det.abs() < 1e-12 {
+            return (0.0, 0.0);
+        }
+        let (bu, bv) = (d.dot(tu), d.dot(tv));
+        (
+            ((bu * gvv - bv * guv) / det) as f32,
+            ((bv * guu - bu * guv) / det) as f32,
+        )
+    }
+
     /// Replie la position dans le patron. Rend le nombre de quarts de tour si
     /// un bord a été franchi.
     ///
-    /// Franchir une arête fait tourner le monde sous les pieds du joueur : le
-    /// lacet tourne d'autant, sans quoi la marche repartirait de travers. Rien
-    /// ne saute pour autant — la rotation du lacet compense exactement celle du
-    /// repère de la face, et `--diag` le vérifie.
-    ///
-    /// **Cette compensation n'est exacte que pour un bord à la fois.** Un
-    /// déplacement qui sort par deux bords d'un coup passe par
-    /// [`Self::avancer`], qui le découpe.
+    /// **L'orientation n'est pas touchée.** Elle vit dans le monde ; changer de
+    /// face ne change que la façon d'écrire la position.
     pub fn replier(&mut self) -> Option<u8> {
         let (fc, u, v, k) = replier_continu(
             self.face,
@@ -616,22 +700,20 @@ impl Camera {
         self.face = fc;
         self.position.x = u as f32;
         self.position.y = v as f32;
-        self.lacet += k as f32 * std::f32::consts::FRAC_PI_2;
         Some(k)
     }
 
-    /// Avance de `deplacement`, **en s'arrêtant à chaque bord franchi**.
+    /// Avance de `deplacement`, exprimé en coordonnées de la face, **en
+    /// s'arrêtant à chaque bord franchi**.
     ///
     /// Sans ce découpage, un pas de plusieurs blocs qui sort de la face par
     /// deux bords à la fois laisse le repliement résoudre `u` puis `v`. Or
     /// franchir le bord `+u` en un point dont le `v` est déjà dehors, c'est
     /// franchir un prolongement virtuel de ce bord, qui ne correspond à rien
     /// sur la surface : le résultat ne dépend plus de la géométrie mais de
-    /// l'ordre du code. Cela se voyait — la vue tournait de 60° d'un coup en
-    /// passant près d'un coin.
+    /// l'ordre du code.
     ///
-    /// Découpé, chaque repliement redevient un vrai franchissement d'arête,
-    /// donc exact. Rend le nombre de bords franchis.
+    /// Rend le nombre de bords franchis.
     pub fn avancer(&mut self, deplacement: Vec3) -> u32 {
         let mut reste = deplacement;
         let mut franchis = 0;
@@ -655,7 +737,8 @@ impl Camera {
 
             if let Some(k) = self.replier() {
                 franchis += 1;
-                // Le reste du déplacement change de repère avec la caméra.
+                // Le reste du déplacement, lui, est bien en coordonnées : le
+                // changement de repère y est exactement le quart de tour.
                 let (cos, sin) = crate::cube::COS_SIN[k as usize];
                 let (cos, sin) = (cos as f32, sin as f32);
                 reste = Vec3::new(
@@ -665,6 +748,9 @@ impl Camera {
                 );
             }
         }
+
+        // On range un regard propre, redressé contre la nouvelle verticale.
+        self.regard = self.avant_plat();
         franchis
     }
 }

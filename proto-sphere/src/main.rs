@@ -80,7 +80,8 @@ impl App {
                     v as f32 + 0.5,
                     hauteur_de_vol(&gen, face, u, v),
                 ),
-                lacet: 0.0,
+                // Amorçage : posé juste après, une fois la caméra construite.
+                regard: Vec3::X,
                 tangage: -0.22,
             },
             gen,
@@ -138,7 +139,8 @@ impl App {
         // Regard : glisser dans la vue. Le tangage se bloque juste avant la
         // verticale, sinon la base de la caméra dégénère.
         if glisse != egui::Vec2::ZERO {
-            self.cam.lacet -= glisse.x * 0.005;
+            // Le regard tourne autour de la verticale locale, dans le monde.
+            self.cam.tourner(-glisse.x * 0.005);
             self.cam.tangage = (self.cam.tangage - glisse.y * 0.005).clamp(-1.55, 1.55);
         }
 
@@ -185,14 +187,18 @@ impl App {
         });
 
         let pas = self.vitesse * facteur * dt;
-        let dir = self.cam.avant();
-        let droite = self.cam.droite();
-        let mut deplacement = dir * (avant * pas) + droite * (cote * pas);
-        deplacement.z += vertical * pas;
+
+        // L'intention est formée dans le monde : c'est là que vit le regard.
+        let (_, vise, haut) = self.cam.repere_3d(RAYON);
+        let d3 = vise * (avant * pas) + self.cam.droite() * (cote * pas);
+
+        // Puis redressée une fois, à l'entrée, vers les coordonnées de la face.
+        let montee = d3.dot(haut) + vertical * pas;
+        let (du, dv) = self.cam.vers_coordonnees(d3);
 
         // Le seul endroit où la topologie touche le joueur — et elle le touche
         // par un déplacement découpé, pas par un saut suivi d'un repliement.
-        self.aretes += self.cam.avancer(deplacement);
+        self.aretes += self.cam.avancer(Vec3::new(du, dv, montee));
         self.cam.position.z = self
             .cam
             .position
@@ -401,7 +407,8 @@ fn depart(app: &mut App) {
     }
     if let Some(i) = args.iter().position(|a| a == "--film") {
         let dossier = args.get(i + 1).cloned().unwrap_or_else(|| "film".into());
-        let bobine = film::Film::nouveau(dossier);
+        let mut bobine = film::Film::nouveau(dossier);
+        bobine.apex = args.iter().any(|a| a == "--apex");
         app.cam = bobine.debut(&app.gen);
         app.film = Some(bobine);
         app.reglages.budget = 4096;
@@ -425,7 +432,7 @@ fn depart(app: &mut App) {
             Some("coin") => {
                 let (f, u, v) = terre_pres(&app.gen, COIN.0, COIN.1, COIN.2);
                 app.aller(f, u, v);
-                app.cam.lacet = 2.36;
+                app.cam.poser_cap(2.36);
                 app.cam.tangage = -0.45;
             }
             Some("arete") => {
