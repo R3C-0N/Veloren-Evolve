@@ -409,6 +409,14 @@ fn depart(app: &mut App) {
         let dossier = args.get(i + 1).cloned().unwrap_or_else(|| "film".into());
         let mut bobine = film::Film::nouveau(dossier);
         bobine.apex = args.iter().any(|a| a == "--apex");
+        if let Some(blocs) = args
+            .iter()
+            .position(|a| a == "--pas")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse::<f32>().ok())
+        {
+            bobine.pas_constant(blocs);
+        }
         app.cam = bobine.debut(&app.gen);
         app.film = Some(bobine);
         app.reglages.budget = 4096;

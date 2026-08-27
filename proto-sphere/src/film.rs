@@ -31,6 +31,11 @@ pub const IMAGES: usize = 120;
 /// Longueur du trajet, en blocs. Il commence avant le coin et finit après.
 const TRAJET: f32 = 620.0;
 
+/// L'image où l'on veut que le franchissement tombe. Le recul du départ s'en
+/// déduit — et non l'inverse : la marche suit une géodésique, donc une distance
+/// comptée en coordonnées ne prédit plus le nombre d'images qu'il faudra.
+const IMAGE_DU_COIN: usize = IMAGES * 47 / 100;
+
 /// De combien le trajet évite l'apex, en blocs. Assez pour que les deux
 /// arêtes soient franchies à des instants distincts, assez peu pour qu'on
 /// passe bel et bien au coin.
@@ -43,7 +48,8 @@ pub struct Film {
     pub apex: bool,
     pub journal: Vec<Etape>,
     precedente: Option<glam::Vec3>,
-    /// Longueur de chaque pas. Elle n'est pas constante : voir [`cadence`].
+    /// Longueur de chaque pas, en blocs. Elle n'est pas constante par défaut :
+    /// voir [`cadence`].
     pas: Vec<f32>,
     parcouru: f32,
 }
@@ -72,6 +78,17 @@ impl Film {
             pas: cadence(),
             parcouru: 0.0,
         }
+    }
+
+    /// Impose un pas constant, en blocs par image.
+    ///
+    /// Le film cesse alors d'être une mesure et redevient un film : on voit ce
+    /// que verrait un joueur qui marche. La contrepartie est réelle — à pas
+    /// large, un saut d'orientation au franchissement ne se distingue plus d'un
+    /// artefact d'échantillonnage, et le chiffre affiché cesse d'être
+    /// opposable. C'est la cadence variable qui prouve ; celle-ci montre.
+    pub fn pas_constant(&mut self, blocs: f32) {
+        self.pas = vec![blocs; IMAGES];
     }
 
     /// Pose la caméra au début du trajet.
@@ -114,7 +131,7 @@ impl Film {
         );
         cam.viser_point(centre);
 
-        let recul = TRAJET * 0.45;
+        let recul: f32 = self.pas[..IMAGE_DU_COIN].iter().sum();
         let pas = 2.0f32;
         for _ in 0..(recul / pas) as usize {
             let (du, dv) = cam.vers_coordonnees(cam.avant_plat() * pas);
@@ -185,8 +202,11 @@ impl Film {
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect();
 
+        // 74 plutôt que 82 : trois séquences de 120 images doivent tenir dans
+        // une page autonome, où chaque image entre en base64. Le ciel est la
+        // seule surface assez lisse pour que la différence se voie.
         let mut codeur =
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut sortie, 82);
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut sortie, 74);
         codeur
             .encode(&rgb, LARGEUR, HAUTEUR, image::ExtendedColorType::Rgb8)
             .expect("encodage JPEG");
@@ -227,7 +247,7 @@ impl Film {
 /// donc là où il se passe quelque chose : c'est la seule façon de filmer une
 /// chose rapide sans la déformer.
 fn cadence() -> Vec<f32> {
-    let centre = IMAGES as f32 * 0.47;
+    let centre = IMAGE_DU_COIN as f32;
     let largeur = IMAGES as f32 * 0.16;
 
     let mut poids: Vec<f32> = (0..IMAGES)
