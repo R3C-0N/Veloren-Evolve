@@ -4039,35 +4039,35 @@
     // reemploie des modeles proches ; l'icone est cosmetique et retombe de
     // toute facon sur `not_found` si elle manque.
     Simple("common.items.block.stone"): VoxTrans(
-        "voxel.sprite.rocks.rock-1",
+        "voxel.item.block.stone",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.earth"): VoxTrans(
-        "voxel.sprite.underwater_mud.mud-0",
+        "voxel.item.block.earth",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.sand"): VoxTrans(
-        "voxel.sprite.rocks.rock-2",
+        "voxel.item.block.sand",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.grass"): VoxTrans(
-        "voxel.sprite.grass.grass_large-0",
+        "voxel.item.block.grass",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.wood"): VoxTrans(
-        "voxel.item.wood.wood",
+        "voxel.item.block.wood",
         (0.0, 0.0, 0.0), (-50.0, 30.0, 20.0), 0.8,
     ),
     Simple("common.items.block.leaves"): VoxTrans(
-        "voxel.sprite.leafy_plant.1",
+        "voxel.item.block.leaves",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.snow"): VoxTrans(
-        "voxel.sprite.snow_pebbles.snow_pebbles-0",
+        "voxel.item.block.snow",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.block.ice"): VoxTrans(
-        "voxel.item.crafting.animal_misc.ice_shard",
+        "voxel.item.block.ice",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.crafting_ing.cactus"): VoxTrans(
