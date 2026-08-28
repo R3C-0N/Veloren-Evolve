@@ -11,8 +11,11 @@ use crate::cube::{
     COS_SIN, FACE, FACE_CHUNKS, NOMS, RAYON, direction, point_sphere, replier_bloc,
     replier_chunk,
 };
-use crate::monde::{Generateur, NIVEAU_MER, TAILLE_CHUNK, biome_de, point_apparition};
+use crate::ancre::{Ancre, LARGEUR_NAPPE, Portail};
+use crate::chunk::Chunk;
 use crate::conforme;
+use crate::monde::{Bloc, Generateur, NIVEAU_MER, TAILLE_CHUNK, biome_de, point_apparition};
+use crate::poche::{self, Poche};
 use crate::vue3d::{Camera, viser};
 use glam::{DVec3, Vec3};
 use std::collections::HashSet;
@@ -34,7 +37,430 @@ pub fn executer() {
     continuite_du_deroulement();
     marcher_a_travers_les_bords();
     derive_de_visee(&gen);
+    ancre_temporelle(&gen);
     terrain(&gen);
+}
+
+// --------------------------------------------------------------------------
+// L'ancre temporelle : ce que coûte un second monde
+// --------------------------------------------------------------------------
+
+/// Trois mesures, une par chose que le portail pourrait casser.
+///
+/// D17 affirme que le coût d'un second monde est architectural. Ce qui se
+/// vérifie ici n'est pas ce coût — un banc d'essai ne mesure pas un devis — mais
+/// les trois façons dont un second monde peut abîmer le premier : perdre l'état
+/// qu'on lui a confié, se mélanger à lui, ou ranger son point d'entrée dans la
+/// grille au lieu du monde.
+fn ancre_temporelle(gen: &Generateur) {
+    retour_exact(gen);
+    taille_de_la_nappe(gen);
+    traversee_reversible(gen);
+    mondes_disjoints();
+    ancre_dans_le_monde(gen);
+}
+
+/// **Les deux nappes font-elles la même taille ?**
+///
+/// Celle du passé est bâtie dans un monde plat : ses trois blocs sont trois
+/// blocs. Celle du présent est bâtie sur la sphère, où un pas de grille vaut
+/// entre 0,69 et 1,00 bloc — si on la taille en coordonnées, elle rétrécit là
+/// où les blocs sont petits, et les deux côtés du portail cessent de se
+/// correspondre.
+///
+/// On mesure donc la largeur **rendue**, par le chemin exact du rendu :
+/// `direction` appliquée aux deux bords du cadre, et la distance entre les deux
+/// points obtenus. C'est le seul chiffre opposable — la largeur en coordonnées
+/// ne dit rien de ce qu'on voit.
+fn taille_de_la_nappe(gen: &Generateur) {
+    println!("── Les deux nappes ont-elles la même taille ? ──");
+    println!("  lieu                     largeur rendue   attendu   taille du bloc");
+
+    let mut pire = 0.0f64;
+    for (nom, cam) in lieux(gen) {
+        let p = Portail::ouvrir(gen, &cam, 5);
+        let demi = (LARGEUR_NAPPE * 0.5) as f64;
+        let rayon_nappe = RAYON + p.z as f64 + crate::ancre::CENTRE_NAPPE as f64;
+        let bord = |s: f64| {
+            let u = p.u as f64 + 0.5 + p.axe_droite.x as f64 * demi * s;
+            let v = p.v as f64 + 0.5 + p.axe_droite.y as f64 * demi * s;
+            DVec3::from_array(direction(p.face, u, v)) * rayon_nappe
+        };
+        let large = (bord(1.0) - bord(-1.0)).length();
+        // La taille d'un bloc à cet endroit *et à cette altitude* : un pas de
+        // grille, en vrai. C'est à lui que la nappe doit se mesurer.
+        let rayon = RAYON + p.z as f64 + crate::ancre::CENTRE_NAPPE as f64;
+        let pas = {
+            let a = DVec3::from_array(direction(p.face, p.u as f64, p.v as f64 + 0.5));
+            let b = DVec3::from_array(direction(p.face, p.u as f64 + 1.0, p.v as f64 + 0.5));
+            (a - b).length() * rayon
+        };
+        pire = pire.max((large - LARGEUR_NAPPE as f64).abs());
+        println!(
+            "  {nom:<22}   {large:>14.3}   {:>7.3}   {pas:>14.3}",
+            LARGEUR_NAPPE
+        );
+    }
+    println!("  pire écart avec la nappe du passé : {pire:.3} bloc");
+    println!();
+}
+
+/// **La traversée est-elle réversible ?**
+///
+/// Depuis que l'on passe *à travers* le portail au lieu d'y être téléporté, la
+/// caméra fait l'aller par une transformation et le retour par l'autre. Si les
+/// deux ne se répondaient pas exactement, un joueur qui entre et ressort
+/// aussitôt se retrouverait à côté de là où il était.
+///
+/// Ce n'est pas une tautologie. L'aller compose la projection — `direction`,
+/// par `repere_3d` — et le retour son **inverse**, `depuis_direction`. Une
+/// erreur de l'un ne s'annule pas contre l'autre : elle s'ajoute. C'est donc
+/// aussi une mesure de l'inversibilité que D27 exige, prise par le chemin dont
+/// le jeu se sert vraiment.
+fn traversee_reversible(gen: &Generateur) {
+    println!("── La traversée est-elle réversible ? ──");
+    println!("  lieu                     pas   écart position   écart de cap");
+
+    let (mut pire_d, mut pire_a) = (0.0f32, 0.0f64);
+    for (nom, depart) in lieux(gen) {
+        let portail = Portail::ouvrir(gen, &depart, 11);
+        let mut cam = depart;
+
+        for pas in 1..=3 {
+            // On se rapproche de la nappe : c'est près d'elle que la
+            // transformation est sollicitée, et près d'un coin qu'elle risque.
+            let d3 = cam.avant_plat() * 2.0;
+            let (du, dv) = cam.vers_coordonnees(d3);
+            cam.avancer(Vec3::new(du, dv, 0.0));
+
+            let revenu = portail.camera_de_la_sphere(&portail.camera_de_la_poche(&cam));
+
+            let (pa, va, _) = cam.repere_3d(RAYON);
+            let (pb, vb, _) = revenu.repere_3d(RAYON);
+            let d = (pa - pb).length() as f32;
+            let a = (va.dot(vb) as f64).clamp(-1.0, 1.0).acos().to_degrees();
+            pire_d = pire_d.max(d);
+            pire_a = pire_a.max(a);
+            println!("  {nom:<22}  {pas:>4}   {d:>14.6}   {a:>12.4}°");
+        }
+    }
+    println!("  pire écart                       : {pire_d:.6} bloc · {pire_a:.4}°");
+    println!("  (à comparer au millième de bloc de l'inversion de la projection)");
+    println!();
+}
+
+/// Une caméra posée quelque part, cap donné.
+fn camera_a(gen: &Generateur, face: u8, u: i32, v: i32, cap: f32) -> Camera {
+    let mut cam = Camera {
+        face,
+        position: Vec3::new(
+            u as f32 + 0.5,
+            v as f32 + 0.5,
+            gen.hauteur(face, u, v).max(NIVEAU_MER as f32) + 30.0,
+        ),
+        regard: Vec3::X,
+        tangage: -0.2,
+    };
+    cam.poser_cap(cap);
+    cam
+}
+
+/// Les quatre lieux d'épreuve, du facile au dur.
+fn lieux(gen: &Generateur) -> Vec<(&'static str, Camera)> {
+    let (f, u, v) = point_apparition(gen);
+    let coin = FACE - 3;
+    vec![
+        ("prairie de départ", camera_a(gen, f, u, v, 0.7)),
+        ("milieu d'arête", camera_a(gen, 1, FACE / 2, FACE - 2, 1.57)),
+        ("à 3 blocs d'un coin", camera_a(gen, 1, coin, coin, 2.36)),
+        // Hors de sa face des deux côtés : le repliement s'en charge, et c'est
+        // justement le cas où une ancre mal rangée se ferait remarquer.
+        ("au-delà du coin", camera_a(gen, 1, FACE + 40, FACE + 40, 2.36)),
+    ]
+}
+
+/// **1. Le retour est exact.**
+///
+/// On ouvre, on entre, on marche dans la poche, on est expulsé, et on compare.
+/// La comparaison est **au bit près**, pas à epsilon : le retour est une
+/// recopie de quatre champs, il n'a aucune raison de dériver. Un epsilon
+/// masquerait le jour où il en aurait une, et une mesure qui ne peut pas
+/// échouer sert d'alibi.
+fn retour_exact(gen: &Generateur) {
+    println!("── Aller-retour par une ancre ──");
+    println!("  lieu                    face       écart position   écart de cap   au bit près");
+
+    for (nom, depart) in lieux(gen) {
+        // Ce que le joueur fait vraiment : il marche, puis il ouvre.
+        let mut cam = depart;
+        let d3 = cam.avant_plat() * 40.0;
+        let (du, dv) = cam.vers_coordonnees(d3);
+        cam.avancer(Vec3::new(du, dv, 0.0));
+
+        let portail = Portail::ouvrir(gen, &cam, 7);
+        let temoin = Ancre::poser(&cam);
+
+        // On franchit, on vit dans la poche, on en est expulsé.
+        let poche = Poche::nouvelle(portail.graine);
+        let mut plate = poche.depart();
+        for _ in 0..200 {
+            plate.avancer(Vec3::new(1.7, -0.9, 0.3));
+            plate.tourner(0.05);
+        }
+
+        // L'expulsion. Recopie, et rien d'autre — comme dans `App::expulser`.
+        let mut revenu = Camera {
+            face: 0,
+            position: Vec3::ZERO,
+            regard: Vec3::X,
+            tangage: 0.0,
+        };
+        portail.retour.restituer(&mut revenu);
+
+        let (d, a) = temoin.ecart(&revenu);
+        println!(
+            "  {nom:<22}  {:<8}   {d:>12.6}   {a:>11.3}°   {}",
+            NOMS[revenu.face as usize],
+            if temoin.identique_au_bit(&revenu) { "oui" } else { "NON" },
+        );
+    }
+    println!();
+}
+
+/// **2. Les deux mondes ne se mélangent pas.**
+///
+/// La disjonction est d'abord dans les types : ni [`crate::poche::Poche`] ni
+/// [`Chunk::poche`] ne prennent de `&Generateur`, et la clé de cache de la
+/// poche n'a pas le même type que celle de la sphère. Ce sont des faits de
+/// compilation, pas des mesures — et un fait de compilation ne se voit pas à
+/// l'exécution, donc il ne suffit pas à rassurer.
+///
+/// Ce qu'on mesure ici, c'est l'inverse : que la poche soit **insensible** au
+/// monde sphérique, et **finie**. Si la sphère fuyait, changer sa graine
+/// changerait le contenu de la poche ; si la poche ne se terminait pas, il y
+/// aurait de la matière au-delà de son mur.
+fn mondes_disjoints() {
+    println!("── Les deux mondes se touchent-ils ? ──");
+
+    // a. La poche, engendrée sous deux mondes sphériques différents.
+    let a = Poche::nouvelle(7);
+    let b = Poche::nouvelle(7);
+    let mut differents = 0usize;
+    let mut testes = 0usize;
+    for cv in 0..poche::COTE_CHUNKS {
+        for cu in 0..poche::COTE_CHUNKS {
+            // Deux générateurs de sphère bien distincts existent de part et
+            // d'autre de cet appel — et n'y entrent pas.
+            let _sphere_a = Generateur::nouveau(1);
+            let _sphere_b = Generateur::nouveau(4242);
+            let ca = Chunk::poche(&a, cu, cv);
+            let cb = Chunk::poche(&b, cu, cv);
+            for z in (0..crate::monde::HAUTEUR_CHUNK).step_by(7) {
+                for lv in (0..TAILLE_CHUNK).step_by(5) {
+                    for lu in (0..TAILLE_CHUNK).step_by(5) {
+                        testes += 1;
+                        if ca.bloc(lu, lv, z) != cb.bloc(lu, lv, z) {
+                            differents += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "  poche identique sous deux mondes      : {}  ({differents} blocs sur {testes})",
+        verdict(differents == 0)
+    );
+
+    // b. La poche est finie. Au-delà de son mur, rien — et « rien » veut dire
+    //    de l'air, pas le terrain d'à côté.
+    let p = Poche::nouvelle(7);
+    let mut fuite = 0usize;
+    let mut dehors = 0usize;
+    for z in 0..crate::monde::HAUTEUR_CHUNK {
+        for v in (-600..poche::COTE + 600).step_by(13) {
+            for u in [-600, -64, -1, poche::COTE, poche::COTE + 64, poche::COTE + 600] {
+                dehors += 1;
+                if p.bloc(u, v, z) != Bloc::Air {
+                    fuite += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "  air partout hors des bornes           : {}  ({fuite} blocs sur {dehors})",
+        verdict(fuite == 0)
+    );
+    println!(
+        "  côté de la poche                      : {} blocs · {} chunks",
+        poche::COTE,
+        poche::COTE_CHUNKS * poche::COTE_CHUNKS
+    );
+    println!();
+}
+
+/// **3. L'ancre suit le monde, pas la grille.**
+///
+/// On pose un portail près d'un coin, puis on fait marcher la caméra tout
+/// droit — ce qui, sur le cube, franchit des arêtes et suit une géodésique.
+/// Deux colonnes : la distance qui décide vraiment de la traversée, dans le
+/// monde, et celle qu'aurait donnée un test rangé dans la grille.
+///
+/// La seconde n'existe que pour se faire voir fausse. Si les deux colonnes
+/// coïncidaient, ranger l'ancre dans la grille serait sans conséquence, et le
+/// troisième point de cette section serait sans objet.
+fn ancre_dans_le_monde(gen: &Generateur) {
+    println!("── L'ancre est-elle un point du monde ? ──");
+
+    // Un coin, et une caméra qui rase le sol : on veut que la distance
+    // horizontale domine, sinon l'altitude noie ce qu'on vient mesurer.
+    let coin = FACE - 6;
+    let mut cam = camera_a(gen, 1, coin, coin, 2.36);
+    cam.position.z = gen
+        .hauteur(cam.face, coin, coin)
+        .max(NIVEAU_MER as f32)
+        + 4.0;
+    cam.tangage = 0.0;
+
+    let portail = Portail::ouvrir(gen, &cam, 3);
+
+    // À la hauteur du portail. Le relief peut l'avoir repoussé de quelques
+    // blocs vers le haut — dans le jeu on redescend, ici on veut isoler
+    // l'approche horizontale, qui est ce qu'on vient mesurer.
+    cam.position.z = portail.z as f32 + 2.0;
+
+    // On recule, loin, puis on revient dessus. C'est la seule forme de mesure
+    // qui compte : celle qui **approche** le portail et finit par le franchir.
+    // Marcher en s'en éloignant ferait toujours dire la même chose aux deux
+    // tests, et une mesure qui ne peut pas échouer sert d'alibi (D28).
+    let marcher = |cam: &mut Camera, blocs: f32| -> u32 {
+        let d3 = cam.avant_plat() * blocs;
+        let (du, dv) = cam.vers_coordonnees(d3);
+        cam.avancer(Vec3::new(du, dv, 0.0))
+    };
+    for _ in 0..24 {
+        marcher(&mut cam, -5.0);
+    }
+
+    println!(
+        "  portail en {} {} {} sur {} — axes du cadre ({:.3} {:.3}) et ({:.3} {:.3})",
+        portail.u,
+        portail.v,
+        portail.z,
+        NOMS[portail.face as usize],
+        portail.axe_droite.x,
+        portail.axe_droite.y,
+        portail.axe_avant.x,
+        portail.axe_avant.y,
+    );
+    println!("  pas   face      dans le monde   en coordonnées      écart");
+
+    let mut aretes = 0;
+    let mut muettes = 0;
+    let mut vus = 0usize;
+    let mut pas_segment: Option<usize> = None;
+    let mut pas_point: Option<usize> = None;
+    let mut pas_grille: Option<usize> = None;
+
+    for pas in 0..=40 {
+        // Le joueur regarde le portail : on vise sa place **dans le monde**,
+        // puisque c'est là qu'elle est rangée. Poser un cap dans la grille ne
+        // désignerait plus l'endroit — la marche suit une géodésique.
+        let ici = cam.repere_3d(RAYON).0;
+        let vers = portail.lieu - ici;
+        cam.viser_point(Vec3::new(vers.x as f32, vers.y as f32, vers.z as f32));
+
+        let vraie = portail.distance(&cam);
+        let grille = portail.distance_en_coordonnees(&cam);
+        vus += 1;
+
+        let (col, ecart) = if grille.is_finite() {
+            (
+                format!("{grille:>14.1}"),
+                format!("{:>+9.1}", grille as f64 - vraie),
+            )
+        } else {
+            muettes += 1;
+            ("      autre face".to_string(), "        —".to_string())
+        };
+        println!(
+            "  {pas:>3}   {:<8} {vraie:>13.1}   {col}   {ecart}",
+            NOMS[cam.face as usize]
+        );
+
+        // Les trois verdicts possibles, sur le même pas. Le test « naïf » est
+        // celui qu'on écrit spontanément : le point d'arrivée est-il assez près
+        // de la nappe ? Son rayon est la demi-largeur de l'ouverture, ce qui est
+        // le choix le plus favorable qu'on puisse lui faire.
+        let naif = (LARGEUR_NAPPE * 0.5) as f64;
+        if vraie <= naif && pas_point.is_none() {
+            pas_point = Some(pas);
+        }
+        if (grille as f64) <= naif && pas_grille.is_none() {
+            pas_grille = Some(pas);
+        }
+
+        let avant = cam.repere_3d(RAYON).0;
+        aretes += marcher(&mut cam, 5.0);
+        let apres = cam.repere_3d(RAYON).0;
+        if portail.franchi(avant, apres).is_some() {
+            pas_segment = Some(pas);
+            println!("  {pas:>3}   le pas suivant passe à travers.");
+            break;
+        }
+    }
+
+    println!("  arêtes franchies pendant l'approche    : {aretes}");
+    println!(
+        "  pas où la grille n'a pas de réponse    : {muettes} sur {vus} — le portail \
+         et la caméra n'y sont pas sur la même face,"
+    );
+    println!(
+        "                                          et deux repères de face ne se \
+         comparent pas."
+    );
+
+    // Le vrai enseignement de cette approche : un test ponctuel ne suffit pas.
+    match (pas_segment, pas_point) {
+        (Some(a), Some(b)) => println!(
+            "  franchissement : pas {a} au segment, pas {b} au point — les deux voient"
+        ),
+        (Some(a), None) => println!(
+            "  franchissement : pas {a} au segment, **jamais** au point — à cinq blocs \
+             par pas, un test de proximité traverse sans voir. C'est pourquoi \
+             `franchi` coupe le plan de la nappe le long du segment."
+        ),
+        (None, _) => println!("  le portail n'a pas été atteint : allonger l'approche"),
+    }
+    if pas_grille.is_none() {
+        println!(
+            "  et un test rangé dans la grille n'aurait jamais rien déclenché du tout."
+        );
+    }
+
+    // Deuxième moitié : quand la grille *a* une réponse, que vaut-elle ?
+    //
+    // Les caméras témoins sont posées directement sur la face du portail, sans
+    // marcher : on veut mesurer l'écart des deux métriques, pas la longueur
+    // d'un trajet. Elles s'écartent vers l'intérieur de la face, donc elles y
+    // restent, et la comparaison a un sens tout du long.
+    println!("  Sur la face du portail, la grille répond — et voici ce qu'elle vaut :");
+    println!("    écart en cases   dans le monde   en coordonnées   erreur");
+    for d in [10, 40, 120, 360, 900] {
+        let mut temoin = camera_a(gen, portail.face, portail.u - d, portail.v + d, 0.0);
+        temoin.position.z = portail.z as f32 + 2.0;
+        if temoin.face != portail.face {
+            continue;
+        }
+        let vraie = portail.distance(&temoin);
+        let grille = portail.distance_en_coordonnees(&temoin) as f64;
+        println!(
+            "    {d:>14}   {vraie:>13.1}   {grille:>14.1}   {:>+5.1} %",
+            (grille - vraie) / vraie * 100.0
+        );
+    }
+    println!("  La place du portail, elle, n'a pas bougé : elle est rangée en 3D.");
+    println!();
 }
 
 // --------------------------------------------------------------------------

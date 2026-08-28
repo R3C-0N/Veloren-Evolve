@@ -50,6 +50,44 @@ impl Cible {
     }
 }
 
+/// Une cible de coulisses : même chose, sans egui.
+///
+/// C'est là que le passé est peint avant que la nappe du portail ne
+/// l'échantillonne. Personne ne la regarde directement, donc elle n'a ni
+/// `TextureId` ni relecture — seulement de quoi être rendue puis lue par un
+/// shader.
+pub struct Coulisse {
+    pub taille: (u32, u32),
+    pub couleur: wgpu::TextureView,
+    pub profondeur: wgpu::TextureView,
+    /// Gardée pour la relecture : le film compare ce que la fenêtre montrait à
+    /// ce qu'on a obtenu en la franchissant.
+    texture: wgpu::Texture,
+}
+
+impl Coulisse {
+    pub fn nouvelle(device: &wgpu::Device, taille: (u32, u32)) -> Self {
+        let (texture, couleur, profondeur) = textures(device, taille);
+        Self { taille, couleur, profondeur, texture }
+    }
+
+    pub fn ajuster(&mut self, device: &wgpu::Device, taille: (u32, u32)) {
+        let taille = (taille.0.max(1), taille.1.max(1));
+        if taille == self.taille {
+            return;
+        }
+        let (texture, couleur, profondeur) = textures(device, taille);
+        self.taille = taille;
+        self.couleur = couleur;
+        self.profondeur = profondeur;
+        self.texture = texture;
+    }
+
+    pub fn relire(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
+        relire_texture(device, queue, &self.texture, self.taille)
+    }
+}
+
 fn textures(
     device: &wgpu::Device,
     (l, h): (u32, u32),
@@ -93,7 +131,18 @@ impl Cible {
     /// La largeur est choisie multiple de 64 par le mode film, ce qui rend la
     /// ligne multiple de 256 octets et évite d'avoir à dépadder.
     pub fn relire(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
-        let (l, h) = self.taille;
+        relire_texture(device, queue, &self.texture, self.taille)
+    }
+}
+
+fn relire_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    taille: (u32, u32),
+) -> Vec<u8> {
+    {
+        let (l, h) = taille;
         let ligne = l * 4;
         assert_eq!(ligne % 256, 0, "largeur non alignée pour la relecture");
 
@@ -108,7 +157,7 @@ impl Cible {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         encodeur.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
+                texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,

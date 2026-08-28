@@ -6,9 +6,10 @@
 //! se voit : une arête, un coin, une calotte.
 
 use crate::cube::{FACE, NOMS, RAYON, replier_bloc};
+use crate::ancre::Sejour;
 use crate::monde::{TAILLE_CHUNK, biome_de};
-use crate::{COIN, MILIEU_ARETE, Vue};
 use crate::App;
+use crate::{COIN, MILIEU_ARETE, Vue};
 
 impl App {
     pub(crate) fn menu(&mut self, ui: &mut egui::Ui) {
@@ -119,6 +120,89 @@ impl App {
         });
         ui.separator();
 
+        // --- L'ancre ---------------------------------------------------------
+        //
+        // Ce panneau n'est pas un tableau de bord : il montre côte à côte la
+        // distance qui décide de la traversée et celle qu'aurait donnée un test
+        // en coordonnées. La seconde ne sert à rien d'autre qu'à se faire voir
+        // fausse.
+        ui.strong("Ancre temporelle");
+        egui::Grid::new("ancre").num_columns(2).show(ui, |ui| {
+            ui.label("séjour");
+            match &self.sejour {
+                Sejour::Sphere => ui.monospace("le présent"),
+                Sejour::Poche { .. } => ui.colored_label(
+                    egui::Color32::from_rgb(190, 130, 250),
+                    "le passé — dans la poche",
+                ),
+            };
+            ui.end_row();
+
+            ui.label("fenêtres ouvertes");
+            ui.monospace(format!("{}", self.fenetres));
+            ui.end_row();
+
+            if let Some(reste) = self.fenetre {
+                ui.label("la fenêtre se referme dans");
+                ui.monospace(format!("{reste:.0} s"));
+                ui.end_row();
+            }
+
+            match &self.sejour {
+                Sejour::Poche { poche, .. } => {
+                    ui.label("instance");
+                    ui.monospace(format!("graine {}", poche.graine));
+                    ui.end_row();
+                }
+                Sejour::Sphere => match &self.portail {
+                    Some(p) => {
+                        ui.label("portail");
+                        ui.monospace(format!(
+                            "{}  {}  {}  ·  {}",
+                            p.u, p.v, p.z, NOMS[p.face as usize]
+                        ));
+                        ui.end_row();
+                        ui.label("distance — dans le monde");
+                        ui.monospace(format!("{:.1} blocs", p.distance(&self.cam)));
+                        ui.end_row();
+                        ui.label("— en coordonnées");
+                        let d = p.distance_en_coordonnees(&self.cam);
+                        ui.monospace(if d.is_finite() {
+                            format!("{d:.1} blocs")
+                        } else {
+                            "autre face — sans objet".into()
+                        });
+                        ui.end_row();
+                    }
+                    None => {
+                        ui.label("portail");
+                        ui.monospace("—");
+                        ui.end_row();
+                    }
+                },
+            }
+        });
+
+        if let Some(reste) = self.fenetre {
+            if reste < 15.0 {
+                ui.colored_label(
+                    egui::Color32::from_rgb(240, 120, 120),
+                    "La fenêtre se referme. On ne sort pas d'un donjon, on en \
+                     est expulsé.",
+                );
+            }
+        }
+        ui.label(
+            egui::RichText::new(
+                "P ouvre l'ancre devant soi, la referme, ou expulse. On entre \
+                 en franchissant le portail, jamais par la touche : le passage \
+                 se décide sur une distance du monde, jamais sur (u, v).",
+            )
+            .weak()
+            .small(),
+        );
+        ui.separator();
+
         // --- Position -------------------------------------------------------
         ui.strong("Position");
         let p = self.cam.position;
@@ -193,7 +277,8 @@ impl App {
         ui.label(
             egui::RichText::new(
                 "Déplacement : ZQSD/WASD · Espace/C · Maj = vite · Ctrl = lent\n\
-                 Regard : glisser dans la vue",
+                 Regard : glisser dans la vue\n\
+                 P : ouvrir l'ancre · la refermer · être expulsé",
             )
             .weak()
             .small(),

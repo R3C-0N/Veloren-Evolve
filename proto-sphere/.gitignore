@@ -1,1 +1,5 @@
 target/
+# Les images de --vue et les dossiers de --film.
+vues/
+film*/
+ancre/

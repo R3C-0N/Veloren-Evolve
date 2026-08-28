@@ -7,6 +7,7 @@
 //! d'un quart de tour.
 
 use crate::monde::{Bloc, Generateur, HAUTEUR_CHUNK, NIVEAU_MER, TAILLE_CHUNK};
+use crate::poche::Poche;
 
 pub const MARGE: i32 = 1;
 pub const LARGEUR: i32 = TAILLE_CHUNK + 2 * MARGE;
@@ -37,6 +38,34 @@ impl Chunk {
         }
 
         Self { blocs, sommet }
+    }
+
+    /// Le même chunk, rempli depuis la poche.
+    ///
+    /// Aucun `&Generateur` ici, et ce n'est pas un oubli : c'est la forme forte
+    /// de la disjonction des deux mondes. La sphère ne peut pas fuir dans la
+    /// poche parce qu'il n'y a pas d'argument par où elle passerait.
+    ///
+    /// La marge d'un bloc reste, et hors des bornes la poche rend de l'air :
+    /// le mur d'enceinte est donc maillé sur ses deux faces, et la salle se
+    /// termine franchement au lieu de s'effilocher.
+    pub fn poche(poche: &Poche, cu: i32, cv: i32) -> Self {
+        let mut blocs = vec![Bloc::Air; (LARGEUR * LARGEUR * HAUTEUR_CHUNK) as usize];
+
+        for lv in -MARGE..TAILLE_CHUNK + MARGE {
+            for lu in -MARGE..TAILLE_CHUNK + MARGE {
+                let u = cu * TAILLE_CHUNK + lu;
+                let v = cv * TAILLE_CHUNK + lv;
+                for z in 0..Poche::plafond() {
+                    let b = poche.bloc(u, v, z);
+                    if b != Bloc::Air {
+                        blocs[indice(lu, lv, z)] = b;
+                    }
+                }
+            }
+        }
+
+        Self { blocs, sommet: Poche::plafond() }
     }
 
     #[inline]
