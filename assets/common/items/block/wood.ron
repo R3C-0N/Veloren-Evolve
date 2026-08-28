@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Wood",
+    legacy_description: "A block of solid wood, cut from a trunk.",
+    kind: Ingredient(
+        descriptor: "Wooden",
+    ),
+    quality: Common,
+    tags: [],
+)

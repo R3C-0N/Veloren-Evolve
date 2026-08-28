@@ -3,17 +3,18 @@ use crate::TerrainPersistence;
 use crate::{EditableSettings, Settings, client::Client};
 use common::{
     comp::{
-        Admin, AdminRole, Body, CanBuild, ControlEvent, Controller, ForceUpdate, Health, Ori,
-        Player, Pos, Presence, PresenceKind, Scale, SkillSet, SpectatingEntity, Vel,
+        Admin, AdminRole, Body, CanBuild, ControlEvent, Controller, ForceUpdate, Health, Item, Ori,
+        PickupItem, Player, Pos, Presence, PresenceKind, Scale, SkillSet, SpectatingEntity, Vel,
     },
     event::{self, EmitExt},
     event_emitters,
     link::Is,
     mounting::{Rider, VolumeRider},
-    resources::{DeltaTime, PlayerPhysicsSetting, PlayerPhysicsSettings},
+    resources::{DeltaTime, PlayerPhysicsSetting, PlayerPhysicsSettings, ProgramTime},
     slowjob::SlowJobPool,
     terrain::TerrainGrid,
     uid::IdMaps,
+    util::Dir,
     vol::ReadVol,
 };
 use common_ecs::{Job, Origin, Phase, System};
@@ -51,6 +52,7 @@ event_emitters! {
         update_map_marker: event::UpdateMapMarkerEvent,
         client_disconnect: event::ClientDisconnectEvent,
         set_battle_mode: event::SetBattleModeEvent,
+        create_item_drop: event::CreateItemDropEvent,
     }
 }
 
@@ -74,6 +76,7 @@ impl Sys {
         controller: Option<&mut Controller>,
         settings: &Read<'_, Settings>,
         build_areas: &Read<'_, AreasContainer<BuildArea>>,
+        program_time: &Read<'_, ProgramTime>,
         player_physics_setting: Option<&mut PlayerPhysicsSetting>,
         server_physics_forced: bool,
         maybe_admin: &Option<&Admin>,
@@ -172,15 +175,41 @@ impl Sys {
                                 .and_then(|_| terrain.get(pos).ok())
                         {
                             let new_block = old_block.into_vacant();
-                            // Take the rare writes lock as briefly as possible.
-                            let mut guard = rare_writes.lock();
-                            let _was_set = guard.block_changes.try_set(pos, new_block).is_some();
-                            #[cfg(feature = "persistent_world")]
-                            if _was_set
-                                && let Some(terrain_persistence) =
-                                    guard._terrain_persistence.as_mut()
+                            let was_set = {
+                                // Take the rare writes lock as briefly as possible.
+                                let mut guard = rare_writes.lock();
+                                let was_set =
+                                    guard.block_changes.try_set(pos, new_block).is_some();
+                                #[cfg(feature = "persistent_world")]
+                                if was_set
+                                    && let Some(terrain_persistence) =
+                                        guard._terrain_persistence.as_mut()
+                                {
+                                    terrain_persistence.set_block(pos, new_block);
+                                }
+                                was_set
+                            };
+                            // Le bloc casse tombe au sol, et se ramasse ensuite
+                            // comme n'importe quel butin. Emis hors du verrou
+                            // des ecritures rares : creer une entite n'en a pas
+                            // besoin, et le tenir pendant l'emission
+                            // serialiserait le systeme sans raison.
+                            if was_set
+                                && let Some(asset) = old_block.kind().item_drop_asset()
                             {
-                                terrain_persistence.set_block(pos, new_block);
+                                let mut rng = rand::rng();
+                                emitters.emit(event::CreateItemDropEvent {
+                                    // au centre du bloc retire, pas a son coin
+                                    pos: Pos(pos.as_::<f32>() + Vec3::broadcast(0.5)),
+                                    vel: Vel(Vec3::zero()),
+                                    ori: Ori::from(Dir::random_2d(&mut rng)),
+                                    item: PickupItem::new(
+                                        Item::new_from_asset_expect(asset),
+                                        **program_time,
+                                        true,
+                                    ),
+                                    loot_owner: None,
+                                });
                             }
                         }
                     }
@@ -302,6 +331,7 @@ impl<'a> System<'a> for Sys {
             Read<'a, DeltaTime>,
             Read<'a, Settings>,
             Read<'a, AreasContainer<BuildArea>>,
+            Read<'a, ProgramTime>,
         ),
         ReadStorage<'a, CanBuild>,
         WriteStorage<'a, ForceUpdate>,
@@ -335,7 +365,7 @@ impl<'a> System<'a> for Sys {
             entities,
             events,
             (terrain, slow_jobs, editable_settings),
-            (id_maps, dt, settings, build_areas),
+            (id_maps, dt, settings, build_areas, program_time),
             can_build,
             mut force_updates,
             is_rider,
@@ -433,6 +463,7 @@ impl<'a> System<'a> for Sys {
                             controller.as_deref_mut(),
                             &settings,
                             &build_areas,
+                            &program_time,
                             new_player_physics_setting.as_mut(),
                             is_server_physics_forced,
                             &maybe_admin,

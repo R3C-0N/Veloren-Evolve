@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Ice",
+    legacy_description: "A block of clear ice, cold to the touch.",
+    kind: Ingredient(
+        descriptor: "Icy",
+    ),
+    quality: Common,
+    tags: [],
+)

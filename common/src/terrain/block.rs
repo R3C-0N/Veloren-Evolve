@@ -116,6 +116,35 @@ impl BlockKind {
                 | BlockKind::Sand
         )
     }
+
+    /// L'objet lâché quand un bloc de ce type est cassé, s'il y en a un.
+    ///
+    /// Volontairement défini sur le seul `BlockKind` : la couleur du bloc n'est
+    /// pas conservée, donc reposer ce qu'on a ramassé ne rend pas la teinte
+    /// d'origine. C'est un choix, pas un oubli — porter la couleur demanderait
+    /// un objet par teinte, or il y en a seize millions par matériau.
+    ///
+    /// Les fluides et `Misc` ne lâchent rien : le premier n'a rien à lâcher, le
+    /// second est la soupape `0xFE`, employée par la génération de sites pour
+    /// des couleurs arbitraires, et son contenu n'a aucun sens de matériau.
+    pub const fn item_drop_asset(&self) -> Option<&'static str> {
+        Some(match self {
+            BlockKind::Rock | BlockKind::WeakRock | BlockKind::GlowingRock
+            | BlockKind::GlowingWeakRock => "common.items.block.stone",
+            BlockKind::Grass => "common.items.block.grass",
+            BlockKind::Snow | BlockKind::ArtSnow => "common.items.block.snow",
+            BlockKind::Earth => "common.items.block.earth",
+            BlockKind::Sand => "common.items.block.sand",
+            BlockKind::Wood => "common.items.block.wood",
+            BlockKind::Leaves | BlockKind::ArtLeaves => "common.items.block.leaves",
+            BlockKind::Ice => "common.items.block.ice",
+            BlockKind::Air
+            | BlockKind::Water
+            | BlockKind::Lava
+            | BlockKind::GlowingMushroom
+            | BlockKind::Misc => return None,
+        })
+    }
 }
 
 /// # Format

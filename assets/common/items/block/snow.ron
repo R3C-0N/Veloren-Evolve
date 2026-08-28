@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Snow",
+    legacy_description: "A block of compacted snow. It will not last in the warmth.",
+    kind: Ingredient(
+        descriptor: "Snowy",
+    ),
+    quality: Common,
+    tags: [],
+)

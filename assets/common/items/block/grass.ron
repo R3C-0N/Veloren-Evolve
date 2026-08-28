@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Turf",
+    legacy_description: "A block of turf, roots and all.",
+    kind: Ingredient(
+        descriptor: "Turf",
+    ),
+    quality: Common,
+    tags: [],
+)

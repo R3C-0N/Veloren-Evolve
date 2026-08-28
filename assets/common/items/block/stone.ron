@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Stone",
+    legacy_description: "A block of stone, prised loose. Sturdy enough to build with.",
+    kind: Ingredient(
+        descriptor: "Stone",
+    ),
+    quality: Common,
+    tags: [],
+)

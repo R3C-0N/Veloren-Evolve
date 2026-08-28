@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Earth",
+    legacy_description: "A block of packed earth. Easy to shift, easy to pile up.",
+    kind: Ingredient(
+        descriptor: "Earth",
+    ),
+    quality: Common,
+    tags: [],
+)

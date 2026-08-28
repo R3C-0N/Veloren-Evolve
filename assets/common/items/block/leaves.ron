@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Leaves",
+    legacy_description: "A dense block of foliage. Light, and not much use as a wall.",
+    kind: Ingredient(
+        descriptor: "Leafy",
+    ),
+    quality: Common,
+    tags: [],
+)
