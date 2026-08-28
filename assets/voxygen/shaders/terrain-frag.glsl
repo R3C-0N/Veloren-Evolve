@@ -53,6 +53,91 @@ float vmin(vec2 v) {
     return min(v.x, v.y);
 }
 
+#ifdef EXPERIMENTAL_MATERIALGRAIN
+// Coordonnees locales au bloc, sur le plan de la face. On prend la partie
+// fractionnaire des deux axes perpendiculaires a la normale : le motif ne
+// depend donc plus de la taille apparente du bloc, seulement de sa face. C'est
+// ce qui le rend insensible a une projection ou un bloc ne mesure pas 1.
+vec2 grain_uv(vec3 pos, vec3 nrm) {
+    vec3 f = fract(pos);
+    vec3 a = abs(nrm);
+    if (a.z >= max(a.x, a.y)) { return f.xy; }
+    if (a.x >= a.y)           { return f.yz; }
+    return f.xz;
+}
+
+// Une face de bloc porte GRAIN_TEXELS x GRAIN_TEXELS texels. Tout le motif est
+// calcule sur cet indice entier, jamais sur uv continu : chaque case est donc
+// plate, et la texture reste pixelisee comme le reste du jeu.
+#define GRAIN_TEXELS 8
+// Nombre de paliers de valeur. Peu de paliers = aspect palette, pas degrade.
+#define GRAIN_PALIERS 5.0
+
+// Valeur pseudo-aleatoire d'un texel, constante sur toute sa surface.
+float grain_texel(ivec2 t, float graine, float sel) {
+    return hash(vec4(vec2(t), graine, sel));
+}
+
+// Ramene une valeur continue sur GRAIN_PALIERS niveaux.
+float grain_palier(float v) {
+    return floor(v * GRAIN_PALIERS) / (GRAIN_PALIERS - 1.0);
+}
+
+// Renvoie une modulation signee de la VALEUR, jamais de la teinte : la couleur
+// du bloc porte deja l'identite du materiau et le continuum du biome.
+float grain_materiau(vec3 pos, vec3 nrm, uint kind) {
+    vec2 uv = grain_uv(pos, nrm);
+    // graine par bloc, pour que deux blocs voisins ne soient pas identiques
+    float graine = hash(vec4(floor(pos), 0.0)) * 16.0;
+
+    // indice entier du texel dans la face : c'est la seule coordonnee utilisee
+    ivec2 t = clamp(ivec2(uv * float(GRAIN_TEXELS)), ivec2(0), ivec2(GRAIN_TEXELS - 1));
+
+    if (kind == BLOCK_ROCK || kind == BLOCK_WEAK_ROCK) {
+        // Appareillage : 4 assises de 2 texels, decalees d'une demi-pierre.
+        // Pierres de 4 texels de large, joints d'exactement 1 texel.
+        int rang = t.y / 2;
+        int dec = (rang % 2) * 2;
+        int x = (t.x + dec) % GRAIN_TEXELS;
+        bool joint = (t.y % 2 == 0) || (x % 4 == 0);
+        float pierre = grain_texel(ivec2(x / 4, rang), graine, 1.3) - 0.5;
+        return joint ? -0.42 : grain_palier(pierre + 0.5) * 0.30 - 0.15;
+    } else if (kind == BLOCK_EARTH) {
+        // Mottes de 2x2 texels, quelques cailloux d'un texel.
+        float motte = grain_texel(t / 2, graine, 2.1);
+        float caillou = grain_texel(t, graine, 5.5);
+        float v = grain_palier(motte) - 0.5;
+        return v * 0.42 + (caillou > 0.88 ? 0.26 : 0.0) - (caillou < 0.10 ? 0.20 : 0.0);
+    } else if (kind == BLOCK_SAND) {
+        // Rides horizontales d'un texel, decalees aleatoirement par ligne.
+        float ligne = grain_texel(ivec2(0, t.y), graine, 3.3);
+        float creux = (t.y % 2 == 0) ? 1.0 : -1.0;
+        float grain = grain_texel(t, graine, 7.1);
+        return creux * 0.14 + (grain_palier(ligne) - 0.5) * 0.10 + (grain > 0.92 ? 0.18 : 0.0);
+    } else if (kind == BLOCK_WOOD) {
+        // Fil : colonnes de 1 a 2 texels, valeur propre, cernes plus sombres.
+        int col = t.x / 2;
+        float veine = grain_texel(ivec2(col, 0), graine, 4.7);
+        bool cerne = veine > 0.72;
+        float fibre = grain_texel(ivec2(col, t.y), graine, 8.9);
+        return (cerne ? -0.34 : 0.0) + (grain_palier(veine) - 0.5) * 0.22
+             + (fibre > 0.85 ? -0.12 : 0.0);
+    } else if (kind == BLOCK_GRASS) {
+        // Touffes : colonnes d'un texel, hauteur aleatoire, sommet plus clair.
+        float haut = grain_texel(ivec2(t.x, 0), graine, 6.2);
+        float brin = grain_texel(t, graine, 9.4);
+        float v = grain_palier(haut) - 0.5;
+        return v * 0.24 + (brin > 0.80 ? 0.16 : 0.0) - (brin < 0.16 ? 0.14 : 0.0);
+    } else if (kind == BLOCK_LEAVES) {
+        // Feuillage : amas de 2x2 texels, quelques trouees.
+        float amas = grain_texel(t / 2, graine, 1.9);
+        float trou = grain_texel(t, graine, 4.4);
+        return (grain_palier(amas) - 0.5) * 0.34 - (trou < 0.12 ? 0.26 : 0.0);
+    }
+    return 0.0;
+}
+#endif
+
 void main() {
     // First 3 normals are negative, next 3 are positive
     const vec3 normals[8] = vec3[](vec3(-1,0,0), vec3(1,0,0), vec3(0,-1,0), vec3(0,1,0), vec3(0,0,-1), vec3(0,0,1), vec3(0,0,0), vec3(0,0,0));
@@ -298,6 +383,13 @@ void main() {
     const float NOISE_FACTOR = 0.015;
     vec3 noise_delta = (sqrt(f_col) * W_INV + noise * NOISE_FACTOR);
     vec3 col = noise_delta * noise_delta * W_2;
+    #ifdef EXPERIMENTAL_MATERIALGRAIN
+        // Modulation de la valeur seule, et attenuee avec la distance : au-dela
+        // d'une trentaine de blocs une face fait moins de quelques pixels, et le
+        // motif ne ferait plus que scintiller.
+        float grain_att = max(1.0 - distance(cam_pos.xyz, f_pos) / 80.0, 0.0);
+        col *= 1.0 + grain_materiau(f_pos + focus_off.xyz, f_norm, f_kind) * grain_att;
+    #endif
     vec3 surf_color = illuminate(max_light, view_dir, col * emitted_light, col * reflected_light);
     #ifdef EXPERIMENTAL_SNOWGLITTER
     if (f_kind == BLOCK_SNOW || f_kind == BLOCK_ART_SNOW) {

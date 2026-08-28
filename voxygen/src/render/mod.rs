@@ -522,6 +522,10 @@ struct OtherModes {
 pub enum ExperimentalShader {
     /// Add brick-like normal mapping to the world.
     Brickloren,
+    /// Give each terrain material a procedural grain, computed in block-local
+    /// coordinates so it stays invariant to apparent block size. Modulates
+    /// value only, never hue: colour still carries material and biome.
+    MaterialGrain,
     /// Remove the default procedural noise from terrain.
     NoNoise,
     /// Add a sobel filter that draws lines in post-process by detecting edges

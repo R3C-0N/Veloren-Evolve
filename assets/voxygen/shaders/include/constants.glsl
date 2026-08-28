@@ -59,8 +59,15 @@
 #define MAT_LOD 4
 #define MAT_PUDDLE 5
 
+#define BLOCK_ROCK 0x10
+#define BLOCK_WEAK_ROCK 0x11
+#define BLOCK_GRASS 0x20
 #define BLOCK_SNOW 0x21
 #define BLOCK_ART_SNOW 0x22
+#define BLOCK_EARTH 0x30
+#define BLOCK_SAND 0x31
+#define BLOCK_WOOD 0x40
+#define BLOCK_LEAVES 0x41
 #define BLOCK_ICE 0x43
 
 // An arbitrary value that represents a very far distance (at least as far as the player should be able to see) without
