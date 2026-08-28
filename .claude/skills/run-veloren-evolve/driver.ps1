@@ -10,8 +10,10 @@
 #>
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('launch','fit','shot','click','key','text','look','zoom','walk','state','stop')]
+  [ValidateSet('launch','fit','shot','click','press','key','text','look','zoom','walk','state','stop')]
   [string]$Action,
+  [ValidateSet('left','right','middle')]
+  [string]$Button = 'left',
   [int]$X = -1, [int]$Y = -1,
   [int]$Dx = 0, [int]$Dy = 0,
   [int]$Ticks = 0,
@@ -211,6 +213,20 @@ switch ($Action) {
     [Vx]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
     Release-Focus
     "clic $X,$Y"
+  }
+
+  'press' {
+    # Clic a la position courante du curseur, sans le deplacer. C'est ce qu'il
+    # faut en jeu, ou le curseur est capture et ou la cible est le reticule :
+    # deplacer le curseur ferait pivoter la camera.
+    $h = (Get-Game).MainWindowHandle; Grab-Focus $h
+    $down = @{ left = 0x0002; right = 0x0008; middle = 0x0020 }[$Button]
+    $up   = @{ left = 0x0004; right = 0x0010; middle = 0x0040 }[$Button]
+    [Vx]::mouse_event([uint32]$down, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 110
+    [Vx]::mouse_event([uint32]$up, 0, 0, 0, [IntPtr]::Zero)
+    Release-Focus
+    "clic $Button au reticule"
   }
 
   'key' {
