@@ -1026,6 +1026,16 @@
     Simple("common.items.flowers.red"): "voxel.sprite.flowers.flower_red-4",
     Simple("common.items.grasses.long"): "voxel.sprite.grass.grass_long_5",
     Simple("common.items.crafting_ing.stones"): "voxel.sprite.rocks.rock-0",
+    // Blocs ramasses en cassant du terrain. Sans entree ici, ils tomberaient
+    // au sol avec le modele generique des ingredients.
+    Simple("common.items.block.stone"): "voxel.sprite.rocks.rock-1",
+    Simple("common.items.block.earth"): "voxel.sprite.underwater_mud.mud-0",
+    Simple("common.items.block.sand"): "voxel.sprite.rocks.rock-2",
+    Simple("common.items.block.grass"): "voxel.sprite.grass.grass_large-0",
+    Simple("common.items.block.wood"): "voxel.item.wood.wood",
+    Simple("common.items.block.leaves"): "voxel.sprite.leafy_plant.1",
+    Simple("common.items.block.snow"): "voxel.sprite.snow_pebbles.snow_pebbles-0",
+    Simple("common.items.block.ice"): "voxel.item.crafting.animal_misc.ice_shard",
     Simple("common.items.crafting_ing.cactus"): "voxel.sprite.cacti.flat_cactus_med",
     Simple("common.items.crafting_ing.seashells"): "voxel.sprite.seashells.shell-0",
     Simple("common.items.crafting_ing.animal_misc.icy_fang"): "voxel.item.crafting.animal_misc.ice_shard",
