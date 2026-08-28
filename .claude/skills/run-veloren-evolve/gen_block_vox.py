@@ -23,15 +23,35 @@ def chunk(cid: bytes, content: bytes, children: bytes = b"") -> bytes:
     return cid + struct.pack("<ii", len(content), len(children)) + content + children
 
 
+# Veloren reserve les indices de palette 0 a 7 : `MatSegment::from_vox` les lit
+# comme des *materiaux* (peau, cheveux, yeux), pas comme des couleurs, et le
+# chargeur d'icones remplace ensuite tout materiau par du vide. Un modele qui
+# emploie ces indices s'affiche donc au sol mais disparait de l'inventaire.
+PREMIER_INDICE = 8
+
+# Veloren lit `palette[index]` alors que MagicaVoxel numerote ses couleurs a
+# partir de 1 : les deux conventions se decalent d'un cran. On ecrit chaque
+# couleur en double, aux positions index et index - 1, pour etre juste dans les
+# deux lectures. C'est deux entrees sur 256, le gaspillage est nul.
+def index_voxel(idx: int) -> int:
+    return PREMIER_INDICE + 2 * idx
+
+
 def ecrire_vox(chemin: str, voxels: dict, palette: list) -> None:
-    """voxels : {(x, y, z): index_palette_0_base}. palette : [(r, g, b), ...]."""
+    """voxels : {(x, y, z): rang_de_couleur}. palette : [(r, g, b), ...]."""
     size = chunk(b"SIZE", struct.pack("<iii", N, N, N))
     corps = b"".join(
-        struct.pack("<BBBB", x, y, z, idx + 1) for (x, y, z), idx in sorted(voxels.items())
+        struct.pack("<BBBB", x, y, z, index_voxel(idx))
+        for (x, y, z), idx in sorted(voxels.items())
     )
     xyzi = chunk(b"XYZI", struct.pack("<i", len(voxels)) + corps)
-    pal = list(palette) + [(0, 0, 0)] * (256 - len(palette))
-    rgba = chunk(b"RGBA", b"".join(struct.pack("<BBBB", r, g, b, 255) for r, g, b in pal[:256]))
+
+    pal = [(0, 0, 0)] * 256
+    for idx, couleur in enumerate(palette):
+        i = index_voxel(idx)
+        pal[i] = couleur
+        pal[i - 1] = couleur
+    rgba = chunk(b"RGBA", b"".join(struct.pack("<BBBB", r, g, b, 255) for r, g, b in pal))
     main = chunk(b"MAIN", b"", size + xyzi + rgba)
     with open(chemin, "wb") as f:
         f.write(b"VOX " + struct.pack("<i", 150) + main)
