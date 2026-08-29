@@ -86,13 +86,25 @@ boucle de travail est : `shot`, regarder l'image, `click` sur ce qu'on y voit.
 
 ```powershell
 pwsh -File $d -Action click -X 740 -Y 322
-pwsh -File $d -Action key   -Value esc      # enter esc space tab f1 f4 f11 w a s d m i j up down left right back del
+pwsh -File $d -Action drag  -X 1288 -Y 400 -X2 560 -Y2 857  # d'une case à l'autre
+pwsh -File $d -Action key   -Value esc      # nommées : enter esc space tab f1 f4 f11 up down left right back del
+pwsh -File $d -Action key   -Value 1        # tout le reste : un caractère, pris dans la disposition
 pwsh -File $d -Action text  -Value "Evolve"
 pwsh -File $d -Action look  -Dx 500 -Dy 60  # caméra, mouvement relatif
 pwsh -File $d -Action zoom  -Ticks -6       # négatif = reculer la caméra
 pwsh -File $d -Action walk  -Value w -Seconds 4
 pwsh -File $d -Action fit                   # replace la fenêtre si elle a bougé
 ```
+
+**`key` passe par la disposition du clavier, et c'est indispensable.** Veloren
+lie ses entrées à des caractères *logiques* — `Key::Character("2")` pour le
+deuxième emplacement de la barre d'objets. Sur un clavier AZERTY la rangée de
+chiffres demande Maj : envoyer le code virtuel `0x32` y produit « é », que le
+jeu ignore **en silence**. La touche semble alors perdue, et on cherche le
+défaut dans le code du jeu. Seules les touches nommées gardent un code fixe.
+
+**`drag` est le seul geste qui garnit la barre d'objets** : depuis la refonte
+du sac, un clic simple sur un objet n'ouvre qu'un menu *Use / Drop / Cancel*.
 
 Sorties et journaux : `%TEMP%\veloren-run\` (`game.out`, `game.err`, captures).
 Le jeu y écrit aussi ses propres captures F4, via `VOXYGEN_SCREENSHOT`.
@@ -123,6 +135,28 @@ n'appartient pas au jeu. Le solo passe par la boucle locale et n'a pas besoin
 de l'accès réseau : refuser suffit. C'est une fenêtre séparée, donc `click` du
 pilote ne l'atteint pas — cliquer en coordonnées écran absolues.
 
+### Éprouver la construction
+
+Casser et poser sont derrière le mode construction, lui-même derrière une zone
+déclarée. La séquence, en chat (`enter`, puis `text`, puis `enter`) :
+
+```
+/area_add zone build -100000 100000 -100000 100000 -100000 100000
+/permit_build zone
+/build
+```
+
+Ensuite, viser au réticule : `press -Button left` casse, `right` pose,
+`middle` est la pipette. La matière posée est celle de l'emplacement
+**sélectionné** dans la barre d'objets — `key -Value 1` le choisit, et
+`drag` l'y a mis.
+
+**Ce qui prouve la pose, c'est le compte de la pile, pas le décor** : un bloc
+de terre posé sur de la terre ne se voit pas. Lire le compte sur l'icône de la
+barre, ou le `n/36` du sac, avant et après. Recadrer la barre d'objets
+(`x 510..980`, `y 838..883` en 1482×883) et l'agrandir au plus proche voisin
+rend le chiffre lisible.
+
 ## Chemin humain
 
 `cargo run --profile no_overflow --bin veloren-voxygen`, la fenêtre s'ouvre,
@@ -136,6 +170,11 @@ on joue. `Échap` ouvre le menu, `F4` prend une capture, `F11` bascule le plein
   lit plus qu'un tampon vide, uniformément blanc. `launch` force
   `fullscreen: enabled: false` dans `userdata/voxygen/settings.ron`. **Ne pas
   appuyer sur F11** pendant une session pilotée.
+- **Copier le seul rectangle client ressort parfois tout blanc.** La même
+  copie prise en plein écran, puis recadrée, rend l'image juste — c'est ce que
+  fait `shot`. Une capture blanche n'est pas une erreur : c'est une image
+  plausible, donc un alibi. On conclut que le jeu ne dessine plus, ou que les
+  clics sont perdus, alors qu'il joue normalement.
 - **Même en fenêtré, le swapchain Vulkan fige la capture.** Deux `shot` à une
   minute d'écart sortaient identiques *au bit près* alors que le jeu
   consommait du CPU et que son état avait changé. Réappliquer `SetWindowPos`

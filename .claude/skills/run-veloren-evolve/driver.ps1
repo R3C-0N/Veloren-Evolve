@@ -10,11 +10,12 @@
 #>
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('launch','fit','shot','click','press','key','text','look','zoom','walk','state','stop')]
+  [ValidateSet('launch','fit','shot','click','drag','press','key','text','look','zoom','walk','state','stop')]
   [string]$Action,
   [ValidateSet('left','right','middle')]
   [string]$Button = 'left',
   [int]$X = -1, [int]$Y = -1,
+  [int]$X2 = -1, [int]$Y2 = -1,
   [int]$Dx = 0, [int]$Dy = 0,
   [int]$Ticks = 0,
   [double]$Seconds = 2,
@@ -97,14 +98,27 @@ function Release-Focus {
   [void][Vx]::AttachThreadInput($script:tMe, $script:tFg, $false)
 }
 
+# Les touches nommees sont fixes ; tout le reste passe par la DISPOSITION du
+# clavier. C'est indispensable : Veloren lie ses entrees a des caracteres
+# logiques (`Key::Character("2")`), et sur un clavier AZERTY la rangee de
+# chiffres demande Maj. Envoyer le code virtuel 0x32 y produit « e accent »,
+# que le jeu ignore en silence — la touche semble alors perdue.
 function Get-Vk([string]$name) {
   $m = @{ enter = 0x0D; esc = 0x1B; space = 0x20; tab = 0x09; back = 0x08; del = 0x2E;
-          f1 = 0x70; f4 = 0x73; f11 = 0x7A; up = 0x26; down = 0x28; left = 0x25; right = 0x27;
-          w = 0x57; a = 0x41; s = 0x53; d = 0x44; m = 0x4D; j = 0x4A; i = 0x49;
-          e = 0x45; b = 0x42; g = 0x47; q = 0x51; f = 0x46 }
+          f1 = 0x70; f4 = 0x73; f11 = 0x7A; up = 0x26; down = 0x28; left = 0x25; right = 0x27 }
   $v = $m[$name.ToLower()]
-  if (-not $v) { throw "touche inconnue : $name" }
-  return [byte]$v
+  if ($v) { return @{ Vk = [byte]$v; Shift = $false } }
+  if ($name.Length -ne 1) { throw "touche inconnue : $name" }
+  $sc = [Vx]::VkKeyScan([char]$name)
+  if ($sc -eq -1) { throw "caractere absent de la disposition : $name" }
+  return @{ Vk = [byte]($sc -band 0xFF); Shift = ((($sc -shr 8) -band 1) -eq 1) }
+}
+
+function Send-Key($k) {
+  if ($k.Shift) { [Vx]::keybd_event(0x10, 0, 0, [IntPtr]::Zero) }
+  [Vx]::keybd_event($k.Vk, 0, 0, [IntPtr]::Zero); Start-Sleep -Milliseconds 70
+  [Vx]::keybd_event($k.Vk, 0, 2, [IntPtr]::Zero)
+  if ($k.Shift) { [Vx]::keybd_event(0x10, 0, 2, [IntPtr]::Zero) }
 }
 
 # Le swapchain Vulkan de voxygen presente en contournant le compositeur : GDI
@@ -120,15 +134,26 @@ function Wake-Compositor($h) {
 
 # Capture l'AIRE CLIENT seule : les coordonnees de l'image sont exactement
 # celles attendues par -Action click.
+#
+# On prend TOUT l'ecran puis on recadre, au lieu de copier directement le
+# rectangle de l'aire client. Ce n'est pas un detour gratuit : copier le seul
+# rectangle client ressort parfois entierement blanc, la ou la meme copie en
+# plein ecran rend l'image juste. Le blanc n'est pas une erreur, c'est une
+# image plausible — donc un alibi. Le plein ecran coute quelques millisecondes
+# et ne ment pas.
 function Save-Shot($h, $path) {
   Wake-Compositor $h
   $c = Get-Client $h
   if ($c.W -le 0 -or $c.H -le 0) { throw "aire client vide" }
-  $bmp = New-Object System.Drawing.Bitmap $c.W, $c.H
-  $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.CopyFromScreen($c.SX, $c.SY, 0, 0, $bmp.Size)
+  $ew = [Vx]::GetSystemMetrics(0); $eh = [Vx]::GetSystemMetrics(1)
+  $plein = New-Object System.Drawing.Bitmap $ew, $eh
+  $g = [System.Drawing.Graphics]::FromImage($plein)
+  $g.CopyFromScreen(0, 0, 0, 0, $plein.Size)
+  $g.Dispose()
+  $rect = New-Object System.Drawing.Rectangle $c.SX, $c.SY, $c.W, $c.H
+  $bmp = $plein.Clone($rect, $plein.PixelFormat)
   $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-  $g.Dispose(); $bmp.Dispose()
+  $bmp.Dispose(); $plein.Dispose()
   return "$path ($($c.W)x$($c.H))"
 }
 
@@ -216,6 +241,33 @@ switch ($Action) {
     "clic $X,$Y"
   }
 
+  'drag' {
+    # Glisser-deposer d'une case d'interface a une autre : c'est le seul geste
+    # qui garnit la barre d'objets, le clic simple n'ouvrant qu'un menu
+    # d'actions depuis la refonte du sac.
+    if ($X -lt 0 -or $Y -lt 0 -or $X2 -lt 0 -or $Y2 -lt 0) {
+      throw "-X -Y -X2 -Y2 requis (coordonnees lues sur une image shot)"
+    }
+    $h = (Get-Game).MainWindowHandle
+    Grab-Focus $h
+    $c = Get-Client $h
+    [void][Vx]::SetCursorPos($c.SX + $X, $c.SY + $Y)
+    Start-Sleep -Milliseconds 250
+    [Vx]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    # Le trajet se fait en plusieurs pas : un saut sec ne produit pas toujours
+    # le WM_MOUSEMOVE dont l'interface a besoin pour suivre l'objet saisi.
+    foreach ($k in 1..8) {
+      [void][Vx]::SetCursorPos($c.SX + $X + [int](($X2 - $X) * $k / 8),
+                               $c.SY + $Y + [int](($Y2 - $Y) * $k / 8))
+      Start-Sleep -Milliseconds 60
+    }
+    Start-Sleep -Milliseconds 250
+    [Vx]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+    Release-Focus
+    "glisse $X,$Y vers $X2,$Y2"
+  }
+
   'press' {
     # Clic a la position courante du curseur, sans le deplacer. C'est ce qu'il
     # faut en jeu, ou le curseur est capture et ou la cible est le reticule :
@@ -232,9 +284,7 @@ switch ($Action) {
 
   'key' {
     $h = (Get-Game).MainWindowHandle; Grab-Focus $h
-    $v = Get-Vk $Value
-    [Vx]::keybd_event($v, 0, 0, [IntPtr]::Zero); Start-Sleep -Milliseconds 70
-    [Vx]::keybd_event($v, 0, 2, [IntPtr]::Zero)
+    Send-Key (Get-Vk $Value)
     Release-Focus
     "touche $Value"
   }
@@ -285,10 +335,12 @@ switch ($Action) {
   'walk' {
     $h = (Get-Game).MainWindowHandle; Grab-Focus $h
     $name = if ($Value) { $Value } else { 'w' }
-    $v = Get-Vk $name
-    [Vx]::keybd_event($v, 0, 0, [IntPtr]::Zero)
+    $k = Get-Vk $name
+    if ($k.Shift) { [Vx]::keybd_event(0x10, 0, 0, [IntPtr]::Zero) }
+    [Vx]::keybd_event($k.Vk, 0, 0, [IntPtr]::Zero)
     Start-Sleep -Seconds $Seconds
-    [Vx]::keybd_event($v, 0, 2, [IntPtr]::Zero)
+    [Vx]::keybd_event($k.Vk, 0, 2, [IntPtr]::Zero)
+    if ($k.Shift) { [Vx]::keybd_event(0x10, 0, 2, [IntPtr]::Zero) }
     Release-Focus
     "$name maintenue $Seconds s"
   }
