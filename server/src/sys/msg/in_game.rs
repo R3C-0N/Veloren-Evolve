@@ -6,6 +6,7 @@ use common::{
         Admin, AdminRole, Body, CanBuild, ControlEvent, Controller, ForceUpdate, Health, Item, Ori,
         PickupItem, Player, Pos, Presence, PresenceKind, Scale, SkillSet, SpectatingEntity, Vel,
     },
+    consts::{BUILD_RANGE_SERVER_SLACK, MAX_BUILD_RANGE},
     event::{self, EmitExt},
     event_emitters,
     link::Is,
@@ -19,7 +20,7 @@ use common::{
 };
 use common_ecs::{Job, Origin, Phase, System};
 use common_net::msg::{ClientGeneral, ServerGeneral};
-use common_state::{AreasContainer, BlockChange, BuildArea};
+use common_state::BlockChange;
 use core::mem;
 use rayon::prelude::*;
 use specs::{Entities, Join, LendJoin, Read, ReadExpect, ReadStorage, Write, WriteStorage};
@@ -57,6 +58,22 @@ event_emitters! {
     }
 }
 
+/// Tout point du monde est constructible : la seule borne est le bras du
+/// joueur.
+///
+/// C'est ce qui remplace la zone declaree d'autrefois, laquelle etait la seule
+/// borne de portee du serveur — la retirer sans rien mettre a la place aurait
+/// laisse poser un bloc a l'autre bout de la carte.
+///
+/// La mesure part des pieds, la ou le client vise depuis la camera : d'ou la
+/// marge, qui couvre l'ecart de hauteur sans allonger la portee utile.
+fn a_portee_de_construction(joueur: Option<Pos>, bloc: Vec3<i32>) -> bool {
+    joueur.is_some_and(|Pos(joueur)| {
+        let centre = bloc.as_::<f32>() + Vec3::broadcast(0.5);
+        joueur.distance_squared(centre) <= (MAX_BUILD_RANGE + BUILD_RANGE_SERVER_SLACK).powi(2)
+    })
+}
+
 impl Sys {
     #[expect(clippy::too_many_arguments)]
     fn handle_client_in_game_msg(
@@ -76,7 +93,6 @@ impl Sys {
         spectating_entity: &mut Option<Option<common::uid::Uid>>,
         controller: Option<&mut Controller>,
         settings: &Read<'_, Settings>,
-        build_areas: &Read<'_, AreasContainer<BuildArea>>,
         program_time: &Read<'_, ProgramTime>,
         player_physics_setting: Option<&mut PlayerPhysicsSetting>,
         server_physics_forced: bool,
@@ -93,6 +109,9 @@ impl Sys {
                 return Ok(());
             },
         };
+        // Releve avant le match : `position` est consomme par la synchronisation
+        // de position plus bas, et la construction n'a besoin que de la valeur.
+        let player_pos = position.as_deref().copied();
         match msg {
             // Go back to registered state (char selection screen)
             ClientGeneral::ExitInGame => {
@@ -163,79 +182,59 @@ impl Sys {
                 }
             },
             ClientGeneral::BreakBlock(pos) => {
-                if let Some(comp_can_build) = can_build.get(entity)
-                    && comp_can_build.enabled
+                if can_build
+                    .get(entity)
+                    .is_some_and(|can_build| can_build.enabled)
+                    && a_portee_de_construction(player_pos, pos)
+                    && let Ok(old_block) = terrain.get(pos).copied()
                 {
-                    for area in comp_can_build.build_areas.iter() {
-                        if let Some(old_block) = build_areas
-                                .areas()
-                                .get(*area)
-                                // TODO: Make this an exclusive check on the upper bound of the AABB
-                                // Vek defaults to inclusive which is not optimal
-                                .filter(|aabb| aabb.contains_point(pos))
-                                .and_then(|_| terrain.get(pos).ok())
+                    let new_block = old_block.into_vacant();
+                    let was_set = {
+                        // Take the rare writes lock as briefly as possible.
+                        let mut guard = rare_writes.lock();
+                        let was_set = guard.block_changes.try_set(pos, new_block).is_some();
+                        #[cfg(feature = "persistent_world")]
+                        if was_set
+                            && let Some(terrain_persistence) = guard._terrain_persistence.as_mut()
                         {
-                            let new_block = old_block.into_vacant();
-                            let was_set = {
-                                // Take the rare writes lock as briefly as possible.
-                                let mut guard = rare_writes.lock();
-                                let was_set = guard.block_changes.try_set(pos, new_block).is_some();
-                                #[cfg(feature = "persistent_world")]
-                                if was_set
-                                    && let Some(terrain_persistence) =
-                                        guard._terrain_persistence.as_mut()
-                                {
-                                    terrain_persistence.set_block(pos, new_block);
-                                }
-                                was_set
-                            };
-                            // Le bloc casse tombe au sol, et se ramasse ensuite
-                            // comme n'importe quel butin. Emis hors du verrou
-                            // des ecritures rares : creer une entite n'en a pas
-                            // besoin, et le tenir pendant l'emission
-                            // serialiserait le systeme sans raison.
-                            if was_set && let Some(asset) = old_block.kind().item_drop_asset() {
-                                let mut rng = rand::rng();
-                                emitters.emit(event::CreateItemDropEvent {
-                                    // au centre du bloc retire, pas a son coin
-                                    pos: Pos(pos.as_::<f32>() + Vec3::broadcast(0.5)),
-                                    vel: Vel(Vec3::zero()),
-                                    ori: Ori::from(Dir::random_2d(&mut rng)),
-                                    item: PickupItem::new(
-                                        Item::new_from_asset_expect(asset),
-                                        **program_time,
-                                        true,
-                                    ),
-                                    loot_owner: None,
-                                });
-                            }
+                            terrain_persistence.set_block(pos, new_block);
                         }
+                        was_set
+                    };
+                    // Le bloc casse tombe au sol, et se ramasse ensuite comme
+                    // n'importe quel butin. Emis hors du verrou des ecritures
+                    // rares : creer une entite n'en a pas besoin, et le tenir
+                    // pendant l'emission serialiserait le systeme sans raison.
+                    if was_set && let Some(asset) = old_block.kind().item_drop_asset() {
+                        let mut rng = rand::rng();
+                        emitters.emit(event::CreateItemDropEvent {
+                            // au centre du bloc retire, pas a son coin
+                            pos: Pos(pos.as_::<f32>() + Vec3::broadcast(0.5)),
+                            vel: Vel(Vec3::zero()),
+                            ori: Ori::from(Dir::random_2d(&mut rng)),
+                            item: PickupItem::new(
+                                Item::new_from_asset_expect(asset),
+                                **program_time,
+                                true,
+                            ),
+                            loot_owner: None,
+                        });
                     }
                 }
             },
             ClientGeneral::PlaceBlock(pos, slot) => {
-                if let Some(comp_can_build) = can_build.get(entity)
-                    && comp_can_build.enabled
+                if can_build
+                    .get(entity)
+                    .is_some_and(|can_build| can_build.enabled)
+                    && a_portee_de_construction(player_pos, pos)
                 {
-                    for area in comp_can_build.build_areas.iter() {
-                        if build_areas
-                                .areas()
-                                .get(*area)
-                                // TODO: Make this an exclusive check on the upper bound of the AABB
-                                // Vek defaults to inclusive which is not optimal
-                                .filter(|aabb| aabb.contains_point(pos))
-                                .is_some()
-                        {
-                            // Le bloc n'est pas ecrit ici : le client n'envoie
-                            // qu'un emplacement d'inventaire, et lire l'objet
-                            // puis le retirer doit se faire d'un seul tenant.
-                            // Ce systeme tourne en par_join, l'inventaire n'y
-                            // est pas accessible en ecriture, et l'inventaire
-                            // n'est de toute facon pas une ecriture rare.
-                            emitters.emit(event::PlaceBlockEvent { entity, pos, slot });
-                            break;
-                        }
-                    }
+                    // Le bloc n'est pas ecrit ici : le client n'envoie qu'un
+                    // emplacement d'inventaire, et lire l'objet puis le retirer
+                    // doit se faire d'un seul tenant. Ce systeme tourne en
+                    // par_join, l'inventaire n'y est pas accessible en ecriture,
+                    // et l'inventaire n'est de toute facon pas une ecriture
+                    // rare.
+                    emitters.emit(event::PlaceBlockEvent { entity, pos, slot });
                 }
             },
             ClientGeneral::UnlockSkill(skill) => {
@@ -326,7 +325,6 @@ impl<'a> System<'a> for Sys {
             Read<'a, IdMaps>,
             Read<'a, DeltaTime>,
             Read<'a, Settings>,
-            Read<'a, AreasContainer<BuildArea>>,
             Read<'a, ProgramTime>,
         ),
         ReadStorage<'a, CanBuild>,
@@ -361,7 +359,7 @@ impl<'a> System<'a> for Sys {
             entities,
             events,
             (terrain, slow_jobs, editable_settings),
-            (id_maps, dt, settings, build_areas, program_time),
+            (id_maps, dt, settings, program_time),
             can_build,
             mut force_updates,
             is_rider,
@@ -458,7 +456,6 @@ impl<'a> System<'a> for Sys {
                             &mut spectating_entity,
                             controller.as_deref_mut(),
                             &settings,
-                            &build_areas,
                             &program_time,
                             new_player_physics_setting.as_mut(),
                             is_server_physics_forced,

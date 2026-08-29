@@ -5,6 +5,15 @@ pub const MAX_SPRITE_MOUNT_RANGE: f32 = 2.0;
 pub const MAX_TRADE_RANGE: f32 = 5.0;
 pub const MAX_NPCINTERACT_RANGE: f32 = 8.0;
 pub const MAX_INTERACT_RANGE: f32 = 5.0;
+// La portee de construction. Elle remplace la zone declaree qui bornait
+// autrefois la pose : tout point du monde est constructible, et c'est le bras
+// du joueur qui limite, plus une permission. Plus longue que les portees
+// d'interaction, parce qu'on batit un mur devant soi et pas seulement a bout de
+// doigts.
+pub const MAX_BUILD_RANGE: f32 = 8.0;
+// Le client vise depuis la camera, le serveur mesure depuis les pieds : de quoi
+// couvrir l'ecart de hauteur sans laisser filer la portee.
+pub const BUILD_RANGE_SERVER_SLACK: f32 = 2.0;
 pub const MAX_WAYPOINT_RANGE: f32 = 4.0;
 // Player-imperceptible offset to ensure campfire healing is always
 // within waypoint range (may not be necessary if floating point handling is

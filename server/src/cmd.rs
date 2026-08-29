@@ -47,7 +47,6 @@ use common::{
         invite::InviteKind,
         misc::PortalData,
     },
-    depot,
     effect::Effect,
     event::{
         ClientDisconnectEvent, CreateNpcEvent, CreateSpecialEntityEvent, EventBus, ExplosionEvent,
@@ -74,8 +73,7 @@ use common_net::{
     sync::WorldSyncExt,
 };
 use common_state::{
-    Areas, AreasContainer, BattleModeChangeArea, BuildArea, NoDurabilityArea, SpecialAreaError,
-    State,
+    Areas, AreasContainer, BattleModeChangeArea, NoDurabilityArea, SpecialAreaError, State,
 };
 use core::{cmp::Ordering, convert::TryFrom};
 use hashbrown::{HashMap, HashSet};
@@ -198,7 +196,6 @@ fn do_command(
         ServerChatCommand::Motd => handle_motd,
         ServerChatCommand::Object => handle_object,
         ServerChatCommand::Outcome => handle_outcome,
-        ServerChatCommand::PermitBuild => handle_permit_build,
         ServerChatCommand::Players => handle_players,
         ServerChatCommand::Poise => handle_poise,
         ServerChatCommand::Portal => handle_spawn_portal,
@@ -207,8 +204,6 @@ fn do_command(
         ServerChatCommand::ReloadChunks => handle_reload_chunks,
         ServerChatCommand::RemoveLights => handle_remove_lights,
         ServerChatCommand::Respawn => handle_respawn,
-        ServerChatCommand::RevokeBuild => handle_revoke_build,
-        ServerChatCommand::RevokeBuildAll => handle_revoke_build_all,
         ServerChatCommand::Safezone => handle_safezone,
         ServerChatCommand::Say => handle_say,
         ServerChatCommand::ServerPhysics => handle_server_physics,
@@ -350,16 +345,6 @@ fn uid(server: &Server, target: EcsEntity, descriptor: &str) -> CmdResult<Uid> {
         .copied()
         .ok_or_else(|| {
             Content::localized_with_args("command-uid-unavailable", [("target", descriptor)])
-        })
-}
-
-fn area(server: &mut Server, area_name: &str, kind: &str) -> CmdResult<depot::Id<Aabb<i32>>> {
-    get_areas_mut(kind, &mut server.state)?
-        .area_metas()
-        .get(area_name)
-        .copied()
-        .ok_or_else(|| {
-            Content::localized_with_args("command-area-not-found", [("area", area_name)])
         })
 }
 
@@ -2696,120 +2681,6 @@ fn handle_safezone(
     Ok(())
 }
 
-fn handle_permit_build(
-    server: &mut Server,
-    client: EcsEntity,
-    target: EcsEntity,
-    args: Vec<String>,
-    action: &ServerChatCommand,
-) -> CmdResult<()> {
-    if let Some(area_name) = parse_cmd_args!(args, String) {
-        let bb_id = area(server, &area_name, "build")?;
-        let mut can_build = server.state.ecs().write_storage::<comp::CanBuild>();
-        let entry = can_build
-            .entry(target)
-            .map_err(|_| Content::Plain("Cannot find target entity!".to_string()))?;
-        let mut comp_can_build = entry.or_insert(comp::CanBuild {
-            enabled: false,
-            build_areas: HashSet::new(),
-        });
-        comp_can_build.build_areas.insert(bb_id);
-        drop(can_build);
-        if client != target {
-            server.notify_client(
-                target,
-                ServerGeneral::server_msg(
-                    ChatType::CommandInfo,
-                    Content::localized_with_args("command-permit-build-given", [(
-                        "area",
-                        area_name.clone(),
-                    )]),
-                ),
-            );
-        }
-        server.notify_client(
-            client,
-            ServerGeneral::server_msg(
-                ChatType::CommandInfo,
-                Content::localized_with_args("command-permit-build-granted", [("area", area_name)]),
-            ),
-        );
-        Ok(())
-    } else {
-        Err(action.help_content())
-    }
-}
-
-fn handle_revoke_build(
-    server: &mut Server,
-    client: EcsEntity,
-    target: EcsEntity,
-    args: Vec<String>,
-    action: &ServerChatCommand,
-) -> CmdResult<()> {
-    if let Some(area_name) = parse_cmd_args!(args, String) {
-        let bb_id = area(server, &area_name, "build")?;
-        let mut can_build = server.state.ecs_mut().write_storage::<comp::CanBuild>();
-        if let Some(mut comp_can_build) = can_build.get_mut(target) {
-            comp_can_build.build_areas.retain(|&x| x != bb_id);
-            drop(can_build);
-            if client != target {
-                server.notify_client(
-                    target,
-                    ServerGeneral::server_msg(
-                        ChatType::CommandInfo,
-                        Content::localized_with_args("command-revoke-build-recv", [(
-                            "area",
-                            area_name.clone(),
-                        )]),
-                    ),
-                );
-            }
-            server.notify_client(
-                client,
-                ServerGeneral::server_msg(
-                    ChatType::CommandInfo,
-                    Content::localized_with_args("command-revoke-build", [("area", area_name)]),
-                ),
-            );
-            Ok(())
-        } else {
-            Err(Content::localized("command-no-buid-perms"))
-        }
-    } else {
-        Err(action.help_content())
-    }
-}
-
-fn handle_revoke_build_all(
-    server: &mut Server,
-    client: EcsEntity,
-    target: EcsEntity,
-    _args: Vec<String>,
-    _action: &ServerChatCommand,
-) -> CmdResult<()> {
-    let ecs = server.state.ecs();
-
-    ecs.write_storage::<comp::CanBuild>().remove(target);
-    if client != target {
-        server.notify_client(
-            target,
-            ServerGeneral::server_msg(
-                ChatType::CommandInfo,
-                Content::localized("command-revoke-build-all"),
-            ),
-        );
-    }
-    server.notify_client(
-        client,
-        ServerGeneral::server_msg(
-            ChatType::CommandInfo,
-            Content::localized("command-revoked-all-build"),
-        ),
-    );
-    Ok(())
-}
-
 fn handle_players(
     server: &mut Server,
     client: EcsEntity,
@@ -2922,17 +2793,16 @@ fn handle_build(
         server.notify_client(client, chat_msg);
         Ok(())
     } else {
+        // Tout personnage porte le mode construction : n'en arrive ici que ce
+        // qui n'est pas un personnage — un spectateur, par exemple.
         Err(Content::Plain(
-            "You do not have permission to build.".into(),
+            "Only a character can enter build mode.".into(),
         ))
     }
 }
 
 fn get_areas_mut<'l>(kind: &str, state: &'l mut State) -> CmdResult<&'l mut Areas> {
     Ok(match AreaKind::from_str(kind).ok() {
-        Some(AreaKind::Build) => state
-            .mut_resource::<AreasContainer<BuildArea>>()
-            .deref_mut(),
         Some(AreaKind::NoDurability) => state
             .mut_resource::<AreasContainer<NoDurabilityArea>>()
             .deref_mut(),
@@ -3000,10 +2870,6 @@ fn handle_area_list(
                 }
             })
     };
-    let build_message = format_areas(
-        server.state.mut_resource::<AreasContainer<BuildArea>>(),
-        "Build",
-    );
     let no_dura_message = format_areas(
         server
             .state
@@ -3011,10 +2877,7 @@ fn handle_area_list(
         "Durability free",
     );
 
-    let msg = ServerGeneral::server_msg(
-        ChatType::CommandInfo,
-        Content::Plain([build_message, no_dura_message].join("\n")),
-    );
+    let msg = ServerGeneral::server_msg(ChatType::CommandInfo, Content::Plain(no_dura_message));
 
     server.notify_client(client, msg);
     Ok(())

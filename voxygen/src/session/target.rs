@@ -4,7 +4,7 @@ use vek::*;
 use client::{self, Client};
 use common::{
     comp::{self, CapsulePrism, Health, tool::ToolKind},
-    consts::{MAX_INTERACT_RANGE, MAX_PICKUP_RANGE},
+    consts::{MAX_BUILD_RANGE, MAX_INTERACT_RANGE, MAX_PICKUP_RANGE},
     link::Is,
     mounting::{Mount, Rider},
     uid::Uid,
@@ -111,8 +111,11 @@ pub(super) fn targets_under_cursor(
         // ...and by the distance to the player's eye position
         .filter(|(d, _)| eye_pos.distance(break_tgt_pos(*d)) < MAX_PICKUP_RANGE);
     let build_cast = Some(ray.until(|b| b.is_solid()).cast())
-        // Building is limited by the maximum target distance
-        .filter(|(d, _)| *d < MAX_TARGET_RANGE);
+        // La construction est bornee par le bras du joueur, et non plus par une
+        // zone declaree. Mesure depuis la position du joueur, comme le fait le
+        // serveur : viser plus loin qu'il n'accepte ne montrerait qu'un reticule
+        // menteur.
+        .filter(|(d, _)| player_pos.distance(break_tgt_pos(*d)) < MAX_BUILD_RANGE);
     // Visual obstacles are limited by filled blocks
     let obstacle_cast =
         Some(ray.until(|b| b.is_filled()).cast()).filter(|(d, _)| *d < MAX_TARGET_RANGE);

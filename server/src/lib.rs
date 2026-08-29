@@ -86,9 +86,7 @@ use common::{
     resources::{BattleMode, GameMode, Time, TimeOfDay},
     shared_server_config::ServerConstants,
     slowjob::SlowJobPool,
-    terrain::TerrainChunk,
     uid::Uid,
-    vol::RectRasterableVol,
 };
 use common_base::prof_span;
 use common_ecs::run_now;
@@ -96,7 +94,7 @@ use common_net::{
     msg::{ClientType, DisconnectReason, PlayerListUpdate, ServerGeneral, ServerInfo, ServerMsg},
     sync::WorldSyncExt,
 };
-use common_state::{AreasContainer, BattleModeChangeArea, BlockDiff, BuildArea, State};
+use common_state::{AreasContainer, BattleModeChangeArea, BlockDiff, State};
 use common_systems::add_local_systems;
 use metrics::{EcsSystemMetrics, GameplayMetrics, PhysicsMetrics, TickMetrics};
 use network::{ListenAddr, Network, Pid};
@@ -514,27 +512,9 @@ impl Server {
         // Set the spawn point we calculated above
         state.ecs_mut().insert(spawn_point);
 
-        // Insert a default AABB for the world
-        // TODO: prevent this from being deleted
-        {
-            #[cfg(feature = "worldgen")]
-            let size = world.sim().get_size();
-            #[cfg(not(feature = "worldgen"))]
-            let size = world.map_size_lg().chunks().map(u32::from);
-
-            let world_size = size.map(|e| e as i32) * TerrainChunk::RECT_SIZE.map(|e| e as i32);
-            let world_aabb = Aabb {
-                min: Vec3::new(0, 0, -32768),
-                max: Vec3::new(world_size.x, world_size.y, 32767),
-            }
-            .made_valid();
-
-            state
-                .ecs()
-                .write_resource::<AreasContainer<BuildArea>>()
-                .insert("world".to_string(), world_aabb)
-                .expect("The initial insert should always work.");
-        }
+        // Il n'y a plus de zone constructible a declarer : le monde entier l'est.
+        // L'AABB « world » qui tenait ici couvrait deja la carte de bout en bout
+        // — la permission etait la vraie borne, et elle a disparu.
 
         // Insert the world into the ECS (todo: Maybe not an Arc?)
         let world = Arc::new(world);

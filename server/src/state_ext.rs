@@ -748,6 +748,11 @@ impl StateExt for State {
                 entity,
                 comp::InventoryUpdateBuffer::new(comp::InventoryUpdateEvent::Init),
             );
+            // Le mode construction appartient a tout personnage, et non plus a
+            // qui un administrateur l'a accorde : batir est du jeu. Le composant
+            // arrive eteint — il dit dans quel mode on est, pas ce qu'on a le
+            // droit de faire.
+            self.write_component_ignore_entity_dead(entity, comp::CanBuild::default());
 
             if let Some(hardcore) = hardcore {
                 self.write_component_ignore_entity_dead(entity, hardcore);

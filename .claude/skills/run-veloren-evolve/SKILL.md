@@ -137,12 +137,11 @@ pilote ne l'atteint pas — cliquer en coordonnées écran absolues.
 
 ### Éprouver la construction
 
-Casser et poser sont derrière le mode construction, lui-même derrière une zone
-déclarée. La séquence, en chat (`enter`, puis `text`, puis `enter`) :
+Casser et poser sont derrière le mode construction, et rien d'autre — ni zone à
+déclarer ni permission à accorder, depuis D32. Une seule commande en chat
+(`enter`, puis `text`, puis `enter`) :
 
 ```
-/area_add zone build -100000 100000 -100000 100000 -100000 100000
-/permit_build zone
 /build
 ```
 
@@ -150,6 +149,10 @@ Ensuite, viser au réticule : `press -Button left` casse, `right` pose,
 `middle` est la pipette. La matière posée est celle de l'emplacement
 **sélectionné** dans la barre d'objets — `key -Value 1` le choisit, et
 `drag` l'y a mis.
+
+Le réticule ne vise plus qu'à **huit blocs** : au-delà, il n'accroche aucun
+bloc, et c'est voulu — il s'arrête exactement là où le serveur cesse
+d'accepter. Un clic qui ne fait rien de loin n'est donc pas une panne.
 
 **Ce qui prouve la pose, c'est le compte de la pile, pas le décor** : un bloc
 de terre posé sur de la terre ne se voit pas. Lire le compte sur l'icône de la

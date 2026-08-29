@@ -69,8 +69,6 @@ pub const PRESET_MANIFEST_PATH: &str = "server.manifests.presets";
 /// Enum for all possible area types
 #[derive(Debug, Clone, EnumIter, EnumString, AsRefStr)]
 pub enum AreaKind {
-    #[strum(serialize = "build")]
-    Build,
     #[strum(serialize = "no_durability")]
     NoDurability,
     #[strum(serialize = "battlemode_change")]
@@ -421,7 +419,6 @@ pub enum ServerChatCommand {
     Mount,
     Object,
     Outcome,
-    PermitBuild,
     Players,
     Poise,
     Portal,
@@ -431,8 +428,6 @@ pub enum ServerChatCommand {
     RepairEquipment,
     ResetRecipes,
     Respawn,
-    RevokeBuild,
-    RevokeBuildAll,
     RtsimChunk,
     RtsimInfo,
     RtsimNpc,
@@ -841,11 +836,6 @@ impl ServerChatCommand {
                 Content::localized("command-outcome-desc"),
                 Some(Admin),
             ),
-            ServerChatCommand::PermitBuild => cmd(
-                vec![Any("area_name", Required)],
-                Content::localized("command-permit_build-desc"),
-                Some(Admin),
-            ),
             ServerChatCommand::Players => {
                 cmd(vec![], Content::localized("command-players-desc"), None)
             },
@@ -881,16 +871,6 @@ impl ServerChatCommand {
             ServerChatCommand::RemoveLights => cmd(
                 vec![Float("radius", 20.0, Optional)],
                 Content::localized("command-remove_lights-desc"),
-                Some(Admin),
-            ),
-            ServerChatCommand::RevokeBuild => cmd(
-                vec![Any("area_name", Required)],
-                Content::localized("command-revoke_build-desc"),
-                Some(Admin),
-            ),
-            ServerChatCommand::RevokeBuildAll => cmd(
-                vec![],
-                Content::localized("command-revoke_build_all-desc"),
                 Some(Admin),
             ),
             ServerChatCommand::Region => cmd(
@@ -1219,7 +1199,6 @@ impl ServerChatCommand {
             ServerChatCommand::Motd => "motd",
             ServerChatCommand::Object => "object",
             ServerChatCommand::Outcome => "outcome",
-            ServerChatCommand::PermitBuild => "permit_build",
             ServerChatCommand::Players => "players",
             ServerChatCommand::Poise => "poise",
             ServerChatCommand::Portal => "portal",
@@ -1227,8 +1206,6 @@ impl ServerChatCommand {
             ServerChatCommand::Region => "region",
             ServerChatCommand::ReloadChunks => "reload_chunks",
             ServerChatCommand::RemoveLights => "remove_lights",
-            ServerChatCommand::RevokeBuild => "revoke_build",
-            ServerChatCommand::RevokeBuildAll => "revoke_build_all",
             ServerChatCommand::Safezone => "safezone",
             ServerChatCommand::Say => "say",
             ServerChatCommand::ServerPhysics => "server_physics",

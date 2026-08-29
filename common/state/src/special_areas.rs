@@ -10,9 +10,6 @@ use vek::*;
 pub struct AreasContainer<Kind>(Areas, PhantomData<Kind>);
 
 #[derive(Default)]
-pub struct BuildArea;
-
-#[derive(Default)]
 pub struct NoDurabilityArea;
 
 /// An area where one can change battle mode.
@@ -88,10 +85,6 @@ where
 
 pub trait AreaKind {
     fn display() -> &'static str;
-}
-
-impl AreaKind for BuildArea {
-    fn display() -> &'static str { "build" }
 }
 
 impl AreaKind for NoDurabilityArea {

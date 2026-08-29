@@ -85,7 +85,9 @@ impl<'a> System<'a> for Sys {
                     continue;
                 };
 
-                for item_entity in spatial_grid.0.in_circle_aabr(player_pos.0.xy(), AUTO_PICKUP_DIST)
+                for item_entity in spatial_grid
+                    .0
+                    .in_circle_aabr(player_pos.0.xy(), AUTO_PICKUP_DIST)
                 {
                     let Some((item_entity, item, item_pos, loot_owner)) =
                         (&entities, &items, &positions, loot_owners.maybe())

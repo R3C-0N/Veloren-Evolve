@@ -2,7 +2,7 @@
 use crate::plugin::PluginMgr;
 #[cfg(feature = "plugins")]
 use crate::plugin::memory_manager::EcsWorld;
-use crate::{BattleModeChangeArea, BuildArea, NoDurabilityArea};
+use crate::{BattleModeChangeArea, NoDurabilityArea};
 #[cfg(feature = "plugins")]
 use common::uid::IdMaps;
 use common::{
@@ -395,7 +395,6 @@ impl State {
         ecs.insert(TerrainGrid::new(map_size_lg, default_chunk).unwrap());
         ecs.insert(BlockChange::default());
         ecs.insert(ScheduledBlockChange::default());
-        ecs.insert(crate::special_areas::AreasContainer::<BuildArea>::default());
         ecs.insert(crate::special_areas::AreasContainer::<NoDurabilityArea>::default());
         ecs.insert(crate::special_areas::AreasContainer::<BattleModeChangeArea>::default());
         ecs.insert(TerrainChanges::default());
