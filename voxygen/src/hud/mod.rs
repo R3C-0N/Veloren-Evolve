@@ -4842,11 +4842,56 @@ impl Hud {
         }
     }
 
+    /// L'emplacement d'inventaire designe par la barre d'objets, s'il porte
+    /// bien un objet. C'est ce que le joueur pose en mode construction.
+    pub fn selected_build_slot(&self, inventory: &comp::Inventory) -> Option<InvSlotId> {
+        match self.hotbar.get(self.hotbar.currently_selected_slot)? {
+            hotbar::SlotContents::Inventory(hash, _) => inventory.get_slot_from_hash(hash),
+            hotbar::SlotContents::Ability(_) => None,
+        }
+    }
+
+    /// Pointer la barre d'objets sur un objet donne — c'est la pipette.
+    ///
+    /// L'objet est cherche d'abord dans la barre, ou il suffit de deplacer la
+    /// selection ; sinon il est lie a l'emplacement courant, faute de quoi le
+    /// geste echouerait pour la seule raison que le joueur n'a pas range sa
+    /// barre lui-meme.
+    pub fn aim_hotbar_at_item(&mut self, item_id: &str, inventory: &comp::Inventory) -> bool {
+        let holds_item = |slot: &hotbar::Slot| match self.hotbar.get(*slot) {
+            Some(hotbar::SlotContents::Inventory(hash, _)) => inventory
+                .get_slot_from_hash(hash)
+                .and_then(|slot| inventory.get(slot))
+                .is_some_and(|item| item.item_definition_id().itemdef_id() == Some(item_id)),
+            _ => false,
+        };
+
+        if let Some(slot) = hotbar::Slot::iter().find(holds_item) {
+            self.hotbar.currently_selected_slot = slot;
+            return true;
+        }
+
+        let Some(item) = inventory
+            .slots()
+            .flatten()
+            .find(|item| item.item_definition_id().itemdef_id() == Some(item_id))
+        else {
+            return false;
+        };
+
+        self.hotbar
+            .add_inventory_link(self.hotbar.currently_selected_slot, item);
+        self.events
+            .push(Event::ChangeHotbarState(Box::new(self.hotbar.to_owned())));
+        true
+    }
+
     pub fn handle_event(
         &mut self,
         event: WinEvent,
         global_state: &mut GlobalState,
         client_inventory: Option<&comp::Inventory>,
+        can_build: bool,
     ) -> bool {
         // Helper
         fn handle_slot(
@@ -5170,14 +5215,36 @@ impl Hud {
                     // Skillbar
                     input => {
                         if let Some(slot) = try_hotbar_slot_from_input(input) {
-                            handle_slot(
-                                slot,
-                                state,
-                                &mut self.events,
-                                &mut self.slot_manager,
-                                &mut self.hotbar,
-                                client_inventory,
+                            // En mode construction, les touches choisissent la
+                            // matiere qu'on pose au lieu d'employer l'objet :
+                            // manger sa pierre en batissant un mur n'aurait
+                            // aucun sens, et il faut bien la designer.
+                            //
+                            // Sauf quand un objet de l'inventaire est saisi :
+                            // c'est alors le geste qui l'assigne a la barre, et
+                            // l'intercepter interdirait de garnir sa barre sans
+                            // quitter le mode construction.
+                            let assigning = matches!(
+                                self.slot_manager.selected(),
+                                Some(slots::SlotKind::Inventory(slots::InventorySlot {
+                                    ours: true,
+                                    ..
+                                }))
                             );
+                            if can_build && !assigning {
+                                if state {
+                                    self.hotbar.currently_selected_slot = slot;
+                                }
+                            } else {
+                                handle_slot(
+                                    slot,
+                                    state,
+                                    &mut self.events,
+                                    &mut self.slot_manager,
+                                    &mut self.hotbar,
+                                    client_inventory,
+                                );
+                            }
                             true
                         } else {
                             false

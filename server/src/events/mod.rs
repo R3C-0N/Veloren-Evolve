@@ -30,6 +30,7 @@ use self::{
     trade::handle_process_trade_action,
 };
 
+mod construction;
 mod entity_creation;
 mod entity_manipulation;
 mod event_types;
@@ -104,6 +105,7 @@ fn event_sys_name<T: ServerEvent>() -> String {
 
 pub fn register_event_systems(builder: &mut DispatcherBuilder) {
     inventory_manip::register_event_systems(builder);
+    construction::register_event_systems(builder);
     entity_manipulation::register_event_systems(builder);
     interaction::register_event_systems(builder);
     invite::register_event_systems(builder);

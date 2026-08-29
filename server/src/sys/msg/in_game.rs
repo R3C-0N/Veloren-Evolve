@@ -53,6 +53,7 @@ event_emitters! {
         client_disconnect: event::ClientDisconnectEvent,
         set_battle_mode: event::SetBattleModeEvent,
         create_item_drop: event::CreateItemDropEvent,
+        place_block: event::PlaceBlockEvent,
     }
 }
 
@@ -178,8 +179,7 @@ impl Sys {
                             let was_set = {
                                 // Take the rare writes lock as briefly as possible.
                                 let mut guard = rare_writes.lock();
-                                let was_set =
-                                    guard.block_changes.try_set(pos, new_block).is_some();
+                                let was_set = guard.block_changes.try_set(pos, new_block).is_some();
                                 #[cfg(feature = "persistent_world")]
                                 if was_set
                                     && let Some(terrain_persistence) =
@@ -194,9 +194,7 @@ impl Sys {
                             // des ecritures rares : creer une entite n'en a pas
                             // besoin, et le tenir pendant l'emission
                             // serialiserait le systeme sans raison.
-                            if was_set
-                                && let Some(asset) = old_block.kind().item_drop_asset()
-                            {
+                            if was_set && let Some(asset) = old_block.kind().item_drop_asset() {
                                 let mut rng = rand::rng();
                                 emitters.emit(event::CreateItemDropEvent {
                                     // au centre du bloc retire, pas a son coin
@@ -215,7 +213,7 @@ impl Sys {
                     }
                 }
             },
-            ClientGeneral::PlaceBlock(pos, new_block) => {
+            ClientGeneral::PlaceBlock(pos, slot) => {
                 if let Some(comp_can_build) = can_build.get(entity)
                     && comp_can_build.enabled
                 {
@@ -228,16 +226,14 @@ impl Sys {
                                 .filter(|aabb| aabb.contains_point(pos))
                                 .is_some()
                         {
-                            // Take the rare writes lock as briefly as possible.
-                            let mut guard = rare_writes.lock();
-                            let _was_set = guard.block_changes.try_set(pos, new_block).is_some();
-                            #[cfg(feature = "persistent_world")]
-                            if _was_set
-                                && let Some(terrain_persistence) =
-                                    guard._terrain_persistence.as_mut()
-                            {
-                                terrain_persistence.set_block(pos, new_block);
-                            }
+                            // Le bloc n'est pas ecrit ici : le client n'envoie
+                            // qu'un emplacement d'inventaire, et lire l'objet
+                            // puis le retirer doit se faire d'un seul tenant.
+                            // Ce systeme tourne en par_join, l'inventaire n'y
+                            // est pas accessible en ecriture, et l'inventaire
+                            // n'est de toute facon pas une ecriture rare.
+                            emitters.emit(event::PlaceBlockEvent { entity, pos, slot });
+                            break;
                         }
                     }
                 }

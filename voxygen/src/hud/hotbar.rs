@@ -121,6 +121,8 @@ impl Slot {
         Slot::Ten,
     ];
 
+    pub fn iter() -> impl Iterator<Item = Slot> { Self::SLOTS.into_iter() }
+
     pub fn next_slot(&mut self) {
         let current_slot = *self as usize;
         let next_slot = (current_slot + 1) % 10;

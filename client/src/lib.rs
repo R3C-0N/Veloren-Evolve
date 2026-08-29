@@ -46,7 +46,7 @@ use common::{
     spiral::Spiral2d,
     terrain::{
         BiomeKind, CoordinateConversions, SiteKindMeta, SpriteKind, TerrainChunk, TerrainChunkSize,
-        TerrainGrid, block::Block, map::MapConfig, neighbors,
+        TerrainGrid, map::MapConfig, neighbors,
     },
     trade::{PendingTrade, SitePrices, TradeAction, TradeId, TradeResult},
     uid::{IdMaps, Uid},
@@ -2253,8 +2253,10 @@ impl Client {
         self.pending_chunks.clear();
     }
 
-    pub fn place_block(&mut self, pos: Vec3<i32>, block: Block) {
-        self.send_msg(ClientGeneral::PlaceBlock(pos, block));
+    /// Poser un bloc, en consommant l'objet a cet emplacement d'inventaire.
+    /// Le bloc lui-meme est decide par le serveur.
+    pub fn place_block(&mut self, pos: Vec3<i32>, slot: InvSlotId) {
+        self.send_msg(ClientGeneral::PlaceBlock(pos, slot));
     }
 
     pub fn remove_block(&mut self, pos: Vec3<i32>) {

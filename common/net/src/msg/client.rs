@@ -2,10 +2,9 @@ use super::{PingMsg, world_msg::SiteId};
 use common::{
     ViewDistances,
     character::CharacterId,
-    comp::{self, AdminRole, Skill},
+    comp::{self, AdminRole, Skill, slot::InvSlotId},
     event::PluginHash,
     resources::BattleMode,
-    terrain::block::Block,
 };
 use serde::{Deserialize, Serialize};
 use vek::*;
@@ -97,7 +96,9 @@ pub enum ClientGeneral {
     ControlAction(comp::ControlAction),
     SetViewDistance(ViewDistances),
     BreakBlock(Vec3<i32>),
-    PlaceBlock(Vec3<i32>, Block),
+    /// Poser un bloc, en consommant l'objet a cet emplacement d'inventaire.
+    /// Le client ne choisit pas le bloc : le serveur le deduit de l'objet.
+    PlaceBlock(Vec3<i32>, InvSlotId),
     ExitInGame,
     PlayerPhysics {
         pos: comp::Pos,

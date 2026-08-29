@@ -28,7 +28,7 @@ use common::{
     mounting::{Mount, VolumePos},
     outcome::Outcome,
     recipe::{self, RecipeBookManifest},
-    terrain::{Block, BlockKind},
+    terrain::Block,
     trade::TradeResult,
     util::{Dir, Plane},
     vol::ReadVol,
@@ -104,7 +104,6 @@ pub struct SessionState {
     key_state: KeyState,
     inputs: comp::ControllerInputs,
     inputs_state: HashSet<GameInput>,
-    selected_block: Block,
     walk_forward_dir: Vec2<f32>,
     walk_right_dir: Vec2<f32>,
     free_look: bool,
@@ -179,7 +178,6 @@ impl SessionState {
             inputs: comp::ControllerInputs::default(),
             inputs_state: HashSet::new(),
             hud,
-            selected_block: Block::new(BlockKind::Misc, Rgb::broadcast(255)),
             walk_forward_dir,
             walk_right_dir,
             free_look: false,
@@ -774,7 +772,7 @@ impl PlayState for SessionState {
                     let inventory = inventories.get(client.entity());
                     if self
                         .hud
-                        .handle_event(event.clone(), global_state, inventory)
+                        .handle_event(event.clone(), global_state, inventory, can_build)
                     {
                         continue;
                     }
@@ -810,11 +808,23 @@ impl PlayState for SessionState {
                                 self.walking_speed = false;
                                 let mut client = self.client.borrow_mut();
                                 if let Some(build_target) = build_target.filter(|_| state) {
-                                    let selected_pos = build_target.kind.0;
-                                    client.place_block(
-                                        selected_pos.map(|p| p.floor() as i32),
-                                        self.selected_block,
-                                    );
+                                    // Le bloc pose est celui de l'objet
+                                    // designe dans la barre : le serveur le
+                                    // deduit, le client n'envoie que
+                                    // l'emplacement. Sans objet, rien ne part.
+                                    let build_slot = {
+                                        let inventories = client.inventories();
+                                        inventories
+                                            .get(client.entity())
+                                            .and_then(|inv| self.hud.selected_build_slot(inv))
+                                    };
+                                    if let Some(slot) = build_slot {
+                                        let selected_pos = build_target.kind.0;
+                                        client.place_block(
+                                            selected_pos.map(|p| p.floor() as i32),
+                                            slot,
+                                        );
+                                    }
                                 } else {
                                     client.handle_input(
                                         InputKind::Secondary,
@@ -837,8 +847,12 @@ impl PlayState for SessionState {
                                 self.walking_speed = false;
                                 let mut client = self.client.borrow_mut();
                                 if can_build {
-                                    if state
-                                        && let Some(block) = build_target.and_then(|bt| {
+                                    // La pipette designe desormais un objet et
+                                    // non un bloc : elle pointe la barre sur ce
+                                    // qu'il faut avoir en poche pour reposer ce
+                                    // qu'on vise.
+                                    let aimed = build_target
+                                        .and_then(|bt| {
                                             client
                                                 .state()
                                                 .terrain()
@@ -846,8 +860,12 @@ impl PlayState for SessionState {
                                                 .ok()
                                                 .copied()
                                         })
+                                        .and_then(|block| block.kind().item_drop_asset());
+                                    if state
+                                        && let Some(asset) = aimed
+                                        && let Some(inv) = client.inventories().get(client.entity())
                                     {
-                                        self.selected_block = block;
+                                        self.hud.aim_hotbar_at_item(asset, inv);
                                     }
                                 } else if controlling_char {
                                     global_state.profile.tutorial.event_roll();

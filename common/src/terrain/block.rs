@@ -129,7 +129,9 @@ impl BlockKind {
     /// des couleurs arbitraires, et son contenu n'a aucun sens de matériau.
     pub const fn item_drop_asset(&self) -> Option<&'static str> {
         Some(match self {
-            BlockKind::Rock | BlockKind::WeakRock | BlockKind::GlowingRock
+            BlockKind::Rock
+            | BlockKind::WeakRock
+            | BlockKind::GlowingRock
             | BlockKind::GlowingWeakRock => "common.items.block.stone",
             BlockKind::Grass => "common.items.block.grass",
             BlockKind::Snow | BlockKind::ArtSnow => "common.items.block.snow",
@@ -145,6 +147,36 @@ impl BlockKind {
             | BlockKind::Misc => return None,
         })
     }
+}
+
+/// Le bloc que pose un objet-bloc, s'il en pose un.
+///
+/// Inverse de [`BlockKind::item_drop_asset`], et **seul endroit ou se decide
+/// ce qu'un joueur pose** : le client n'envoie qu'un emplacement d'inventaire,
+/// le serveur lit l'objet qui s'y trouve et vient ici.
+///
+/// Deux choses que l'objet ne porte pas et qu'il faut donc choisir :
+///
+/// - **le type**, quand plusieurs partagent un meme objet — la roche friable et
+///   la roche luisante lachent toutes deux « un bloc de pierre ». On rend le
+///   type canonique de la famille, jamais une de ses variantes ;
+/// - **la teinte**, perdue au ramassage. Ce sont les couleurs des modeles
+///   d'objets, premiere entree de palette de `gen_block_vox.py`, si bien que ce
+///   qu'on pose ressemble a ce qu'on tient. Le gazon fait exception et prend le
+///   vert de son dessus, pas la terre de ses flancs.
+pub fn block_from_item(item_id: &str) -> Option<Block> {
+    let (kind, (r, g, b)) = match item_id {
+        "common.items.block.stone" => (BlockKind::Rock, (122, 122, 128)),
+        "common.items.block.grass" => (BlockKind::Grass, (74, 132, 54)),
+        "common.items.block.snow" => (BlockKind::Snow, (238, 242, 248)),
+        "common.items.block.earth" => (BlockKind::Earth, (104, 74, 50)),
+        "common.items.block.sand" => (BlockKind::Sand, (214, 194, 140)),
+        "common.items.block.wood" => (BlockKind::Wood, (126, 92, 56)),
+        "common.items.block.leaves" => (BlockKind::Leaves, (64, 116, 46)),
+        "common.items.block.ice" => (BlockKind::Ice, (168, 208, 226)),
+        _ => return None,
+    };
+    Some(Block::new(kind, Rgb::new(r, g, b)))
 }
 
 /// # Format
@@ -847,3 +879,37 @@ impl Block {
 
 const _: () = assert!(core::mem::size_of::<BlockKind>() == 1);
 const _: () = assert!(core::mem::size_of::<Block>() == 4);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use strum::IntoEnumIterator;
+
+    /// Les deux tables se repondent. C'est la seule garantie qu'elles ne
+    /// divergeront pas : casser un bloc puis reposer ce qu'on a ramasse doit
+    /// rendre un bloc qui lache a nouveau le meme objet.
+    #[test]
+    fn drop_and_place_agree() {
+        for kind in BlockKind::iter() {
+            let Some(asset) = kind.item_drop_asset() else {
+                continue;
+            };
+            let placed = block_from_item(asset)
+                .unwrap_or_else(|| panic!("{kind:?} lache {asset}, qu'aucun bloc ne repose"));
+            assert_eq!(
+                placed.kind().item_drop_asset(),
+                Some(asset),
+                "{kind:?} lache {asset}, repose {:?}, qui lache autre chose",
+                placed.kind(),
+            );
+        }
+    }
+
+    /// Un bloc pose porte bien sa teinte : les huit materiaux sont pleins, donc
+    /// leurs trois octets de donnees sont une couleur et non un sprite.
+    #[test]
+    fn placed_block_carries_its_colour() {
+        let earth = block_from_item("common.items.block.earth").expect("la terre se pose");
+        assert_eq!(earth.get_color(), Some(Rgb::new(104, 74, 50)));
+    }
+}

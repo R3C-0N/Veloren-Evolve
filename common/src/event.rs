@@ -487,6 +487,17 @@ pub struct ParryHookEvent {
     pub poise_multiplier: f32,
 }
 
+/// Poser un bloc en consommant un objet-bloc de l'inventaire.
+///
+/// L'evenement ne porte pas le bloc mais l'emplacement d'ou il sort : lire
+/// l'objet et le retirer doivent se faire d'un seul tenant, sans quoi deux
+/// poses dans le meme tick poseraient deux blocs pour un objet consomme.
+pub struct PlaceBlockEvent {
+    pub entity: EcsEntity,
+    pub pos: Vec3<i32>,
+    pub slot: comp::slot::InvSlotId,
+}
+
 /// Attempt to mine a block, turning it into an item.
 pub struct MineBlockEvent {
     pub entity: EcsEntity,
