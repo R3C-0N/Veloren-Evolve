@@ -8,7 +8,7 @@ mod way;
 // Reexports
 use self::erosion::Compute;
 pub use self::{
-    diffusion::diffusion,
+    diffusion::{diffusion, diffusion_cubique},
     location::Location,
     map::{sample_pos, sample_wpos},
     // `Endroit` est publique parce que la mesure de continuité aux coutures
@@ -54,7 +54,7 @@ use common::{
     store::{Id, Store},
     terrain::{
         BiomeKind, CoordinateConversions, MapSizeLg, TerrainChunk, TerrainChunkSize, cube,
-        map::MapConfig, uniform_idx_as_vec2, vec2_as_uniform_idx,
+        map::MapConfig, neighbors, uniform_idx_as_vec2, vec2_as_uniform_idx,
     },
     vol::RectVolSize,
 };
@@ -1633,22 +1633,11 @@ impl WorldSim {
         // Check whether any tiles around this tile are not water (since Lerp will
         // ensure that they are included).
         let pure_water = |posi: usize| {
-            let pos = uniform_idx_as_vec2(map_size_lg, posi);
-            for x in pos.x - 1..(pos.x + 1) + 1 {
-                for y in pos.y - 1..(pos.y + 1) + 1 {
-                    if x >= 0
-                        && y >= 0
-                        && x < map_size_lg.chunks().x as i32
-                        && y < map_size_lg.chunks().y as i32
-                    {
-                        let posi = vec2_as_uniform_idx(map_size_lg, Vec2::new(x, y));
-                        if !is_underwater(posi) {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
+            // Le voisinage passe par le repliement comme partout ailleurs :
+            // balayé à la main, il s'arrête au bord de la face et déclare
+            // « toute en eau » une case qui a de la terre juste de l'autre côté
+            // d'une couture.
+            is_underwater(posi) && neighbors(map_size_lg, posi).all(is_underwater)
         };
 
         // NaNs in these uniform vectors wherever pure_water() returns true.

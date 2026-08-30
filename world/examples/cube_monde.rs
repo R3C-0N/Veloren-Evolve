@@ -26,6 +26,13 @@ fn main() {
         .nth(1)
         .and_then(|v| v.parse().ok())
         .unwrap_or(7u32);
+    // Pour bissecter : `--erosion 0` engendre le monde sans érosion du tout, ce
+    // qui dit si une cassure vient du bruit ou du solveur.
+    let erosion: f32 = std::env::args()
+        .skip_while(|a| a != "--erosion")
+        .nth(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
 
     let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
     let (monde, _index) = World::generate(
@@ -36,6 +43,7 @@ fn main() {
                 x_lg,
                 y_lg: x_lg,
                 map_kind: MapKind::Cube,
+                erosion_quality: erosion,
                 ..GenOpts::default()
             }),
             calendar: None,
@@ -49,7 +57,7 @@ fn main() {
     assert!(map.est_cubique(), "la carte n'est pas cubique");
     let f = cube::face_chunks(map);
     println!(
-        "Monde cubique : 6 faces de {f} chunks, rayon {:.0} blocs",
+        "Monde cubique : 6 faces de {f} chunks, rayon {:.0} blocs, érosion {erosion}",
         cube::rayon(map)
     );
     println!();
@@ -156,44 +164,54 @@ fn le_relief_aux_coutures(sim: &veloren_world::sim::WorldSim) -> u32 {
         (Vec2::new(0, -1), |_, w| (w, 0)),
     ];
 
-    let (mut couture, mut ordinaire) = (0.0f64, 0.0f64);
-    let (mut pire, mut pire_ordinaire) = (0.0f64, 0.0f64);
-    let mut n = 0u32;
+    // `decalage` = 0 mesure la vraie couture ; toute autre valeur mesure une
+    // ligne **témoin**, parallèle à l'arête mais à l'intérieur de la face, où
+    // aucun recollement n'a lieu. Sans ce témoin, un rapport de 1,5 ne dit rien :
+    // on ignore ce que vaut le même rapport là où il n'y a rien à traverser.
+    let mesurer = |decalage: i32| {
+        let (mut couture, mut ordinaire) = (0.0f64, 0.0f64);
+        let (mut pire, mut pire_ordinaire) = (0.0f64, 0.0f64);
+        let mut n = 0u32;
 
-    for face in 0..6u8 {
-        for (sortie, place) in bords {
-            for w in (f / 16)..(f - f / 16) {
-                let (cu, cv) = place(f, w);
-                let dedans = cube::cle_de_chunk(map, face, cu, cv);
-                let (Some(dehors), Some(avant)) = (
-                    cube::voisin(map, dedans, sortie),
-                    cube::voisin(map, dedans, -sortie),
-                ) else {
-                    continue;
-                };
-                let alt = |cle: Vec2<i32>| sim.get(cle).map(|c| c.alt as f64);
-                let (Some(a), Some(b), Some(c)) = (alt(avant), alt(dedans), alt(dehors)) else {
-                    continue;
-                };
+        for face in 0..6u8 {
+            for (sortie, place) in bords {
+                for w in (f / 16)..(f - f / 16) {
+                    let (cu, cv) = place(f, w);
+                    let base = cube::cle_de_chunk(map, face, cu, cv);
+                    let Some(dedans) = cube::voisin(map, base, -sortie * decalage) else {
+                        continue;
+                    };
+                    let (Some(dehors), Some(avant)) = (
+                        cube::voisin(map, dedans, sortie),
+                        cube::voisin(map, dedans, -sortie),
+                    ) else {
+                        continue;
+                    };
+                    let alt = |cle: Vec2<i32>| sim.get(cle).map(|c| c.alt as f64);
+                    let (Some(a), Some(b), Some(c)) = (alt(avant), alt(dedans), alt(dehors)) else {
+                        continue;
+                    };
 
-                let pas_couture = (c - b).abs();
-                let pas_ordinaire = (b - a).abs();
-                couture += pas_couture;
-                ordinaire += pas_ordinaire;
-                pire = pire.max(pas_couture);
-                pire_ordinaire = pire_ordinaire.max(pas_ordinaire);
-                n += 1;
+                    let pas_couture = (c - b).abs();
+                    let pas_ordinaire = (b - a).abs();
+                    couture += pas_couture;
+                    ordinaire += pas_ordinaire;
+                    pire = pire.max(pas_couture);
+                    pire_ordinaire = pire_ordinaire.max(pas_ordinaire);
+                    n += 1;
+                }
             }
         }
-    }
+        (couture / ordinaire, pire / pire_ordinaire, n)
+    };
 
-    println!(
-        "relief aux coutures : dénivelé en travers / à l'intérieur = {:.2} en moyenne, {:.2} au \
-         pire ({n} pas)",
-        couture / ordinaire,
-        pire / pire_ordinaire
-    );
-    // Pas de verdict : l'érosion ne traverse pas encore les coutures, et un
-    // seuil posé maintenant ne mesurerait que l'endroit où on l'a posé.
+    let (moyen, pire, n) = mesurer(0);
+    let (t_moyen, t_pire, _) = mesurer(4);
+    println!("relief aux coutures : {moyen:.2} en moyenne, {pire:.2} au pire ({n} pas)");
+    println!("  témoin, 4 cases à l'intérieur : {t_moyen:.2} en moyenne, {t_pire:.2} au pire");
+
+    // Pas de verdict : l'érosion vient seulement d'apprendre à traverser, et un
+    // seuil posé maintenant ne mesurerait que l'endroit où on l'a posé. Le
+    // témoin, lui, dit ce qu'un rapport « normal » vaut sur ce terrain.
     0
 }

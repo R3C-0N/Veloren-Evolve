@@ -465,6 +465,20 @@ fn replier_lieu(map: MapSizeLg, face: u8, u: f64, v: f64) -> (Lieu, u8) {
 /// [`super::neighbors`] emploie pour dédupliquer : aux coins, où deux
 /// directions mènent à la même case, les deux fonctions désignent donc la même.
 pub fn delta(map: MapSizeLg, de: Vec2<i32>, vers: Vec2<i32>) -> Option<Vec2<i32>> {
+    let f = face_chunks(map);
+    let (face_de, u, v) = decomposer(de, f)?;
+    // Le cas courant, et de très loin : les deux cases sont sur la même face, et
+    // la différence des coordonnées est exacte. Il vaut d'être écrit à part —
+    // la fonction est appelée dans la boucle intérieure de l'érosion, et le cas
+    // général y coûterait huit repliements par case et par pas.
+    if let Some((face_vers, u2, v2)) = decomposer(vers, f)
+        && face_de == face_vers
+    {
+        let d = Vec2::new(u2 - u, v2 - v);
+        if d != Vec2::zero() && d.map(|e| e.abs()).reduce_max() <= 1 {
+            return Some(d);
+        }
+    }
     super::NEIGHBOR_DELTA
         .iter()
         .map(|&(x, y)| Vec2::new(x, y))

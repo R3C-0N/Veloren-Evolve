@@ -1,4 +1,4 @@
-use super::{diffusion, downhill, uphill};
+use super::{Bruit, Endroit, diffusion, diffusion_cubique, downhill, uphill};
 use crate::{config::CONFIG, util::RandomField};
 use common::{
     terrain::{
@@ -10,7 +10,6 @@ use common::{
 use tracing::{debug, error, info, warn};
 // use faster::*;
 use itertools::izip;
-use noise::NoiseFn;
 use num::{Float, Zero};
 use ordered_float::{FloatCore, NotNan};
 use rayon::prelude::*;
@@ -553,7 +552,7 @@ pub fn get_rivers<F: fmt::Debug + Float + Into<f64>, G: Float + Into<f64>>(
 fn get_max_slope(
     map_size_lg: MapSizeLg,
     h: &[Alt],
-    rock_strength_nz: &(impl NoiseFn<f64, 3> + Sync),
+    rock_strength_nz: &(impl Bruit + Sync),
     height_scale: impl Fn(usize) -> Alt + Sync,
 ) -> Box<[f64]> {
     let min_max_angle = (15.0 / 360.0 * 2.0 * std::f64::consts::PI).tan();
@@ -568,7 +567,15 @@ fn get_max_slope(
             let wposz = z / height_scale;
             // Normalized to be between 6 and and 54 degrees.
             let div_factor = (2.0 * TerrainChunkSize::RECT_SIZE.x as f64) / 8.0;
-            let rock_strength = rock_strength_nz.get([wposf.x, wposf.y, wposz * div_factor]);
+            // La solidité de la roche se lit sur la sphère comme tout le reste.
+            // Elle décide de la pente maximale, donc du coefficient de
+            // diffusion : lue dans la grille, elle posait une marche de terrain
+            // à chaque recollement, et à chaque pas d'érosion.
+            let rock_strength = Endroit::nouveau(map_size_lg, wposf).lire_en_relief(
+                rock_strength_nz,
+                1.0,
+                wposz * div_factor,
+            );
             let rock_strength = rock_strength.clamp(-1.0, 1.0) * 0.5 + 0.5;
             // Logistic regression.  Make sure x ∈ (0, 1).
             let logit = |x: f64| x.ln() - (-x).ln_1p();
@@ -712,7 +719,7 @@ fn erode(
     max_g: f32,
     kdsed: f64,
     _seed: &RandomField,
-    rock_strength_nz: &(impl NoiseFn<f64, 3> + Sync),
+    rock_strength_nz: &(impl Bruit + Sync),
     uplift: impl Fn(usize) -> f32 + Sync,
     n_f: impl Fn(usize) -> f32 + Sync,
     m_f: impl Fn(usize) -> f32 + Sync,
@@ -943,7 +950,7 @@ fn erode(
                         let k_da = k_da * kd_factor;
 
                         let mwrec_i = &mwrec[posi];
-                        mrec_downhill(map_size_lg, &mrec, posi).for_each(|(kk, posj)| {
+                        mrec_downhill(map_size_lg, &mrec, posi).for_each(|(kk, _posj)| {
                             let mwrec_kk = mwrec_i[kk];
 
                             #[rustfmt::skip]
@@ -989,9 +996,8 @@ fn erode(
                             let k = (mwrec_kk * (uplift_i + max_uplift as f64 * g_i / p))
                                 / (1.0 + k_da * (mwrec_kk * chunk_neutral_area).powf(q))
                                 / max_slope.powf(q_);
-                            let dxy = (uniform_idx_as_vec2(map_size_lg, posi)
-                                - uniform_idx_as_vec2(map_size_lg, posj))
-                            .map(|e| e as f64);
+                            let (dx, dy) = NEIGHBOR_DELTA[kk];
+                            let dxy = Vec2::new(dx, dy).map(|e| e as f64);
                             let neighbor_distance = (neighbor_coef * dxy).magnitude();
 
                             let knew = (k
@@ -1410,9 +1416,7 @@ fn erode(
                             // of wh_j.
                             new_h_i = wh_j;
                         } else if compute_stats && new_h_i > 0.0 {
-                            let dxy = (uniform_idx_as_vec2(map_size_lg, posi)
-                                - uniform_idx_as_vec2(map_size_lg, posj))
-                            .map(|e| e as f64);
+                            let dxy = pas_vers(map_size_lg, posi, posj);
                             let neighbor_distance = (neighbor_coef * dxy).magnitude();
                             let dz = (new_h_i - wh_j).max(0.0);
                             let mag_slope = dz / neighbor_distance;
@@ -1507,9 +1511,7 @@ fn erode(
             } else {
                 let posj = posj as usize;
                 let h_j = h[posj];
-                let dxy = (uniform_idx_as_vec2(map_size_lg, posi)
-                    - uniform_idx_as_vec2(map_size_lg, posj))
-                .map(|e| e as f64);
+                let dxy = pas_vers(map_size_lg, posi, posj);
                 let neighbor_distance_squared = (neighbor_coef * dxy).magnitude_squared();
                 let dh = h_i - h_j;
                 // H_i_fact = (h_i - h_j) / (||p_i - p_j||^2 + (h_i - h_j)^2)
@@ -1638,9 +1640,7 @@ fn erode(
                 // redistribute uplift to other neighbors.
                 let (posk, h_k) = (posj, h_j);
                 let (posk, h_k) = if h_k < h_j { (posk, h_k) } else { (posj, h_j) };
-                let dxy = (uniform_idx_as_vec2(map_size_lg, posi)
-                    - uniform_idx_as_vec2(map_size_lg, posk))
-                .map(|e| e as f64);
+                let dxy = pas_vers(map_size_lg, posi, posk);
                 let neighbor_distance = (neighbor_coef * dxy).magnitude();
                 let dz = (new_h_i - h_k).max(0.0);
                 let mag_slope = dz / neighbor_distance;
@@ -1716,18 +1716,25 @@ fn erode(
     );
 
     // Apply hillslope diffusion.
-    diffusion(
-        nx,
-        ny,
-        nx as f64 * dx,
-        ny as f64 * dy,
-        dt,
-        (),
-        h,
-        b,
-        |posi| max_slopes[posi],
-        -1.0,
-    );
+    if map_size_lg.est_cubique() {
+        // Le solveur ADI balaie des lignes et des colonnes de la grille : sur un
+        // patron, une ligne traverse trois faces sans rapport. Il tourne donc
+        // face par face, avec un halo lu à travers les recollements.
+        diffusion_cubique(map_size_lg, dx, dy, dt, h, b, |posi| max_slopes[posi], -1.0);
+    } else {
+        diffusion(
+            nx,
+            ny,
+            nx as f64 * dx,
+            ny as f64 * dy,
+            dt,
+            (),
+            h,
+            b,
+            |posi| max_slopes[posi],
+            -1.0,
+        );
+    }
     debug!("Done applying diffusion.");
     debug!("Done eroding.");
 }
@@ -2312,6 +2319,22 @@ pub fn get_lakes<F: FloatCore>(
     (boundary.len(), indirection, newh.into_boxed_slice(), maxh)
 }
 
+/// Le pas menant d'une case à sa voisine, en cases, prêt à devenir une
+/// distance.
+///
+/// Remplace la soustraction des deux positions du patron, qui rend un écart
+/// énorme et faux dès qu'on traverse un recollement — et cet écart passait
+/// ensuite dans un dénominateur de la loi de puissance. Seule sa longueur est
+/// employée, donc le sens n'importe pas.
+#[inline]
+fn pas_vers(map_size_lg: MapSizeLg, de: usize, vers: usize) -> Vec2<f64> {
+    delta_voisin(map_size_lg, de, vers)
+        .unwrap_or_else(|| {
+            uniform_idx_as_vec2(map_size_lg, vers) - uniform_idx_as_vec2(map_size_lg, de)
+        })
+        .map(|e| e as f64)
+}
+
 /// Iterate through set neighbors of multi-receiver flow.
 pub fn mrec_downhill(
     map_size_lg: MapSizeLg,
@@ -2528,7 +2551,7 @@ pub fn do_erosion(
     _max_uplift: f32,
     n_steps: usize,
     seed: &RandomField,
-    rock_strength_nz: &(impl NoiseFn<f64, 3> + Sync),
+    rock_strength_nz: &(impl Bruit + Sync),
     oldh: impl Fn(usize) -> f32 + Sync,
     oldb: impl Fn(usize) -> f32 + Sync,
     is_ocean: impl Fn(usize) -> bool + Sync,

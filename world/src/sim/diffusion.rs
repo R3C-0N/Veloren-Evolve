@@ -1,5 +1,111 @@
 use super::Alt;
+use common::terrain::{MapSizeLg, cube, vec2_as_uniform_idx};
 use rayon::prelude::*;
+use vek::*;
+
+/// Nombre de balayages de Schwarz.
+///
+/// Un seul suffirait si la longueur de diffusion d'un pas restait bien en deçà
+/// d'une case — ce qui est le cas ici. Le second est une assurance bon marché
+/// contre un réglage de `kd` plus vif, et il ne change rien au résultat quand
+/// le premier a déjà convergé.
+const BALAYAGES: usize = 2;
+
+/// La diffusion des versants sur un patron de cube (D27).
+///
+/// Le solveur ADI de Veloren balaie des **lignes** puis des **colonnes** de la
+/// grille entière, et résout à chaque fois un système tridiagonal. Une ligne du
+/// patron traverse trois faces sans rapport et deux emplacements morts : le
+/// solveur y diffuserait entre des lieux qui ne se touchent pas, et pas entre
+/// ceux qui se touchent vraiment.
+///
+/// On ne le réécrit pas pour autant. Il tourne **face par face**, sur son carré
+/// de cases entouré d'un halo d'une case lu **à travers les recollements**. Les
+/// quatre bords étant déjà tenus à leur valeur — la condition de Dirichlet que
+/// le code d'origine impose en dur —, le halo suffit à porter le voisinage
+/// d'une face à l'autre. C'est une décomposition de domaine, et le solveur
+/// validé reste intact.
+///
+/// **Les balayages ne sont pas des pas de temps.** L'intérieur repart chaque
+/// fois de l'état initial ; seul le halo est rafraîchi. Deux itérations sur le
+/// *même* pas de temps, et non deux pas de diffusion.
+pub fn diffusion_cubique(
+    map_size_lg: MapSizeLg,
+    dx: f64,
+    dy: f64,
+    dt: f64,
+    h: &mut [Alt],
+    b: &mut [Alt],
+    kd: impl Fn(usize) -> f64 + Sync,
+    kdsed: f64,
+) {
+    let f = cube::face_chunks(map_size_lg) as usize;
+    let n = f + 2;
+
+    // Pour chaque face, la table des indices globaux de sa sous-grille bordée.
+    // Elle ne dépend que de la topologie : on la calcule une fois.
+    let tables: Vec<Vec<Option<usize>>> = (0..6u8)
+        .map(|face| {
+            let coin = cube::cle_de_chunk(map_size_lg, face, 0, 0);
+            (0..n * n)
+                .map(|l| {
+                    let d = Vec2::new((l % n) as i32 - 1, (l / n) as i32 - 1);
+                    cube::voisin(map_size_lg, coin, d)
+                        .map(|cle| vec2_as_uniform_idx(map_size_lg, cle))
+                })
+                .collect()
+        })
+        .collect();
+
+    let h0 = h.to_vec();
+    let b0 = b.to_vec();
+
+    for _ in 0..BALAYAGES {
+        let resultats: Vec<Vec<(usize, Alt, Alt)>> = tables
+            .par_iter()
+            .map(|table| {
+                let mut sh = vec![0.0; n * n];
+                let mut sb = vec![0.0; n * n];
+                for (l, g) in table.iter().enumerate() {
+                    let Some(g) = *g else { continue };
+                    let (i, j) = (l % n, l / n);
+                    // L'intérieur repart de l'état initial, le halo porte
+                    // l'état courant : c'est ce qui fait une itération de
+                    // Schwarz plutôt qu'un second pas de temps.
+                    let interieur = (1..=f).contains(&i) && (1..=f).contains(&j);
+                    sh[l] = if interieur { h0[g] } else { h[g] };
+                    sb[l] = if interieur { b0[g] } else { b[g] };
+                }
+
+                diffusion(
+                    n,
+                    n,
+                    n as f64 * dx,
+                    n as f64 * dy,
+                    dt,
+                    (),
+                    &mut sh,
+                    &mut sb,
+                    |l| table[l].map_or(0.0, &kd),
+                    kdsed,
+                );
+
+                // Seul l'intérieur est à nous : le halo appartient aux voisines.
+                (0..n * n)
+                    .filter(|&l| (1..=f).contains(&(l % n)) && (1..=f).contains(&(l / n)))
+                    .filter_map(|l| table[l].map(|g| (g, sh[l], sb[l])))
+                    .collect()
+            })
+            .collect();
+
+        for face in resultats {
+            for (g, hv, bv) in face {
+                h[g] = hv;
+                b[g] = bv;
+            }
+        }
+    }
+}
 
 /// From <https://github.com/fastscape-lem/fastscapelib-fortran/blob/master/src/Diffusion.f90>
 ///
