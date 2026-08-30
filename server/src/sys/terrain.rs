@@ -28,8 +28,9 @@ use common::{
     lottery::LootSpec,
     resources::{Time, TimeOfDay},
     slowjob::SlowJobPool,
-    terrain::TerrainGrid,
+    terrain::{MapSizeLg, TerrainChunkSize, TerrainGrid, cube},
     util::Dir,
+    vol::RectVolSize,
 };
 
 use common_ecs::{Job, Origin, Phase, System};
@@ -270,11 +271,11 @@ impl<'a> System<'a> for Sys {
 
         let max_view_distance = data.server_settings.max_view_distance.unwrap_or(u32::MAX);
         #[cfg(feature = "worldgen")]
-        let world_size = data.world.sim().get_size();
+        let map_size_lg = data.world.sim().map_size_lg();
         #[cfg(not(feature = "worldgen"))]
-        let world_size = data.world.map_size_lg().chunks().map(u32::from);
+        let map_size_lg = data.world.map_size_lg();
         let (presences_position_entities, presences_positions) = prepare_player_presences(
-            world_size,
+            map_size_lg,
             max_view_distance,
             &data.entities,
             &data.positions,
@@ -311,11 +312,20 @@ impl<'a> System<'a> for Sys {
                 // scanning forward.
                 let end = presences_position_entities
                     .partition_point(|((pos, _), _)| i32::from(pos.x) < max_chunk_x);
-                let interior = &presences_position_entities[start..end];
+                // La fenêtre en X ne vaut que sur un plan monotone. Sur un patron
+                // de cube, un joueur tout proche peut avoir un X à l'autre bout
+                // de la grille : la dichotomie l'écarterait **avant** le test de
+                // distance. On parcourt donc tous les joueurs — le jeu vise des
+                // serveurs entre amis (D22), leur nombre est borné.
+                let interior = if map_size_lg.est_cubique() {
+                    &presences_position_entities[..]
+                } else {
+                    &presences_position_entities[start..end]
+                };
                 interior
                     .iter()
                     .filter(|((player_chunk_pos, player_vd_sqr), _)| {
-                        chunk_in_vd(*player_chunk_pos, *player_vd_sqr, *chunk_key)
+                        chunk_in_vd(map_size_lg, *player_chunk_pos, *player_vd_sqr, *chunk_key)
                     })
                     .for_each(|(_, entity)| {
                         chunk_send_emitter.emit(ChunkSendEntry {
@@ -373,9 +383,13 @@ impl<'a> System<'a> for Sys {
                 // scanning forward.
                 let end = presences_positions
                     .partition_point(|(pos, _)| i32::from(pos.x) < max_chunk_x);
-                let interior = &presences_positions[start..end];
+                let interior = if map_size_lg.est_cubique() {
+                    &presences_positions[..]
+                } else {
+                    &presences_positions[start..end]
+                };
                 !interior.iter().any(|&(player_chunk_pos, player_vd_sqr)| {
-                    chunk_in_vd(player_chunk_pos, player_vd_sqr, chunk_key)
+                    chunk_in_vd(map_size_lg, player_chunk_pos, player_vd_sqr, chunk_key)
                 })
             })
             .collect::<Vec<_>>();
@@ -728,7 +742,7 @@ fn prepare_for_vd_check(
 }
 
 pub fn prepare_player_presences<'a, P>(
-    world_size: Vec2<u32>,
+    map_size_lg: MapSizeLg,
     max_view_distance: u32,
     entities: &Entities<'a>,
     positions: P,
@@ -744,7 +758,10 @@ where
     let world_aabr_in_chunks = Aabr {
         min: Vec2::zero(),
         // NOTE: Cast is correct because chunk coordinates must fit in an i32 (actually, i16).
-        max: world_size.map(|x| x.saturating_sub(1)).as_::<i32>(),
+        max: map_size_lg
+            .chunks()
+            .map(|x| u32::from(x).saturating_sub(1))
+            .as_::<i32>(),
     };
 
     let (mut presences_positions_entities, mut presences_positions): (Vec<_>, Vec<_>) =
@@ -808,7 +825,28 @@ where
     (presences_positions_entities, presences_positions)
 }
 
-pub fn chunk_in_vd(player_chunk_pos: Vec2<i16>, player_vd_sqr: i32, chunk_pos: Vec2<i32>) -> bool {
+pub fn chunk_in_vd(
+    map_size_lg: MapSizeLg,
+    player_chunk_pos: Vec2<i16>,
+    player_vd_sqr: i32,
+    chunk_pos: Vec2<i32>,
+) -> bool {
+    if map_size_lg.est_cubique() {
+        // **La distance se prend dans le monde, pas dans le patron.** Deux cases
+        // voisines de part et d'autre d'une couture sont à l'autre bout de la
+        // grille : mesurée en coordonnées, leur distance vaut la moitié de la
+        // carte, et le joueur ne recevrait jamais le terrain qu'il a sous les
+        // pieds. Les deux points de la sphère, eux, sont voisins.
+        let taille = TerrainChunkSize::RECT_SIZE.x as f64;
+        let centre =
+            |cle: Vec2<i32>| cube::direction(map_size_lg, (cle.map(|e| e as f64) + 0.5) * taille);
+        let (Some(a), Some(b)) = (centre(player_chunk_pos.as_::<i32>()), centre(chunk_pos)) else {
+            return false;
+        };
+        let rayon = cube::rayon(map_size_lg);
+        let ecart = (a - b).magnitude() * rayon / taille;
+        return ecart * ecart <= player_vd_sqr as f64;
+    }
     // NOTE: Guaranteed in bounds as long as prepare_player_presences prepared the
     // player_chunk_pos and player_vd_sqr.
     let adjusted_dist_sqr = (player_chunk_pos.as_::<i32>() - chunk_pos).magnitude_squared();

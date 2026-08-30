@@ -58,6 +58,7 @@ fn main() {
     echecs += reciprocite(cube_map);
     echecs += le_mode_plat_n_a_pas_bouge(plate);
     echecs += coutures(cube_map);
+    echecs += le_chargement_s_accorde(cube_map);
 
     println!();
     if echecs == 0 {
@@ -320,4 +321,78 @@ fn coutures(map: MapSizeLg) -> u32 {
 
     println!("  ({mesures} pas le long des 12 recollements, coins exclus)");
     echecs
+}
+
+/// **Ce que le client demande, le serveur doit l'accepter.**
+///
+/// Les deux moitiés du chargement ne parlent pas la même langue. Le client
+/// énumère les chunks en **marchant** sur la surface — un balayage en anneaux
+/// manque des régions près d'un coin. Le serveur, lui, décide d'envoyer sur une
+/// **distance 3D** : à travers une couture, une différence de coordonnées vaut
+/// la moitié de la carte.
+///
+/// Il faut donc qu'un chunk atteint en `d` pas soit à moins de `d` chunks dans
+/// le monde, sans quoi le client réclamerait un terrain que le serveur refuse —
+/// et le trou resterait ouvert.
+fn le_chargement_s_accorde(map: MapSizeLg) -> u32 {
+    const PORTEE: usize = 12;
+    let f = cube::face_chunks(map);
+    let taille = TerrainChunkSize::RECT_SIZE.x as f64;
+
+    // Au bord, au coin, et en plein milieu pour comparaison.
+    let lieux = [
+        ("centre de face", cube::cle_de_chunk(map, 1, f / 2, f / 2)),
+        ("milieu d'arête", cube::cle_de_chunk(map, 1, f - 1, f / 2)),
+        ("coin", cube::cle_de_chunk(map, 1, f - 1, f - 1)),
+    ];
+
+    let mut fautes = 0u32;
+    for (nom, depart) in lieux {
+        let centre_3d = |cle: Vec2<i32>| {
+            cube::direction(map, (cle.map(|e| e as f64) + 0.5) * taille).expect("case vivante")
+        };
+        let origine = centre_3d(depart);
+        let rayon = cube::rayon(map);
+
+        let mut vus: std::collections::HashSet<Vec2<i32>> =
+            std::collections::HashSet::from_iter([depart]);
+        let mut courante = vec![depart];
+        let mut faces: std::collections::HashSet<u8> =
+            std::collections::HashSet::from_iter(cube::face_de_chunk(map, depart));
+        let mut pire = 0.0f64;
+
+        for profondeur in 1..=PORTEE {
+            let mut suivante = Vec::new();
+            for &cle in &courante {
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    if let Some(v) = cube::voisin(map, cle, Vec2::new(dx, dy))
+                        && vus.insert(v)
+                    {
+                        suivante.push(v);
+                        faces.extend(cube::face_de_chunk(map, v));
+                        // La distance du monde, en chunks, comme le serveur la
+                        // mesure.
+                        let d = (centre_3d(v) - origine).magnitude() * rayon / taille;
+                        pire = pire.max(d / profondeur as f64);
+                    }
+                }
+            }
+            courante = suivante;
+        }
+
+        // Un pas de grille ne dépasse jamais un chunk du monde : un chunk
+        // atteint en `d` pas est donc à moins de `d` chunks.
+        let accord = pire <= 1.0;
+        println!(
+            "chargement · {nom:<15} : {} chunks sur {} face(s), pire distance/profondeur \
+             {pire:.3}{}",
+            vus.len(),
+            faces.len(),
+            if accord { "" } else { "  ÉCHEC" }
+        );
+        if !accord {
+            fautes += 1;
+        }
+    }
+    fautes
 }

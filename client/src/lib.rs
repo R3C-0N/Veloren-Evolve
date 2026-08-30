@@ -2535,6 +2535,7 @@ impl Client {
         if let (Some(pos), Some(view_distance)) = (pos, self.view_distance) {
             prof_span!("terrain");
             let chunk_pos = self.state.terrain().pos_key(pos.0.map(|e| e as i32));
+            let map_size_lg = self.state.terrain().map_size_lg();
 
             // Remove chunks that are too far from the player.
             let mut chunks_to_remove = Vec::new();
@@ -2562,67 +2563,125 @@ impl Client {
             // Request chunks from the server.
             self.loaded_distance = ((view_distance * TerrainChunkSize::RECT_SIZE.x) as f32).powi(2);
             // +1 so we can find a chunk that's outside the vd for better fog
-            for dist in 0..view_distance as i32 + 1 {
-                // Only iterate through chunks that need to be loaded for circular vd
-                // The (dist - 2) explained:
-                // -0.5 because a chunk is visible if its corner is within the view distance
-                // -0.5 for being able to move to the corner of the current chunk
-                // -1 because chunks are not meshed if they don't have all their neighbors
-                //     (notice also that view_distance is decreased by 1)
-                //     (this subtraction on vd is omitted elsewhere in order to provide
-                //     a buffer layer of loaded chunks)
-                let top = if 2 * (dist - 2).max(0).pow(2) > (view_distance - 1).pow(2) as i32 {
-                    ((view_distance - 1).pow(2) as f32 - (dist - 2).pow(2) as f32)
-                        .sqrt()
-                        .round() as i32
-                        + 1
-                } else {
-                    dist
-                };
+            // Les clés candidates, **par anneaux**, avant de les traiter.
+            //
+            // En topologie plate, ce sont exactement les anneaux d'avant : la
+            // boucle est recopiée telle quelle, et l'ordre ne bouge pas. Sur un
+            // patron de cube, ce sont les couches d'un parcours en largeur sur
+            // les voisins repliés — près d'un coin, un balayage en anneaux
+            // recouvre deux fois certaines régions et **en manque d'autres**,
+            // et le trou se voit à l'écran sous la forme d'un horizon anguleux.
+            let anneaux: Vec<Vec<Vec2<i32>>> = if map_size_lg.est_cubique() {
+                let mut couches: Vec<Vec<Vec2<i32>>> = Vec::new();
+                let mut vus: HashSet<Vec2<i32>> = HashSet::from_iter([chunk_pos]);
+                let mut courante = vec![chunk_pos];
+                for _ in 0..view_distance as i32 + 1 {
+                    if courante.is_empty() {
+                        break;
+                    }
+                    let mut suivante = Vec::new();
+                    for &cle in &courante {
+                        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                            if let Some(v) =
+                                common::terrain::cube::voisin(map_size_lg, cle, Vec2::new(dx, dy))
+                                && vus.insert(v)
+                            {
+                                suivante.push(v);
+                            }
+                        }
+                    }
+                    couches.push(std::mem::replace(&mut courante, suivante));
+                }
+                couches
+            } else {
+                let mut anneaux = Vec::new();
+                for dist in 0..view_distance as i32 + 1 {
+                    // Only iterate through chunks that need to be loaded for circular vd
+                    // The (dist - 2) explained:
+                    // -0.5 because a chunk is visible if its corner is within the view distance
+                    // -0.5 for being able to move to the corner of the current chunk
+                    // -1 because chunks are not meshed if they don't have all their neighbors
+                    //     (notice also that view_distance is decreased by 1)
+                    //     (this subtraction on vd is omitted elsewhere in order to provide
+                    //     a buffer layer of loaded chunks)
+                    let top = if 2 * (dist - 2).max(0).pow(2) > (view_distance - 1).pow(2) as i32 {
+                        ((view_distance - 1).pow(2) as f32 - (dist - 2).pow(2) as f32)
+                            .sqrt()
+                            .round() as i32
+                            + 1
+                    } else {
+                        dist
+                    };
+                    let mut anneau = Vec::new();
+                    for i in -top..top + 1 {
+                        anneau.extend_from_slice(&[
+                            chunk_pos + Vec2::new(dist, i),
+                            chunk_pos + Vec2::new(i, dist),
+                            chunk_pos + Vec2::new(-dist, i),
+                            chunk_pos + Vec2::new(i, -dist),
+                        ]);
+                    }
+                    anneaux.push(anneau);
+                }
+                anneaux
+            };
 
+            for anneau in &anneaux {
                 let mut skip_mode = false;
-                for i in -top..top + 1 {
-                    let keys = [
-                        chunk_pos + Vec2::new(dist, i),
-                        chunk_pos + Vec2::new(i, dist),
-                        chunk_pos + Vec2::new(-dist, i),
-                        chunk_pos + Vec2::new(i, -dist),
-                    ];
-
-                    for key in keys.iter() {
-                        let dist_to_player = (TerrainGrid::key_chunk(*key).map(|x| x as f32)
+                for key in anneau {
+                    // La distance au joueur se prend dans le **monde** : à
+                    // travers une couture, la différence des coordonnées vaut
+                    // la moitié de la carte.
+                    let dist_to_player = if map_size_lg.est_cubique() {
+                        let taille = TerrainChunkSize::RECT_SIZE.x as f64;
+                        let centre = (key.map(|e| e as f64) + 0.5) * taille;
+                        match (
+                            common::terrain::cube::direction(map_size_lg, centre),
+                            common::terrain::cube::direction(
+                                map_size_lg,
+                                pos.0.xy().map(|e| e as f64),
+                            ),
+                        ) {
+                            (Some(a), Some(b)) => {
+                                let r = common::terrain::cube::rayon(map_size_lg);
+                                (((a - b).magnitude() * r) as f32).powi(2)
+                            },
+                            _ => f32::MAX,
+                        }
+                    } else {
+                        (TerrainGrid::key_chunk(*key).map(|x| x as f32)
                             + TerrainChunkSize::RECT_SIZE.map(|x| x as f32) / 2.0)
-                            .distance_squared(pos.0.into());
+                            .distance_squared(pos.0.into())
+                    };
 
-                        let terrain = self.state.terrain();
-                        if let Some(chunk) = terrain.get_key_arc(*key) {
-                            if !skip_mode && !terrain.contains_key_real(*key) {
-                                let chunk = Arc::clone(chunk);
-                                drop(terrain);
-                                self.state.insert_chunk(*key, chunk);
-                            }
-                        } else {
+                    let terrain = self.state.terrain();
+                    if let Some(chunk) = terrain.get_key_arc(*key) {
+                        if !skip_mode && !terrain.contains_key_real(*key) {
+                            let chunk = Arc::clone(chunk);
                             drop(terrain);
-                            if !skip_mode && !self.pending_chunks.contains_key(key) {
-                                const TOTAL_PENDING_CHUNKS_LIMIT: usize = 12;
-                                const CURRENT_TICK_PENDING_CHUNKS_LIMIT: usize = 2;
-                                if self.pending_chunks.len() < TOTAL_PENDING_CHUNKS_LIMIT
-                                    && current_tick_send_chunk_requests
-                                        < CURRENT_TICK_PENDING_CHUNKS_LIMIT
-                                {
-                                    self.send_msg_err(ClientGeneral::TerrainChunkRequest {
-                                        key: *key,
-                                    })?;
-                                    current_tick_send_chunk_requests += 1;
-                                    self.pending_chunks.insert(*key, Instant::now());
-                                } else {
-                                    skip_mode = true;
-                                }
+                            self.state.insert_chunk(*key, chunk);
+                        }
+                    } else {
+                        drop(terrain);
+                        if !skip_mode && !self.pending_chunks.contains_key(key) {
+                            const TOTAL_PENDING_CHUNKS_LIMIT: usize = 12;
+                            const CURRENT_TICK_PENDING_CHUNKS_LIMIT: usize = 2;
+                            if self.pending_chunks.len() < TOTAL_PENDING_CHUNKS_LIMIT
+                                && current_tick_send_chunk_requests
+                                    < CURRENT_TICK_PENDING_CHUNKS_LIMIT
+                            {
+                                self.send_msg_err(ClientGeneral::TerrainChunkRequest {
+                                    key: *key,
+                                })?;
+                                current_tick_send_chunk_requests += 1;
+                                self.pending_chunks.insert(*key, Instant::now());
+                            } else {
+                                skip_mode = true;
                             }
+                        }
 
-                            if dist_to_player < self.loaded_distance {
-                                self.loaded_distance = dist_to_player;
-                            }
+                        if dist_to_player < self.loaded_distance {
+                            self.loaded_distance = dist_to_player;
                         }
                     }
                 }

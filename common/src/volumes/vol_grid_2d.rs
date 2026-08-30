@@ -1,5 +1,5 @@
 use crate::{
-    terrain::MapSizeLg,
+    terrain::{MapSizeLg, cube},
     util::GridHasher,
     vol::{BaseVol, ReadVol, RectRasterableVol, SampleVol, WriteVol},
     volumes::dyna::DynaError,
@@ -52,6 +52,78 @@ impl<V: RectRasterableVol> VolGrid2d<V> {
     pub fn chunk_offs(pos: Vec3<i32>) -> Vec3<i32> {
         let offs = Vec2::<i32>::from(pos).map2(V::RECT_SIZE, |e, sz| e & (sz - 1) as i32);
         Vec3::new(offs.x, offs.y, pos.z)
+    }
+}
+
+/// Le terrain **vu depuis une face** (D27).
+///
+/// `TerrainGrid::get` reçoit une position et rien d'autre. Sur une carte plate
+/// cela suffit ; sur un patron de cube, non : une position sortie de sa face
+/// n'a aucun sens seule, car on ignore dans quel repère elle a été écrite. Un
+/// joueur au bord d'une face qui demande le bloc trois pas devant lui
+/// obtiendrait une case d'une tout autre face, sans rotation et sans que rien
+/// ne le signale.
+///
+/// Cette vue porte le repère manquant. Toute position lue est interprétée dans
+/// celui de son ancre : ce qui sort de la face est replié, et le bloc rendu est
+/// celui qu'on trouverait **en marchant**.
+///
+/// Elle s'insère sans rien réécrire parce que la collision est déjà générique
+/// sur [`ReadVol`] : il suffit de lui passer la vue au lieu de la grille.
+pub struct VueRepliee<'a, V: RectRasterableVol> {
+    grille: &'a VolGrid2d<V>,
+    /// La face de l'ancre, et sa position en blocs.
+    face: Option<u8>,
+    ancre: Vec2<i32>,
+}
+
+impl<'a, V: RectRasterableVol> VueRepliee<'a, V> {
+    /// La vue ancrée sur une position du monde, en blocs.
+    ///
+    /// Sur une carte plate elle ne fait rien de plus que la grille : le
+    /// repliement n'a alors pas d'objet, et le chemin rapide est le seul.
+    pub fn nouvelle(grille: &'a VolGrid2d<V>, ancre: Vec2<i32>) -> Self {
+        let face = grille
+            .map_size_lg()
+            .est_cubique()
+            .then(|| cube::face_de_bloc(grille.map_size_lg(), ancre))
+            .flatten();
+        Self {
+            grille,
+            face,
+            ancre,
+        }
+    }
+
+    /// La position canonique correspondant à une position lue dans le repère de
+    /// l'ancre.
+    #[inline]
+    fn canoniser(&self, pos: Vec3<i32>) -> Option<Vec3<i32>> {
+        let Some(face) = self.face else {
+            // Carte plate, ou ancre hors du patron : rien à replier.
+            return Some(pos);
+        };
+        let map = self.grille.map_size_lg();
+        // Le cas courant, et de très loin : on n'a pas quitté la face de
+        // l'ancre, et la position est déjà canonique.
+        if cube::face_de_bloc(map, pos.xy()) == Some(face) {
+            return Some(pos);
+        }
+        let (canonique, _) = cube::replier(map, self.ancre, pos.xy() - self.ancre)?;
+        Some(Vec3::new(canonique.x, canonique.y, pos.z))
+    }
+}
+
+impl<V: RectRasterableVol + Debug> BaseVol for VueRepliee<'_, V> {
+    type Error = VolGrid2dError<V::Error>;
+    type Vox = V::Vox;
+}
+
+impl<V: RectRasterableVol + ReadVol + Debug> ReadVol for VueRepliee<'_, V> {
+    #[inline(always)]
+    fn get(&self, pos: Vec3<i32>) -> Result<&V::Vox, VolGrid2dError<V::Error>> {
+        let pos = self.canoniser(pos).ok_or(VolGrid2dError::NoSuchChunk)?;
+        self.grille.get(pos)
     }
 }
 

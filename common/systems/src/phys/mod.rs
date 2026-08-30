@@ -18,6 +18,7 @@ use common::{
     terrain::{CoordinateConversions, TerrainGrid, cube},
     uid::Uid,
     util::{Dir, Projection, SpatialGrid},
+    volumes::vol_grid_2d::VueRepliee,
     weather::WeatherGrid,
 };
 use common_base::{prof_span, span};
@@ -1083,9 +1084,16 @@ impl PhysicsData<'_> {
 
                                 let mut cpos = *pos;
                                 let cylinder = (radius, z_min, z_max);
+                                // Le terrain vu depuis la face du personnage : une
+                                // position sortie de sa face n'a pas de sens seule
+                                // (D27), et la collision en demande à chaque pas.
+                                let terrain = VueRepliee::nouvelle(
+                                    &read.terrain,
+                                    pos.0.xy().map(|e| e.floor() as i32),
+                                );
                                 collision::box_voxel_collision(
                                     cylinder,
-                                    &*read.terrain,
+                                    &terrain,
                                     entity,
                                     &mut cpos,
                                     tgt_pos,
@@ -1118,9 +1126,13 @@ impl PhysicsData<'_> {
 
                                 let cylinder = (radius, z_min, z_max);
                                 let mut cpos = *pos;
+                                let terrain = VueRepliee::nouvelle(
+                                    &read.terrain,
+                                    pos.0.xy().map(|e| e.floor() as i32),
+                                );
                                 collision::box_voxel_collision(
                                     cylinder,
-                                    &*read.terrain,
+                                    &terrain,
                                     entity,
                                     &mut cpos,
                                     tgt_pos,

@@ -48,11 +48,11 @@ impl<'a> System<'a> for Sys {
     ) {
         let max_view_distance = server_settings.max_view_distance.unwrap_or(u32::MAX);
         #[cfg(feature = "worldgen")]
-        let world_size = world.sim().get_size();
+        let map_size_lg = world.sim().map_size_lg();
         #[cfg(not(feature = "worldgen"))]
-        let world_size = world.map_size_lg().chunks().as_();
+        let map_size_lg = world.map_size_lg();
         let (presences_position_entities, _) = super::terrain::prepare_player_presences(
-            world_size,
+            map_size_lg,
             max_view_distance,
             &entities,
             &positions,
@@ -90,11 +90,22 @@ impl<'a> System<'a> for Sys {
                 // scanning forward.
                 let end = presences_position_entities
                     .partition_point(|((pos, _), _)| i32::from(pos.x) < max_chunk_x);
-                let interior = &presences_position_entities[start..end];
+                // Voir `terrain.rs` : la fenêtre en X ne vaut que sur un plan
+                // monotone, et un patron de cube n'en est pas un.
+                let interior = if map_size_lg.est_cubique() {
+                    &presences_position_entities[..]
+                } else {
+                    &presences_position_entities[start..end]
+                };
                 interior
                     .iter()
                     .filter(|((player_chunk_pos, player_vd_sqr), _)| {
-                        super::terrain::chunk_in_vd(*player_chunk_pos, *player_vd_sqr, chunk_key)
+                        super::terrain::chunk_in_vd(
+                            map_size_lg,
+                            *player_chunk_pos,
+                            *player_vd_sqr,
+                            chunk_key,
+                        )
                     })
                     .for_each(|(_, entity)| {
                         chunk_send_emitter.emit(ChunkSendEntry {
