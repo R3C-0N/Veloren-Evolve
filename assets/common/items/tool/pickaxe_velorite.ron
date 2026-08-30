@@ -17,6 +17,9 @@ ItemDef(
     quality: Moderate,
     tags: [
         CraftingTool,
+        // Le grade de l'outil se lit ici, et nulle part ailleurs : la matiere
+        // est le grade. Voir `common::creusement::grade_outil`.
+        MaterialKind(Metal),
     ],
     ability_spec: None,
 )

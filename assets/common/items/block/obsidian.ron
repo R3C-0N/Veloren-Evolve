@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Obsidian",
+    legacy_description: "Volcanic glass, black and keen-edged. Only a metal pick brings it up intact.",
+    kind: Ingredient(
+        descriptor: "Obsidian",
+    ),
+    quality: Moderate,
+    tags: [],
+)

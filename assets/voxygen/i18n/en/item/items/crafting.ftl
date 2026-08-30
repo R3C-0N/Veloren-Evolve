@@ -382,3 +382,33 @@ object-consumable-gelid_gel = Gelid Gel
 
 object-consumable-levin_dust = Levin Dust
     .desc = Tingling powder with a natural magnetic charge.
+
+item-block-stone = Block of Stone
+    .desc = A block of stone, prised loose. Sturdy enough to build with.
+
+item-block-earth = Block of Earth
+    .desc = A block of packed earth, held together by roots.
+
+item-block-sand = Block of Sand
+    .desc = A block of sand, barely holding its shape.
+
+item-block-grass = Block of Turf
+    .desc = A block of turf, green side up.
+
+item-block-wood = Block of Wood
+    .desc = A block of trunk, cut clean across the grain.
+
+item-block-leaves = Block of Leaves
+    .desc = A tangle of leaves and twigs, still holding together.
+
+item-block-snow = Block of Snow
+    .desc = A block of packed snow. It will not last in the sun.
+
+item-block-ice = Block of Ice
+    .desc = A block of ice, clear and cold.
+
+item-block-hard_rock = Block of Hard Rock
+    .desc = Dense stone from the deep. A stone pick or better will free it whole.
+
+item-block-obsidian = Block of Obsidian
+    .desc = Volcanic glass, black and keen-edged. Only a metal pick brings it up intact.

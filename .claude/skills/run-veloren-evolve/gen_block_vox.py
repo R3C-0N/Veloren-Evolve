@@ -3,9 +3,14 @@
 MagicaVoxel v150 : MAIN { SIZE, XYZI, RGBA }. L'indice de couleur d'un voxel
 vaut `position dans la palette + 1` — l'indice 0 signifie « vide ».
 
-Les huit modeles sont de petits cubes de 7 voxels d'arete, un par materiau, avec
-un relief et un mouchetis propres a chacun. Deterministe : meme graine, memes
+Les modeles sont de petits cubes de 7 voxels d'arete, un par materiau, avec un
+relief et un mouchetis propres a chacun. Deterministe : meme graine, memes
 fichiers, pour que regenerer ne fasse pas de diff parasite.
+
+La graine est **ecrite a cote de chaque modele**, et non deduite de son rang :
+deduite du rang, ajouter un materiau decalait tous ceux qui le suivent dans
+l'ordre alphabetique et regenerait huit fichiers pour un ajout. Un nouveau
+materiau prend donc la graine libre suivante, et ne touche a rien.
 
     python .claude/skills/run-veloren-evolve/gen_block_vox.py
 
@@ -163,8 +168,36 @@ def main() -> None:
                          ebrecher=0.12),
     )
 
-    for i, (nom, (pal, faire)) in enumerate(sorted(modeles.items())):
-        rng = random.Random(1000 + i)  # graine fixe : sortie reproductible
+    # --- pierre dure : gris bleute, dense, aretes franches -----------------
+    # Elle doit se lire comme de la pierre *qui resiste* : meme famille de gris
+    # que `stone`, plus sombre et plus froid, et surtout des aretes presque
+    # intactes la ou la pierre ordinaire s'ebreche.
+    pal = [(78, 80, 88), (62, 64, 72), (94, 96, 106), (54, 56, 64)]
+    modeles["hard_rock"] = (
+        pal,
+        lambda rng: cube(rng, pal, lambda x, y, z, top, r: melange(0, [1, 2, 3], r, 0.30),
+                         ebrecher=0.08),
+    )
+
+    # --- obsidienne : noir violace, eclat de verre -------------------------
+    # Presque noire, avec de rares facettes claires : c'est du verre volcanique,
+    # et c'est ce qui la distingue d'un cube noir quelconque.
+    pal = [(34, 28, 44), (22, 18, 30), (52, 44, 68), (96, 84, 128)]
+    modeles["obsidian"] = (
+        pal,
+        lambda rng: cube(rng, pal, lambda x, y, z, top, r: melange(0, [1, 2, 3], r, 0.22),
+                         ebrecher=0.04),
+    )
+
+    # La graine tient a cote du nom, pas au rang : voir l'en-tete du fichier.
+    graines = {
+        "earth": 1000, "grass": 1001, "ice": 1002, "leaves": 1003,
+        "sand": 1004, "snow": 1005, "stone": 1006, "wood": 1007,
+        "hard_rock": 1008, "obsidian": 1009,
+    }
+
+    for nom, (pal, faire) in sorted(modeles.items()):
+        rng = random.Random(graines[nom])  # graine fixe : sortie reproductible
         v = faire(rng)
         chemin = os.path.join(sortie, nom + ".vox")
         ecrire_vox(chemin, v, pal)

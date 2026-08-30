@@ -159,7 +159,6 @@ fn do_command(
         ServerChatCommand::BattleModeForce => handle_battlemode_force,
         ServerChatCommand::Body => handle_body,
         ServerChatCommand::Buff => handle_buff,
-        ServerChatCommand::Build => handle_build,
         ServerChatCommand::Campfire => handle_spawn_campfire,
         ServerChatCommand::ClearPersistedTerrain => handle_clear_persisted_terrain,
         ServerChatCommand::DeathEffect => handle_death_effect,
@@ -2757,47 +2756,6 @@ fn handle_spawn_portal(
         Ok(())
     } else {
         Err(action.help_content())
-    }
-}
-
-fn handle_build(
-    server: &mut Server,
-    client: EcsEntity,
-    target: EcsEntity,
-    _args: Vec<String>,
-    _action: &ServerChatCommand,
-) -> CmdResult<()> {
-    if let Some(mut can_build) = server
-        .state
-        .ecs()
-        .write_storage::<comp::CanBuild>()
-        .get_mut(target)
-    {
-        can_build.enabled ^= true;
-
-        let msg = Content::localized(
-            match (
-                can_build.enabled,
-                server.settings().experimental_terrain_persistence,
-            ) {
-                (false, _) => "command-set-build-mode-off",
-                (true, false) => "command-set-build-mode-on-unpersistent",
-                (true, true) => "command-set-build-mode-on-persistent",
-            },
-        );
-
-        let chat_msg = ServerGeneral::server_msg(ChatType::CommandInfo, msg);
-        if client != target {
-            server.notify_client(target, chat_msg.clone());
-        }
-        server.notify_client(client, chat_msg);
-        Ok(())
-    } else {
-        // Tout personnage porte le mode construction : n'en arrive ici que ce
-        // qui n'est pas un personnage — un spectateur, par exemple.
-        Err(Content::Plain(
-            "Only a character can enter build mode.".into(),
-        ))
     }
 }
 

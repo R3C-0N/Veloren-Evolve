@@ -26,6 +26,7 @@ pub mod calendar;
 pub mod character;
 pub mod clock;
 pub mod cmd;
+pub mod creusement;
 pub mod depot;
 pub mod effect;
 pub mod event;

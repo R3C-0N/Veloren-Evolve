@@ -4,7 +4,7 @@ use crate::{
         inventory::{
             InvSlot,
             item::{self, Hands, ItemDefinitionIdOwned, ItemKind, tool::Tool},
-            slot::{ArmorSlot, EquipSlot},
+            slot::{ArmorSlot, EquipSlot, FamilleOutil},
         },
     },
     resources::Time,
@@ -90,6 +90,23 @@ impl Loadout {
                 (EquipSlot::ActiveOffhand, "active_offhand".to_string()),
                 (EquipSlot::InactiveMainhand, "inactive_mainhand".to_string()),
                 (EquipSlot::InactiveOffhand, "inactive_offhand".to_string()),
+                // Les outils **apres** les mains, et l'ordre est le mecanisme :
+                // `get_slot_to_equip_into` parcourt cette liste et prefere les
+                // emplacements vides. Une hache de guerre trouve donc une main
+                // avant d'atteindre l'emplacement d'outil, tandis qu'un outil
+                // de creusement, que les mains refusent, n'a que celui-ci.
+                (
+                    EquipSlot::Outil(FamilleOutil::Pioche),
+                    "tool_pick".to_string(),
+                ),
+                (
+                    EquipSlot::Outil(FamilleOutil::Hache),
+                    "tool_axe".to_string(),
+                ),
+                (
+                    EquipSlot::Outil(FamilleOutil::Pelle),
+                    "tool_shovel".to_string(),
+                ),
             ]
             .into_iter()
             .map(|(equip_slot, persistence_key)| LoadoutSlot::new(equip_slot, persistence_key))

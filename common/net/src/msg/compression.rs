@@ -651,6 +651,16 @@ impl<const AVERAGE_PALETTE: bool> VoxelImageDecoding for TriPngEncoding<AVERAGE_
                             g: 185,
                             b: 240,
                         },
+                        HardRock => Rgb {
+                            r: 78,
+                            g: 80,
+                            b: 88,
+                        },
+                        Obsidian => Rgb {
+                            r: 34,
+                            g: 28,
+                            b: 44,
+                        },
                         Grass => Rgb {
                             r: 51,
                             g: 160,

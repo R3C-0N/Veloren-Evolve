@@ -15,6 +15,7 @@ gameinput-nextslot = Next Slot
 gameinput-previousslot = Previous Slot
 gameinput-currentslot = Use Current Slot
 gameinput-swaploadout = Swap Loadout
+gameinput-basculercombat = Draw / Sheathe
 gameinput-togglecursor = Toggle Cursor
 gameinput-controls = Controls
 gameinput-toggleinterface = Toggle Interface

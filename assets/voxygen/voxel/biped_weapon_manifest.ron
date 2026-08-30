@@ -1635,6 +1635,42 @@
         vox_spec: ("weapon.tool.pickaxe_green-1", (-2.5, -9.5, -4.0)),
         color: None
     ),
+    // Outils de creusement, un par famille et par grade. Les modeles sont
+    // empruntes a l'existant : l'echelle se lit dans la matiere de l'objet,
+    // pas dans sa silhouette, et tailler huit modeles neufs n'apprendrait
+    // rien de plus au joueur.
+    Tool("common.items.tool.pickaxe_wood"): (
+        vox_spec: ("weapon.tool.pickaxe_green-0", (-2.5, -7.5, -4.0)),
+        color: None
+    ),
+    Tool("common.items.tool.pickaxe_metal"): (
+        vox_spec: ("weapon.tool.pickaxe_green-1", (-2.5, -9.5, -4.0)),
+        color: None
+    ),
+    Tool("common.items.tool.axe_wood"): (
+        vox_spec: ("weapon.axe.2haxe_rusty", (-2.5, -7.0, -4.0)),
+        color: None
+    ),
+    Tool("common.items.tool.axe_stone"): (
+        vox_spec: ("weapon.axe.axe.bronze-1h", (-1.5, -4.0, -2.5)),
+        color: None
+    ),
+    Tool("common.items.tool.axe_metal"): (
+        vox_spec: ("weapon.axe.axe.iron-1h", (-1.5, -4.0, -2.5)),
+        color: None
+    ),
+    Tool("common.items.tool.shovel_wood"): (
+        vox_spec: ("weapon.tool.shovel_green", (-1.0, -2.5, -4.0)),
+        color: None
+    ),
+    Tool("common.items.tool.shovel_stone"): (
+        vox_spec: ("weapon.tool.shovel_blue", (-1.0, -2.5, -4.0)),
+        color: None
+    ),
+    Tool("common.items.tool.shovel_metal"): (
+        vox_spec: ("weapon.tool.shovel_gold", (-1.0, -2.5, -4.0)),
+        color: None
+    ),
     // Misc
     Tool("common.items.debug.admin_stick"): (
         vox_spec: ("weapon.tool.broom_belzeshrub_purple", (-3.0, -4.0, -4.0)),

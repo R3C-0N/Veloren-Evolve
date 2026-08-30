@@ -1760,6 +1760,42 @@
         "voxel.weapon.tool.pickaxe_green-1",
         (0.0, 0.0, 0.0), (-135.0, 90.0, 0.0), 1.0,
     ),
+    // Outils de creusement, un par famille et par grade. Les modeles sont
+    // empruntes a l'existant : l'echelle se lit dans la matiere de l'objet,
+    // pas dans sa silhouette, et tailler huit modeles neufs n'apprendrait
+    // rien de plus au joueur.
+    Simple("common.items.tool.pickaxe_wood"): VoxTrans(
+        "voxel.weapon.tool.pickaxe_green-0",
+        (0.0, 0.0, 0.0), (-135.0, 90.0, 0.0), 1.0,
+    ),
+    Simple("common.items.tool.pickaxe_metal"): VoxTrans(
+        "voxel.weapon.tool.pickaxe_green-1",
+        (0.0, 0.0, 0.0), (-135.0, 90.0, 0.0), 1.0,
+    ),
+    Simple("common.items.tool.axe_wood"): VoxTrans(
+        "voxel.weapon.axe.2haxe_rusty",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.0,
+    ),
+    Simple("common.items.tool.axe_stone"): VoxTrans(
+        "voxel.weapon.axe.axe.bronze-1h",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.0,
+    ),
+    Simple("common.items.tool.axe_metal"): VoxTrans(
+        "voxel.weapon.axe.axe.iron-1h",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.0,
+    ),
+    Simple("common.items.tool.shovel_wood"): VoxTrans(
+        "voxel.weapon.tool.shovel_green",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.2,
+    ),
+    Simple("common.items.tool.shovel_stone"): VoxTrans(
+        "voxel.weapon.tool.shovel_blue",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.2,
+    ),
+    Simple("common.items.tool.shovel_metal"): VoxTrans(
+        "voxel.weapon.tool.shovel_gold",
+        (0.0, 0.0, 0.0), (-45.0, -90.0, 0.0), 1.2,
+    ),
     // Other
     Simple("common.items.utility.coins"): VoxTrans(
         "voxel.item.utility.veloren_coin",
@@ -4068,6 +4104,14 @@
     ),
     Simple("common.items.block.ice"): VoxTrans(
         "voxel.item.block.ice",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.hard_rock"): VoxTrans(
+        "voxel.item.block.hard_rock",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.obsidian"): VoxTrans(
+        "voxel.item.block.obsidian",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
     Simple("common.items.crafting_ing.cactus"): VoxTrans(

@@ -4,7 +4,7 @@ use super::{
     img_ids::{Imgs, ImgsRot},
     item_imgs::ItemImgs,
     slot_grid::SlotEvents,
-    slots::{ArmorSlot, EquipSlot, SlotManager},
+    slots::{ArmorSlot, EquipSlot, FamilleOutil, SlotManager},
 };
 use crate::{
     GlobalState,
@@ -1756,6 +1756,9 @@ widget_ids! {
         active_offhand_slot,
         inactive_mainhand_slot,
         inactive_offhand_slot,
+        outil_pioche_slot,
+        outil_hache_slot,
+        outil_pelle_slot,
         swap_equipped_weapons_btn,
         bag1_slot,
         bag2_slot,
@@ -2759,6 +2762,49 @@ impl Widget for GearMenu<'_> {
 
         let slot_id = state.ids.inactive_offhand_slot;
         set_tooltip!(slot, slot_id, item_slot, "hud-bag-inactive_offhand");
+
+        // Les trois outils de creusement, sous les mains. Ils n'ont pas de fond
+        // dedie : celui de la main d'appoint fait l'affaire, et tailler trois
+        // icones n'apprendrait rien de plus au joueur que l'objet lui-meme.
+        for (item_slot, slot_id, cle, gear, ancre) in [
+            (
+                EquipSlot::Outil(FamilleOutil::Pioche),
+                state.ids.outil_pioche_slot,
+                "hud-bag-outil_pioche",
+                20,
+                state.ids.inactive_mainhand_slot,
+            ),
+            (
+                EquipSlot::Outil(FamilleOutil::Hache),
+                state.ids.outil_hache_slot,
+                "hud-bag-outil_hache",
+                21,
+                state.ids.outil_pioche_slot,
+            ),
+            (
+                EquipSlot::Outil(FamilleOutil::Pelle),
+                state.ids.outil_pelle_slot,
+                "hud-bag-outil_pelle",
+                22,
+                state.ids.outil_hache_slot,
+            ),
+        ] {
+            let slot = slot_maker
+                .fabricate(
+                    item_slot,
+                    [35.0; 2],
+                    state.active_gear_slot == gear && state.is_focused,
+                    false,
+                )
+                .down_from(ancre, 5.0)
+                .with_icon(
+                    self.tab_package.imgs.offhand_bg,
+                    Vec2::new(35.0, 35.0),
+                    Some(UI_MAIN),
+                )
+                .filled_slot(filled_slot);
+            set_tooltip!(slot, slot_id, item_slot, cle);
+        }
 
         if Button::image(self.tab_package.imgs.swap_equipped_weapons_btn)
             .hover_image(self.tab_package.imgs.swap_equipped_weapons_btn_hover)

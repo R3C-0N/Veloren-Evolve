@@ -406,6 +406,18 @@
     // Picks
     Simple("common.items.tool.pickaxe_stone"): "voxel.weapon.tool.pickaxe_stone",
     Simple("common.items.tool.pickaxe_steel"): "voxel.weapon.tool.pickaxe_green-1",
+    // Outils de creusement, un par famille et par grade. Les modeles sont
+    // empruntes a l'existant : l'echelle se lit dans la matiere de l'objet,
+    // pas dans sa silhouette, et tailler huit modeles neufs n'apprendrait
+    // rien de plus au joueur.
+    Simple("common.items.tool.pickaxe_wood"): "voxel.weapon.tool.pickaxe_green-0",
+    Simple("common.items.tool.pickaxe_metal"): "voxel.weapon.tool.pickaxe_green-1",
+    Simple("common.items.tool.axe_wood"): "voxel.weapon.axe.2haxe_rusty",
+    Simple("common.items.tool.axe_stone"): "voxel.weapon.axe.axe.bronze-1h",
+    Simple("common.items.tool.axe_metal"): "voxel.weapon.axe.axe.iron-1h",
+    Simple("common.items.tool.shovel_wood"): "voxel.weapon.tool.shovel_green",
+    Simple("common.items.tool.shovel_stone"): "voxel.weapon.tool.shovel_blue",
+    Simple("common.items.tool.shovel_metal"): "voxel.weapon.tool.shovel_gold",
     // Instruments
     Simple("common.items.tool.instruments.double_bass"): "voxel.weapon.tool.wooden_bass",
     Simple("common.items.tool.instruments.flute"): "voxel.weapon.tool.wooden_flute",
@@ -1036,6 +1048,8 @@
     Simple("common.items.block.leaves"): "voxel.item.block.leaves",
     Simple("common.items.block.snow"): "voxel.item.block.snow",
     Simple("common.items.block.ice"): "voxel.item.block.ice",
+    Simple("common.items.block.hard_rock"): "voxel.item.block.hard_rock",
+    Simple("common.items.block.obsidian"): "voxel.item.block.obsidian",
     Simple("common.items.crafting_ing.cactus"): "voxel.sprite.cacti.flat_cactus_med",
     Simple("common.items.crafting_ing.seashells"): "voxel.sprite.seashells.shell-0",
     Simple("common.items.crafting_ing.animal_misc.icy_fang"): "voxel.item.crafting.animal_misc.ice_shard",

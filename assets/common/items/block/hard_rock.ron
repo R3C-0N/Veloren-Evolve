@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Hard Rock",
+    legacy_description: "Dense stone from the deep. A stone pick or better will free it whole.",
+    kind: Ingredient(
+        descriptor: "Hard Rock",
+    ),
+    quality: Common,
+    tags: [],
+)

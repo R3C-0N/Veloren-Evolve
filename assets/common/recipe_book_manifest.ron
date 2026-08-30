@@ -2937,4 +2937,84 @@
         ],
         craft_sprite: Some(Anvil),
     ),
+    // --- Outils de creusement -------------------------------------------
+    //
+    // Toutes sans etabli (`craft_sprite: None`) : c'est le palier d'entree, et
+    // il doit tenir dans le sac. Le bois et la pierre viennent de ce qu'on
+    // vient de miner, le metal d'un lingot — la fonte, elle, garde sa forge.
+    //
+    // `tin_pickaxe` reste : ramasser des cailloux au sol est un second chemin
+    // vers la pioche de pierre, et rien ne gagne a le fermer.
+    "pioche_bois": (
+        output: ("common.items.tool.pickaxe_wood", 1),
+        inputs: [
+            (Item("common.items.block.wood"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "hache_bois": (
+        output: ("common.items.tool.axe_wood", 1),
+        inputs: [
+            (Item("common.items.block.wood"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "pelle_bois": (
+        output: ("common.items.tool.shovel_wood", 1),
+        inputs: [
+            (Item("common.items.block.wood"), 2, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "pioche_pierre": (
+        output: ("common.items.tool.pickaxe_stone", 1),
+        inputs: [
+            (Item("common.items.block.stone"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "hache_pierre": (
+        output: ("common.items.tool.axe_stone", 1),
+        inputs: [
+            (Item("common.items.block.stone"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "pelle_pierre": (
+        output: ("common.items.tool.shovel_stone", 1),
+        inputs: [
+            (Item("common.items.block.stone"), 2, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "pioche_metal": (
+        output: ("common.items.tool.pickaxe_metal", 1),
+        inputs: [
+            (Item("common.items.mineral.ingot.iron"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "hache_metal": (
+        output: ("common.items.tool.axe_metal", 1),
+        inputs: [
+            (Item("common.items.mineral.ingot.iron"), 3, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
+    "pelle_metal": (
+        output: ("common.items.tool.shovel_metal", 1),
+        inputs: [
+            (Item("common.items.mineral.ingot.iron"), 2, false),
+            (Item("common.items.crafting_ing.twigs"), 2, false),
+        ],
+        craft_sprite: None,
+    ),
 }

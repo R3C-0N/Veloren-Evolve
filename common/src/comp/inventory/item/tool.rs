@@ -275,18 +275,44 @@ impl Mul<DurabilityMultiplier> for Stats {
     fn mul(self, value: DurabilityMultiplier) -> Self { self.with_durability_mult(value) }
 }
 
+/// A quoi un outil sert : frapper, ou creuser.
+///
+/// **Ce n'est pas deductible de `ToolKind`**, et c'est tout l'interet du champ.
+/// `Axe` couvre les haches de guerre autant que les hachettes de bucheron, et
+/// les villageois de Veloren equipent des pioches et des pelles comme armes
+/// (`weapons.tool.pickaxe`, `shovel-0`). Refuser une famille entiere dans les
+/// mains les desarmerait tous.
+///
+/// `Arme` est donc le defaut, et seuls les outils de creusement du fork
+/// declarent `Creusement`. Ceux-la ne s'equipent qu'aux emplacements d'outil.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ToolUsage {
+    #[default]
+    Arme,
+    Creusement,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Tool {
     pub kind: ToolKind,
     pub hands: Hands,
     stats: Stats,
+    #[serde(default)]
+    pub usage: ToolUsage,
     // TODO: item specific abilities
 }
 
 impl Tool {
     // DO NOT USE UNLESS YOU KNOW WHAT YOU ARE DOING
     // Added for CSV import of stats
-    pub fn new(kind: ToolKind, hands: Hands, stats: Stats) -> Self { Self { kind, hands, stats } }
+    pub fn new(kind: ToolKind, hands: Hands, stats: Stats) -> Self {
+        Self {
+            kind,
+            hands,
+            stats,
+            usage: ToolUsage::Arme,
+        }
+    }
 
     pub fn empty() -> Self {
         Self {
@@ -301,6 +327,7 @@ impl Tool {
                 energy_efficiency: 1.0,
                 buff_strength: 1.0,
             },
+            usage: ToolUsage::Arme,
         }
     }
 

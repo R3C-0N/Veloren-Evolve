@@ -3,15 +3,15 @@ pub use common::event::{
     ChangeStanceEvent, ChatEvent, ClientDisconnectEvent, ClientDisconnectWithoutPersistenceEvent,
     ComboChangeEvent, CommandEvent, CreateAuraEntityEvent, CreateItemDropEvent, CreateNpcEvent,
     CreateNpcGroupEvent, CreateObjectEvent, CreatePoolEvent, CreateShipEvent,
-    CreateSpecialEntityEvent, CreateSpriteEvent, DeleteCharacterEvent, DeleteEvent, DestroyEvent,
-    DialogueEvent, DownedEvent, EnergyChangeEvent, EntityAttackedHookEvent, EventBus,
-    ExitIngameEvent, ExplosionEvent, GroupManipEvent, HealthChangeEvent, HelpDownedEvent,
-    InitializeCharacterEvent, InitializeSpectatorEvent, InitiateInviteEvent, InventoryManipEvent,
-    InviteResponseEvent, KillEvent, KnockbackEvent, LandOnGroundEvent, MakeAdminEvent,
-    MineBlockEvent, MountEvent, NpcInteractEvent, ParryHookEvent, PlaceBlockEvent,
-    PoiseChangeEvent, PossessEvent, ProcessTradeActionEvent, RegrowHeadEvent,
-    RemoveLightEmitterEvent, RequestSiteInfoEvent, RespawnEvent, SetBattleModeEvent,
-    SetLanternEvent, SetPetStayEvent, ShockwaveEvent, ShootEvent, SoundEvent,
+    CreateSpecialEntityEvent, CreateSpriteEvent, CreuseBlocEvent, DeleteCharacterEvent,
+    DeleteEvent, DestroyEvent, DialogueEvent, DownedEvent, EnergyChangeEvent,
+    EntityAttackedHookEvent, EventBus, ExitIngameEvent, ExplosionEvent, GroupManipEvent,
+    HealthChangeEvent, HelpDownedEvent, InitializeCharacterEvent, InitializeSpectatorEvent,
+    InitiateInviteEvent, InventoryManipEvent, InviteResponseEvent, KillEvent, KnockbackEvent,
+    LandOnGroundEvent, MakeAdminEvent, MineBlockEvent, MountEvent, NpcInteractEvent,
+    ParryHookEvent, PlaceBlockEvent, PoiseChangeEvent, PossessEvent, ProcessTradeActionEvent,
+    RegrowHeadEvent, RemoveLightEmitterEvent, RequestSiteInfoEvent, RespawnEvent,
+    SetBattleModeEvent, SetLanternEvent, SetPetStayEvent, ShockwaveEvent, ShootEvent, SoundEvent,
     StartInteractionEvent, StartTeleportingEvent, SummonBeamPillarsEvent, TamePetEvent,
     TeleportToEvent, TeleportToPositionEvent, ThrowEvent, ToggleSpriteLightEvent, TransformEvent,
     UpdateCharacterDataEvent, UpdateMapMarkerEvent,
@@ -73,6 +73,7 @@ macro_rules! server_events {
             RequestSiteInfoEvent
             MineBlockEvent
             PlaceBlockEvent
+            CreuseBlocEvent
             TeleportToEvent
             SoundEvent
             CreateSpriteEvent

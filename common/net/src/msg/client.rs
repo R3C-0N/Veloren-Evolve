@@ -95,7 +95,12 @@ pub enum ClientGeneral {
     ControlEvent(comp::ControlEvent),
     ControlAction(comp::ControlAction),
     SetViewDistance(ViewDistances),
-    BreakBlock(Vec3<i32>),
+    /// « Je creuse ici », redit a chaque tick tant que le clic est tenu.
+    ///
+    /// Ce n'est pas un ordre de casser : casser prend du temps, et c'est le
+    /// serveur qui accumule et qui decide quand le bloc cede. Un message perdu
+    /// ne coute donc qu'un tick, et cesser d'en envoyer suffit a tout annuler.
+    CreuseBloc(Vec3<i32>),
     /// Poser un bloc, en consommant l'objet a cet emplacement d'inventaire.
     /// Le client ne choisit pas le bloc : le serveur le deduit de l'objet.
     PlaceBlock(Vec3<i32>, InvSlotId),
@@ -164,7 +169,7 @@ impl ClientMsg {
                         | ClientGeneral::ControlEvent(_)
                         | ClientGeneral::ControlAction(_)
                         | ClientGeneral::SetViewDistance(_)
-                        | ClientGeneral::BreakBlock(_)
+                        | ClientGeneral::CreuseBloc(_)
                         | ClientGeneral::PlaceBlock(_, _)
                         | ClientGeneral::ExitInGame
                         | ClientGeneral::PlayerPhysics { .. }

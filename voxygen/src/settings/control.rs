@@ -280,6 +280,7 @@ impl ControlSettings {
             GameInput::PreviousSlot => return None,
             GameInput::CurrentSlot => return None,
             GameInput::SwapLoadout => Key::Named(NamedKey::Tab),
+            GameInput::BasculerCombat => char("R"),
             GameInput::Select => char("X"),
             GameInput::AcceptGroupInvite => char("Y"),
             GameInput::DeclineGroupInvite => char("N"),

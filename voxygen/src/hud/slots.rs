@@ -19,7 +19,7 @@ use conrod_core::{Color, image};
 use specs::Entity as EcsEntity;
 use std::fmt::{Debug, Formatter};
 
-pub use common::comp::slot::{ArmorSlot, EquipSlot};
+pub use common::comp::slot::{ArmorSlot, EquipSlot, FamilleOutil};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SlotKind {

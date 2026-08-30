@@ -23,6 +23,7 @@ use common::{
         item::{ItemDesc, tool::ToolKind},
     },
     consts::MAX_MOUNT_RANGE,
+    creusement::temps_de_casse,
     event::UpdateCharacterMetadata,
     link::Is,
     mounting::{Mount, VolumePos},
@@ -117,6 +118,12 @@ pub struct SessionState {
     pub(crate) selected_entity: Option<(specs::Entity, std::time::Instant)>,
     pub(crate) viewpoint_entity: Option<specs::Entity>,
     interactables: interactable::Interactables,
+    /// Le creusement en cours : la position visee, et l'avancement de 0 a 1.
+    ///
+    /// Le client la calcule pour lui-meme, avec la meme `temps_de_casse` que le
+    /// serveur. Rien n'est synchronise : deux horloges partant de la meme
+    /// fonction pure arrivent au meme endroit, et c'est le serveur qui tranche.
+    creusement: Option<(Vec3<i32>, f32)>,
     #[cfg(not(target_os = "macos"))]
     mumble_link: SharedLink,
     hitboxes: HashMap<specs::Entity, DebugShapeId>,
@@ -191,6 +198,7 @@ impl SessionState {
             selected_entity: None,
             viewpoint_entity: None,
             interactables: Default::default(),
+            creusement: None,
             #[cfg(not(target_os = "macos"))]
             mumble_link,
             hitboxes: HashMap::new(),
@@ -661,11 +669,17 @@ impl PlayState for SessionState {
             };
             self.is_aiming = is_aiming;
 
-            let can_build = client
+            // Le mode de jeu decide de tout ce qui suit : le reticule vise-t-il
+            // un bloc, le clic gauche creuse-t-il ou frappe-t-il, la rangee de
+            // chiffres choisit-elle la matiere. L'aventure est le mode normal.
+            let en_combat = client
                 .state()
-                .read_storage::<comp::CanBuild>()
+                .read_storage::<comp::ModeDeJeu>()
                 .get(player_entity)
-                .map_or_else(|| false, |cb| cb.enabled);
+                .is_some_and(|mode| mode.combat);
+            // En combat on ne creuse pas, mais on barricade : le reticule doit
+            // donc continuer d'accrocher un bloc, pour la pose.
+            let vise_un_bloc = true;
 
             let active_mine_tool: Option<ToolKind> = if client.is_wielding() == Some(true) {
                 client
@@ -684,7 +698,7 @@ impl PlayState for SessionState {
                     &client,
                     cam_pos,
                     cam_dir,
-                    can_build,
+                    vise_un_bloc,
                     active_mine_tool,
                     self.viewpoint_entity().0,
                 );
@@ -772,7 +786,7 @@ impl PlayState for SessionState {
                     let inventory = inventories.get(client.entity());
                     if self
                         .hud
-                        .handle_event(event.clone(), global_state, inventory, can_build)
+                        .handle_event(event.clone(), global_state, inventory, en_combat)
                     {
                         continue;
                     }
@@ -790,13 +804,17 @@ impl PlayState for SessionState {
                         match input {
                             GameInput::Primary => {
                                 self.walking_speed = false;
-                                let mut client = self.client.borrow_mut();
-                                // Building inputs take precedence... but only if there's an active
-                                // building target.
-                                if let Some(build_target) = build_target.filter(|_| state) {
-                                    client.remove_block(build_target.position_int());
-                                } else {
-                                    client.handle_input(
+                                // Le clic gauche change de sens avec le mode :
+                                // il creuse en aventure, il frappe en combat.
+                                // C'est la seule touche a en changer, et c'est
+                                // ce qui evite d'avoir a degainer pour miner.
+                                //
+                                // Le creusement lui-meme ne part pas d'ici : il
+                                // se redit a chaque tick tant que le clic est
+                                // tenu, plus bas.
+                                let creuse = !en_combat && build_target.filter(|_| state).is_some();
+                                if !creuse {
+                                    self.client.borrow_mut().handle_input(
                                         InputKind::Primary,
                                         state,
                                         default_select_pos,
@@ -846,7 +864,7 @@ impl PlayState for SessionState {
                             GameInput::Roll => {
                                 self.walking_speed = false;
                                 let mut client = self.client.borrow_mut();
-                                if can_build {
+                                if !en_combat {
                                     // La pipette designe desormais un objet et
                                     // non un bloc : elle pointe la barre sur ce
                                     // qu'il faut avoir en poche pour reposer ce
@@ -1015,6 +1033,11 @@ impl PlayState for SessionState {
                             GameInput::SwapLoadout => {
                                 if state && controlling_char {
                                     self.client.borrow_mut().swap_loadout();
+                                }
+                            },
+                            GameInput::BasculerCombat => {
+                                if state && controlling_char {
+                                    self.client.borrow_mut().basculer_combat();
                                 }
                             },
                             GameInput::ToggleLantern if state && controlling_char => {
@@ -1393,6 +1416,34 @@ impl PlayState for SessionState {
                 }
             }
 
+            // Casser n'est plus un instant : tant que le clic est tenu sur un
+            // bloc, on redit au serveur « je creuse ici », et c'est lui qui
+            // decide quand le bloc cede. La jauge dessinee ici n'est qu'une
+            // seconde horloge, partie de la meme `temps_de_casse` — elle
+            // n'attend rien du reseau, et n'a donc rien a resynchroniser.
+            self.creusement = build_target
+                .filter(|_| !en_combat && self.inputs_state.contains(&GameInput::Primary))
+                .and_then(|cible| {
+                    let pos = cible.position_int();
+                    let mut client = self.client.borrow_mut();
+                    let bloc = client.state().terrain().get(pos).ok().copied()?;
+                    let duree = {
+                        let inventories = client.inventories();
+                        let outil = inventories
+                            .get(client.entity())
+                            .and_then(|inv| inv.equipped(EquipSlot::ActiveMainhand));
+                        temps_de_casse(&bloc, outil)?
+                    };
+                    client.creuse_bloc(pos);
+                    // Changer de cible repart de zero : l'avancement appartient
+                    // au bloc vise, pas au clic.
+                    let avance = match self.creusement {
+                        Some((precedente, avance)) if precedente == pos => avance,
+                        _ => 0.0,
+                    };
+                    Some((pos, (avance + dt / duree.max(f32::EPSILON)).min(1.0)))
+                });
+
             // Talk to entities when we are in dialogue with them
             if let Some(tgt) = self.hud.current_dialogue() {
                 let mut client = self.client.borrow_mut();
@@ -1757,6 +1808,8 @@ impl PlayState for SessionState {
                     selected_entity: self.selected_entity,
                     persistence_load_error: self.metadata.skill_set_persistence_load_error,
                     key_state: &self.key_state,
+                    creusement: self.creusement.map(|(_, avance)| avance),
+                    en_combat,
                 },
                 inverted_interactable_map,
             );

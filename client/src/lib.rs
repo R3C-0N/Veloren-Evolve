@@ -1234,7 +1234,7 @@ impl Client {
                     | ClientGeneral::ControlEvent(_)
                     | ClientGeneral::ControlAction(_)
                     | ClientGeneral::SetViewDistance(_)
-                    | ClientGeneral::BreakBlock(_)
+                    | ClientGeneral::CreuseBloc(_)
                     | ClientGeneral::PlaceBlock(_, _)
                     | ClientGeneral::ExitInGame
                     | ClientGeneral::PlayerPhysics { .. }
@@ -1979,6 +1979,9 @@ impl Client {
     /// and sends the `ControlAction` event that signals to do the swap.
     pub fn swap_loadout(&mut self) { self.control_action(ControlAction::SwapEquippedWeapons) }
 
+    /// Degainer ou rengainer : basculer entre aventure et combat.
+    pub fn basculer_combat(&mut self) { self.control_event(ControlEvent::BasculerCombat) }
+
     /// Determine whether the player is wielding, if they're even capable of
     /// being in a wield state.
     pub fn is_wielding(&self) -> Option<bool> {
@@ -2259,9 +2262,9 @@ impl Client {
         self.send_msg(ClientGeneral::PlaceBlock(pos, slot));
     }
 
-    pub fn remove_block(&mut self, pos: Vec3<i32>) {
-        self.send_msg(ClientGeneral::BreakBlock(pos));
-    }
+    /// Dire au serveur qu'on creuse a cet endroit. A redire a chaque tick tant
+    /// que le clic est tenu : c'est lui qui accumule et qui decide.
+    pub fn creuse_bloc(&mut self, pos: Vec3<i32>) { self.send_msg(ClientGeneral::CreuseBloc(pos)); }
 
     pub fn collect_block(&mut self, pos: Vec3<i32>) {
         self.control_action(ControlAction::InventoryAction(InventoryAction::Collect(

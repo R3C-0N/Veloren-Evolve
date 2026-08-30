@@ -2734,6 +2734,7 @@ pub struct EntityAttackedHookData<'a> {
     orientations: ReadStorage<'a, comp::Ori>,
     combos: ReadStorage<'a, comp::Combo>,
     energies: ReadStorage<'a, comp::Energy>,
+    modes: WriteStorage<'a, comp::ModeDeJeu>,
 }
 
 impl ServerEvent for EntityAttackedHookEvent {
@@ -2747,6 +2748,13 @@ impl ServerEvent for EntityAttackedHookEvent {
         let mut rng = rand::rng();
 
         for ev in events {
+            // Etre frappe met en combat, sans rien demander. C'est le seul chemin
+            // subi : la touche de bascule est l'autre, et elle est volontaire.
+            // On ne peut donc pas se faire surprendre la pioche a la main.
+            if let Some(mut mode) = data.modes.get_mut(ev.entity) {
+                mode.combat = true;
+            }
+
             if let Some(attacker) = ev.attacker {
                 emitters.emit(BuffEvent {
                     entity: attacker,

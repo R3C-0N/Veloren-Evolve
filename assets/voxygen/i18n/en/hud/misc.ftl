@@ -1,3 +1,5 @@
+hud-mode-aventure = Adventure
+hud-mode-combat = Combat
 hud-show_tips = Show Tips
 hud-quests = Quests
 hud-you_died = You Died

@@ -1,6 +1,6 @@
 use common::{
     comp::{
-        Body, BuffChange, Collider, ControlEvent, Controller, Health, Pos, Scale,
+        Body, BuffChange, Collider, ControlEvent, Controller, Health, ModeDeJeu, Pos, Scale,
         UnresolvedChatMsg,
         ability::Stance,
         agent::{Sound, SoundKind},
@@ -58,13 +58,17 @@ pub struct ReadData<'a> {
 pub struct Sys;
 
 impl<'a> System<'a> for Sys {
-    type SystemData = (ReadData<'a>, WriteStorage<'a, Controller>);
+    type SystemData = (
+        ReadData<'a>,
+        WriteStorage<'a, Controller>,
+        WriteStorage<'a, ModeDeJeu>,
+    );
 
     const NAME: &'static str = "controller";
     const ORIGIN: Origin = Origin::Common;
     const PHASE: Phase = Phase::Create;
 
-    fn run(_job: &mut Job<Self>, (read_data, mut controllers): Self::SystemData) {
+    fn run(_job: &mut Job<Self>, (read_data, mut controllers, mut modes): Self::SystemData) {
         let mut emitters = read_data.events.get_emitters();
 
         (&read_data.entities, &read_data.uids, &mut controllers)
@@ -173,6 +177,14 @@ impl<'a> System<'a> for Sys {
                                 auxiliary_key,
                                 new_ability,
                             });
+                        },
+                        ControlEvent::BasculerCombat => {
+                            // Degainer et ranger, dans les deux sens. Le retour
+                            // au combat sur coup recu se decide ailleurs, a la
+                            // source du coup — ici c'est la volonte du joueur.
+                            if let Some(mut mode) = modes.get_mut(entity) {
+                                mode.combat = !mode.combat;
+                            }
                         },
                         ControlEvent::LeaveStance => {
                             emitters.emit(event::ChangeStanceEvent {

@@ -1,25 +1,28 @@
 ItemDef(
-    legacy_name: "Stone Pickaxe",
-    legacy_description: "Strike the earth!",
+    legacy_name: "Wooden Shovel",
+    legacy_description: "A flattened board. It moves earth, slowly.",
     kind: Tool((
-        kind: Pick,
+        kind: Shovel,
         hands: Two,
         stats: (
-            equip_time_secs: 0.3,
-            power: 1.0,
+            equip_time_secs: 0.35,
+            power: 0.6,
             effect_power: 1.0,
             speed: 1.0,
             range: 1.0,
             energy_efficiency: 1.0,
             buff_strength: 1.0,
         ),
+        // Un outil de creusement, pas une arme : il ne s'equipe qu'a son
+        // emplacement d'outil, et le personnage l'y prend tout seul.
+        usage: Creusement,
     )),
     quality: Low,
     tags: [
         CraftingTool,
         // Le grade de l'outil se lit ici, et nulle part ailleurs : la matiere
         // est le grade. Voir `common::creusement::grade_outil`.
-        MaterialKind(Stone),
+        MaterialKind(Wood),
     ],
     ability_spec: None,
 )

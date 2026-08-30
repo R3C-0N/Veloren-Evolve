@@ -30,3 +30,27 @@ weapon-tool-pickaxe_steel = Steel Pickaxe
 
 weapon-tool-pickaxe_stone = Stone Pickaxe
     .desc = Strike the earth!
+
+weapon-tool-pickaxe_wood = Wooden Pickaxe
+    .desc = Barely a pickaxe, but it opens stone.
+
+weapon-tool-pickaxe_metal = Iron Pickaxe
+    .desc = Iron head, true edge. Bites into the deep rock.
+
+weapon-tool-axe_wood = Wooden Axe
+    .desc = A split log with an edge. Enough to fell a trunk.
+
+weapon-tool-axe_stone = Stone Axe
+    .desc = A knapped head, lashed to a haft.
+
+weapon-tool-axe_metal = Iron Axe
+    .desc = Iron, and it shows in the chips it throws.
+
+weapon-tool-shovel_wood = Wooden Shovel
+    .desc = A flattened board. It moves earth, slowly.
+
+weapon-tool-shovel_stone = Stone Shovel
+    .desc = Heavier than it needs to be, and it works.
+
+weapon-tool-shovel_metal = Iron Shovel
+    .desc = Iron blade. Sand and snow give way at once.

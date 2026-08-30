@@ -268,3 +268,33 @@ object-consumable-gelid_gel = Gel frigorifique
     .desc = Des bouts collants de gélatine mêlés à de l'air glacial.
 object-consumable-levin_dust = Limaille magnétique
     .desc = Une poudre picante possédant une charge magnétique naturelle.
+
+item-block-stone = Bloc de pierre
+    .desc = Un bloc de pierre, arraché au sol. Assez solide pour bâtir.
+
+item-block-earth = Bloc de terre
+    .desc = Un bloc de terre tassée, tenu par des racines.
+
+item-block-sand = Bloc de sable
+    .desc = Un bloc de sable, qui tient à peine sa forme.
+
+item-block-grass = Bloc de gazon
+    .desc = Un bloc de gazon, le vert vers le haut.
+
+item-block-wood = Bloc de bois
+    .desc = Un bloc de tronc, coupé net en travers du fil.
+
+item-block-leaves = Bloc de feuillage
+    .desc = Un enchevêtrement de feuilles et de brindilles, qui tient encore.
+
+item-block-snow = Bloc de neige
+    .desc = Un bloc de neige tassée. Il ne tiendra pas au soleil.
+
+item-block-ice = Bloc de glace
+    .desc = Un bloc de glace, clair et froid.
+
+item-block-hard_rock = Bloc de pierre dure
+    .desc = Pierre dense des profondeurs. Il faut au moins une pioche de pierre pour la ramener entière.
+
+item-block-obsidian = Bloc d'obsidienne
+    .desc = Verre volcanique, noir et coupant. Seule une pioche de métal le remonte intact.

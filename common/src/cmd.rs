@@ -374,7 +374,6 @@ pub enum ServerChatCommand {
     BattleModeForce,
     Body,
     Buff,
-    Build,
     Campfire,
     ClearPersistedTerrain,
     CreateLocation,
@@ -575,7 +574,6 @@ impl ServerChatCommand {
                 Content::localized("command-battlemode_force-desc"),
                 Some(Admin),
             ),
-            ServerChatCommand::Build => cmd(vec![], Content::localized("command-build-desc"), None),
             ServerChatCommand::AreaAdd => cmd(
                 vec![
                     Any("name", Required),
@@ -1161,7 +1159,6 @@ impl ServerChatCommand {
             ServerChatCommand::BattleModeForce => "battlemode_force",
             ServerChatCommand::Body => "body",
             ServerChatCommand::Buff => "buff",
-            ServerChatCommand::Build => "build",
             ServerChatCommand::Campfire => "campfire",
             ServerChatCommand::ClearPersistedTerrain => "clear_persisted_terrain",
             ServerChatCommand::DeathEffect => "death_effect",

@@ -168,6 +168,12 @@ pub enum ControlEvent {
         auxiliary_key: ability::AuxiliaryKey,
         new_ability: ability::AuxiliaryAbility,
     },
+    /// Basculer entre aventure et combat.
+    ///
+    /// Dans les deux sens : le joueur degaine quand il veut engager, et range
+    /// quand il juge que c'est fini. Un coup recu force l'entree de son cote,
+    /// si bien que sortir au mauvais moment ne coute qu'un coup encaisse.
+    BasculerCombat,
     ActivatePortal(Uid),
     InteractWith {
         target: Uid,

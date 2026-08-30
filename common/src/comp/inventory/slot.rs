@@ -83,8 +83,34 @@ pub enum EquipSlot {
     ActiveOffhand,
     InactiveMainhand,
     InactiveOffhand,
+    /// Les outils de creusement, hors des mains — un par famille.
+    ///
+    /// C'est ce qui fait qu'on ne degaine plus pour miner : le bloc designe sa
+    /// famille, le serveur lit l'emplacement, et ce qu'on tient en main n'a
+    /// aucun effet sur le creusement.
+    Outil(FamilleOutil),
     Lantern,
     Glider,
+}
+
+/// Les trois familles d'outil de creusement, et leurs emplacements.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum FamilleOutil {
+    Pioche,
+    Hache,
+    Pelle,
+}
+
+impl FamilleOutil {
+    /// La famille qui correspond a ce type d'outil, s'il en est un.
+    pub fn depuis_tool_kind(kind: tool::ToolKind) -> Option<Self> {
+        Some(match kind {
+            tool::ToolKind::Pick => Self::Pioche,
+            tool::ToolKind::Axe => Self::Hache,
+            tool::ToolKind::Shovel => Self::Pelle,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
@@ -111,10 +137,23 @@ impl EquipSlot {
     pub fn can_hold(self, item_kind: &ItemKind) -> bool {
         match (self, item_kind) {
             (Self::Armor(slot), ItemKind::Armor(armor::Armor { kind, .. })) => slot.can_hold(kind),
-            (Self::ActiveMainhand, ItemKind::Tool(_)) => true,
-            (Self::ActiveOffhand, ItemKind::Tool(tool)) => matches!(tool.hands, tool::Hands::One),
-            (Self::InactiveMainhand, ItemKind::Tool(_)) => true,
-            (Self::InactiveOffhand, ItemKind::Tool(tool)) => matches!(tool.hands, tool::Hands::One),
+            // Les mains refusent les outils de creusement — et le refus passe
+            // par `usage`, jamais par la famille : `ToolKind::Axe` couvre les
+            // haches de guerre, et les villageois portent pioches et pelles
+            // comme armes.
+            (Self::ActiveMainhand, ItemKind::Tool(tool)) => tool.usage == tool::ToolUsage::Arme,
+            (Self::ActiveOffhand, ItemKind::Tool(tool)) => {
+                tool.usage == tool::ToolUsage::Arme && matches!(tool.hands, tool::Hands::One)
+            },
+            (Self::InactiveMainhand, ItemKind::Tool(tool)) => tool.usage == tool::ToolUsage::Arme,
+            (Self::InactiveOffhand, ItemKind::Tool(tool)) => {
+                tool.usage == tool::ToolUsage::Arme && matches!(tool.hands, tool::Hands::One)
+            },
+            // L'emplacement d'outil accepte sur la seule famille : une pioche
+            // de Veloren, qui reste une arme, y rentre aussi.
+            (Self::Outil(famille), ItemKind::Tool(tool)) => {
+                FamilleOutil::depuis_tool_kind(tool.kind) == Some(famille)
+            },
             (Self::Lantern, ItemKind::Lantern(_)) => true,
             (Self::Glider, ItemKind::Glider) => true,
             _ => false,

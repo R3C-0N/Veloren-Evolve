@@ -300,7 +300,7 @@ impl State {
         ecs.register::<comp::Combo>();
         ecs.register::<comp::Health>();
         ecs.register::<comp::Poise>();
-        ecs.register::<comp::CanBuild>();
+        ecs.register::<comp::ModeDeJeu>();
         ecs.register::<comp::LightEmitter>();
         ecs.register::<comp::PickupItem>();
         ecs.register::<comp::ThrownItem>();

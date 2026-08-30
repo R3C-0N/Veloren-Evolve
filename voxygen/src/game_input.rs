@@ -55,6 +55,9 @@ pub enum GameInput {
     ToggleLantern,
     #[strum(serialize = "gameinput-swaploadout")]
     SwapLoadout,
+    /// Degainer et ranger : la bascule entre aventure et combat.
+    #[strum(serialize = "gameinput-basculercombat")]
+    BasculerCombat,
     #[strum(serialize = "gameinput-togglewield")]
     ToggleWield,
     #[strum(serialize = "gameinput-sneak")]

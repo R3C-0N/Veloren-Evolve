@@ -82,6 +82,23 @@ impl<'a> BlockGen<'a> {
         // Sample blocks
         let water = Block::new(BlockKind::Water, Rgb::zero());
         let grass_depth = (1.5 + 2.0 * chaos).min(alt - basement);
+
+        // Sous cette profondeur, la roche devient dure : elle ne se ramasse
+        // qu'a la pioche de pierre, et c'est ce qui donne une matiere a
+        // l'echelle des grades. Assez bas pour qu'on l'atteigne en creusant
+        // pour de bon, pas en grattant une falaise.
+        //
+        // Elle se voit : la meme roche assombrie. Un verrou qu'on ne distingue
+        // pas de ce qu'il verrouille n'enseigne rien.
+        const PROFONDEUR_ROCHE_DURE: f32 = 40.0;
+        let profonde = alt - wposf.z as f32 > PROFONDEUR_ROCHE_DURE;
+        let roche = |col: Rgb<u8>| {
+            if profonde {
+                Block::new(BlockKind::HardRock, col.map(|e| (e as f32 * 0.62) as u8))
+            } else {
+                Block::new(BlockKind::Rock, col)
+            }
+        };
         if (wposf.z as f32) < alt - grass_depth {
             let stone_factor = (alt - grass_depth - wposf.z as f32) * 0.15;
             let col = Lerp::lerp(
@@ -109,10 +126,10 @@ impl<'a> BlockGen<'a> {
                             (wposf.z as f32 - basement * 0.3).div(2.0).sin() * 0.5 + 0.5,
                         )
                         .map(|e| e as u8);
-                        Some(Block::new(BlockKind::Rock, col))
+                        Some(roche(col))
                     }
                 } else {
-                    Some(Block::new(BlockKind::Rock, col))
+                    Some(roche(col))
                 }
             } else {
                 Some(Block::new(BlockKind::Earth, col))

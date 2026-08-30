@@ -490,6 +490,7 @@ impl ControllerSettings {
             GameInput::Interact => Some(Button::Simple(GilButton::West)),
             GameInput::ToggleWield => Some(Button::Simple(GilButton::East)),
             GameInput::SwapLoadout => Some(Button::Simple(GilButton::DPadDown)),
+            GameInput::BasculerCombat => Some(Button::Simple(GilButton::Unknown)),
             GameInput::FreeLook => Some(Button::Simple(GilButton::Unknown)),
             GameInput::AutoWalk => Some(Button::Simple(GilButton::Unknown)),
             GameInput::ZoomIn => Some(Button::Simple(GilButton::Unknown)),
@@ -813,6 +814,11 @@ impl ControllerSettings {
                 mod2: Button::Simple(GilButton::Unknown),
             }),
             GameInput::SwapLoadout => Some(LayerEntry {
+                button: Button::Simple(GilButton::Unknown),
+                mod1: Button::Simple(GilButton::Unknown),
+                mod2: Button::Simple(GilButton::Unknown),
+            }),
+            GameInput::BasculerCombat => Some(LayerEntry {
                 button: Button::Simple(GilButton::Unknown),
                 mod1: Button::Simple(GilButton::Unknown),
                 mod2: Button::Simple(GilButton::Unknown),

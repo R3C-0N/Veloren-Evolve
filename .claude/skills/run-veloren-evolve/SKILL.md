@@ -145,10 +145,30 @@ déclarer ni permission à accorder, depuis D32. Une seule commande en chat
 /build
 ```
 
-Ensuite, viser au réticule : `press -Button left` casse, `right` pose,
-`middle` est la pipette. La matière posée est celle de l'emplacement
-**sélectionné** dans la barre d'objets — `key -Value 1` le choisit, et
-`drag` l'y a mis.
+Ensuite, viser au réticule : `right` pose, `middle` est la pipette. La matière
+posée est celle de l'emplacement **sélectionné** dans la barre d'objets —
+`key -Value 1` le choisit, et `drag` l'y a mis.
+
+**Casser se maintient, depuis D34.** Un `press -Button left` nu dure 110 ms et
+n'entame plus rien : il faut `-Seconds`, et assez longtemps pour la dureté du
+bloc et le grade de l'outil.
+
+```powershell
+pwsh -File $d -Action press -Button left -Seconds 3   # creuse 3 s
+```
+
+Ordres de grandeur, à mains nues : herbe et feuillage 0,4 s, terre et sable
+0,6 s, bois et glace 2 s, roche 5 s, pierre dure 12 s, obsidienne 30 s. Un bon
+outil divise par 2,5 (bois), 4 (pierre) ou 5,5 (métal) ; le mauvais outil ne
+divise rien.
+
+**Une jauge entoure le réticule** pendant le creusement — c'est l'anneau de
+charge, réemployé. Un `shot` en plein creusement la montre, et c'est le seul
+moyen de voir que le geste porte avant que le bloc ne parte.
+
+**Un bloc peut partir sans rien lâcher** : c'est le verrou de grade, pas une
+panne. Creuser de la roche à mains nues fait exactement cela. Lire le sac, pas
+le décor.
 
 Le réticule ne vise plus qu'à **huit blocs** : au-delà, il n'accroche aucun
 bloc, et c'est voulu — il s'arrête exactement là où le serveur cesse

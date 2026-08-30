@@ -3,24 +3,22 @@ use crate::TerrainPersistence;
 use crate::{EditableSettings, Settings, client::Client};
 use common::{
     comp::{
-        Admin, AdminRole, Body, CanBuild, ControlEvent, Controller, ForceUpdate, Health, Item, Ori,
-        PickupItem, Player, Pos, Presence, PresenceKind, Scale, SkillSet, SpectatingEntity, Vel,
+        Admin, AdminRole, Body, ControlEvent, Controller, ForceUpdate, Health, Ori, Player, Pos,
+        Presence, PresenceKind, Scale, SkillSet, SpectatingEntity, Vel,
     },
     consts::{BUILD_RANGE_SERVER_SLACK, MAX_BUILD_RANGE},
     event::{self, EmitExt},
     event_emitters,
     link::Is,
     mounting::{Rider, VolumeRider},
-    resources::{DeltaTime, PlayerPhysicsSetting, PlayerPhysicsSettings, ProgramTime},
+    resources::{DeltaTime, PlayerPhysicsSetting, PlayerPhysicsSettings},
     slowjob::SlowJobPool,
     terrain::TerrainGrid,
     uid::IdMaps,
-    util::Dir,
     vol::ReadVol,
 };
 use common_ecs::{Job, Origin, Phase, System};
 use common_net::msg::{ClientGeneral, ServerGeneral};
-use common_state::BlockChange;
 use core::mem;
 use rayon::prelude::*;
 use specs::{Entities, Join, LendJoin, Read, ReadExpect, ReadStorage, Write, WriteStorage};
@@ -33,18 +31,11 @@ pub type TerrainPersistenceData<'a> = Option<Write<'a, TerrainPersistence>>;
 #[cfg(not(feature = "persistent_world"))]
 pub type TerrainPersistenceData<'a> = core::marker::PhantomData<&'a mut ()>;
 
-// NOTE: These writes are considered "rare", meaning (currently) that they are
-// admin-gated features that players shouldn't normally access, and which we're
-// not that concerned about the performance of when two players try to use them
-// at once.
-//
-// In such cases, we're okay putting them behind a mutex and penalizing the
-// system if they're actually used concurrently by lots of users.  Please do not
-// put less rare writes here, unless you want to serialize the system!
-struct RareWrites<'a, 'b> {
-    block_changes: &'b mut BlockChange,
-    _terrain_persistence: &'b mut TerrainPersistenceData<'a>,
-}
+// Les « ecritures rares » d'autrefois — un mutex autour de `BlockChange` et de
+// la persistance — n'ont plus d'usager : casser un bloc n'est plus un instant
+// decide ici mais un creusement accumule par `events::construction`, la ou
+// l'inventaire est lisible. Ce systeme n'ecrit donc plus dans le terrain, et
+// n'a plus a se serialiser contre ceux qui le font.
 
 event_emitters! {
     struct Events[Emitters] {
@@ -53,8 +44,8 @@ event_emitters! {
         update_map_marker: event::UpdateMapMarkerEvent,
         client_disconnect: event::ClientDisconnectEvent,
         set_battle_mode: event::SetBattleModeEvent,
-        create_item_drop: event::CreateItemDropEvent,
         place_block: event::PlaceBlockEvent,
+        creuse_bloc: event::CreuseBlocEvent,
     }
 }
 
@@ -81,19 +72,15 @@ impl Sys {
         entity: specs::Entity,
         client: &Client,
         maybe_presence: &mut Option<&mut Presence>,
-        terrain: &ReadExpect<'_, TerrainGrid>,
-        can_build: &ReadStorage<'_, CanBuild>,
         is_rider: &ReadStorage<'_, Is<Rider>>,
         is_volume_rider: &ReadStorage<'_, Is<VolumeRider>>,
         force_update: Option<&&mut ForceUpdate>,
         skill_set: &mut Option<Cow<'_, SkillSet>>,
         healths: &ReadStorage<'_, Health>,
-        rare_writes: &parking_lot::Mutex<RareWrites<'_, '_>>,
         position: Option<&mut Pos>,
         spectating_entity: &mut Option<Option<common::uid::Uid>>,
         controller: Option<&mut Controller>,
         settings: &Read<'_, Settings>,
-        program_time: &Read<'_, ProgramTime>,
         player_physics_setting: Option<&mut PlayerPhysicsSetting>,
         server_physics_forced: bool,
         maybe_admin: &Option<&Admin>,
@@ -181,53 +168,28 @@ impl Sys {
                     *player_physics = Some((pos, vel, ori));
                 }
             },
-            ClientGeneral::BreakBlock(pos) => {
-                if can_build
-                    .get(entity)
-                    .is_some_and(|can_build| can_build.enabled)
-                    && a_portee_de_construction(player_pos, pos)
-                    && let Ok(old_block) = terrain.get(pos).copied()
-                {
-                    let new_block = old_block.into_vacant();
-                    let was_set = {
-                        // Take the rare writes lock as briefly as possible.
-                        let mut guard = rare_writes.lock();
-                        let was_set = guard.block_changes.try_set(pos, new_block).is_some();
-                        #[cfg(feature = "persistent_world")]
-                        if was_set
-                            && let Some(terrain_persistence) = guard._terrain_persistence.as_mut()
-                        {
-                            terrain_persistence.set_block(pos, new_block);
-                        }
-                        was_set
-                    };
-                    // Le bloc casse tombe au sol, et se ramasse ensuite comme
-                    // n'importe quel butin. Emis hors du verrou des ecritures
-                    // rares : creer une entite n'en a pas besoin, et le tenir
-                    // pendant l'emission serialiserait le systeme sans raison.
-                    if was_set && let Some(asset) = old_block.kind().item_drop_asset() {
-                        let mut rng = rand::rng();
-                        emitters.emit(event::CreateItemDropEvent {
-                            // au centre du bloc retire, pas a son coin
-                            pos: Pos(pos.as_::<f32>() + Vec3::broadcast(0.5)),
-                            vel: Vel(Vec3::zero()),
-                            ori: Ori::from(Dir::random_2d(&mut rng)),
-                            item: PickupItem::new(
-                                Item::new_from_asset_expect(asset),
-                                **program_time,
-                                true,
-                            ),
-                            loot_owner: None,
-                        });
-                    }
+            ClientGeneral::CreuseBloc(pos) => {
+                // Le message ne dit plus « casse ce bloc » mais « je creuse
+                // ici », et le client le redit a chaque tick tant qu'il tient
+                // le clic. Le serveur accumule ailleurs et decide seul quand le
+                // bloc cede : ici on ne verifie que la portee.
+                //
+                // Le mode de jeu n'est pas teste ici mais dans le gestionnaire
+                // d'evenement, qui a deja l'inventaire sous la main : une regle,
+                // un endroit.
+                //
+                // Le traitement part en evenement pour la meme raison que la
+                // pose : il faut lire l'inventaire — l'emplacement d'outil
+                // decide du tempo et du butin — et ce systeme tourne en
+                // `par_join`.
+                if a_portee_de_construction(player_pos, pos) {
+                    emitters.emit(event::CreuseBlocEvent { entity, pos });
                 }
             },
             ClientGeneral::PlaceBlock(pos, slot) => {
-                if can_build
-                    .get(entity)
-                    .is_some_and(|can_build| can_build.enabled)
-                    && a_portee_de_construction(player_pos, pos)
-                {
+                // Poser marche dans les deux modes : c'est la barricade de
+                // D35, et c'est ce qui distingue la pose du creusement.
+                if a_portee_de_construction(player_pos, pos) {
                     // Le bloc n'est pas ecrit ici : le client n'envoie qu'un
                     // emplacement d'inventaire, et lire l'objet puis le retirer
                     // doit se faire d'un seul tenant. Ce systeme tourne en
@@ -321,13 +283,7 @@ impl<'a> System<'a> for Sys {
             ReadExpect<'a, SlowJobPool>,
             ReadExpect<'a, EditableSettings>,
         ),
-        (
-            Read<'a, IdMaps>,
-            Read<'a, DeltaTime>,
-            Read<'a, Settings>,
-            Read<'a, ProgramTime>,
-        ),
-        ReadStorage<'a, CanBuild>,
+        (Read<'a, IdMaps>, Read<'a, DeltaTime>, Read<'a, Settings>),
         WriteStorage<'a, ForceUpdate>,
         ReadStorage<'a, Is<Rider>>,
         ReadStorage<'a, Is<VolumeRider>>,
@@ -335,7 +291,6 @@ impl<'a> System<'a> for Sys {
         ReadStorage<'a, Health>,
         ReadStorage<'a, Body>,
         ReadStorage<'a, Scale>,
-        Write<'a, BlockChange>,
         WriteStorage<'a, Pos>,
         WriteStorage<'a, Vel>,
         WriteStorage<'a, Ori>,
@@ -344,7 +299,6 @@ impl<'a> System<'a> for Sys {
         WriteStorage<'a, Controller>,
         WriteStorage<'a, SpectatingEntity>,
         Write<'a, PlayerPhysicsSettings>,
-        TerrainPersistenceData<'a>,
         ReadStorage<'a, Player>,
         ReadStorage<'a, Admin>,
     );
@@ -359,8 +313,7 @@ impl<'a> System<'a> for Sys {
             entities,
             events,
             (terrain, slow_jobs, editable_settings),
-            (id_maps, dt, settings, program_time),
-            can_build,
+            (id_maps, dt, settings),
             mut force_updates,
             is_rider,
             is_volume_rider,
@@ -368,7 +321,6 @@ impl<'a> System<'a> for Sys {
             healths,
             bodies,
             scales,
-            mut block_changes,
             mut positions,
             mut velocities,
             mut orientations,
@@ -377,19 +329,11 @@ impl<'a> System<'a> for Sys {
             mut controllers,
             mut spectating_entities,
             mut player_physics_settings_,
-            mut terrain_persistence,
             players,
             admins,
         ): Self::SystemData,
     ) {
         let time_for_vd_changes = Instant::now();
-
-        // NOTE: stdlib mutex is more than good enough on Linux and (probably) Windows,
-        // but not Mac.
-        let rare_writes = parking_lot::Mutex::new(RareWrites {
-            block_changes: &mut block_changes,
-            _terrain_persistence: &mut terrain_persistence,
-        });
 
         let player_physics_settings = &*player_physics_settings_;
         let mut deferred_updates = (
@@ -444,19 +388,15 @@ impl<'a> System<'a> for Sys {
                             entity,
                             client,
                             &mut clearable_maybe_presence,
-                            &terrain,
-                            &can_build,
                             &is_rider,
                             &is_volume_rider,
                             force_update.as_ref(),
                             &mut skill_set,
                             &healths,
-                            &rare_writes,
                             pos.as_deref_mut(),
                             &mut spectating_entity,
                             controller.as_deref_mut(),
                             &settings,
-                            &program_time,
                             new_player_physics_setting.as_mut(),
                             is_server_physics_forced,
                             &maybe_admin,

@@ -14,6 +14,11 @@ pub const MAX_BUILD_RANGE: f32 = 8.0;
 // Le client vise depuis la camera, le serveur mesure depuis les pieds : de quoi
 // couvrir l'ecart de hauteur sans laisser filer la portee.
 pub const BUILD_RANGE_SERVER_SLACK: f32 = 2.0;
+// Casser n'est plus un instant mais une duree : le client redit « je creuse
+// ici » a chaque tick, et le serveur oublie une progression que plus personne
+// n'alimente. Lacher la souris, changer de cible ou se deconnecter annulent
+// donc tout seuls, sans message d'arret a inventer.
+pub const DELAI_ABANDON_CREUSEMENT: f64 = 0.4;
 pub const MAX_WAYPOINT_RANGE: f32 = 4.0;
 // Player-imperceptible offset to ensure campfire healing is always
 // within waypoint range (may not be necessary if floating point handling is

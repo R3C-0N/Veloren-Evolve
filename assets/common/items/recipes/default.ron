@@ -80,6 +80,18 @@ ItemDef(
             "sewing_set",
             "tin_pickaxe",
             "shovel",
+            // Outils de creusement : connus des le depart, sans quoi la
+            // premiere pioche serait inatteignable — on ne peut pas miner
+            // la pierre qui sert a l'apprendre.
+            "pioche_bois",
+            "hache_bois",
+            "pelle_bois",
+            "pioche_pierre",
+            "hache_pierre",
+            "pelle_pierre",
+            "pioche_metal",
+            "hache_metal",
+            "pelle_metal",
             // Bags
             "tiny_red_pouch",
             "tiny_leather_pouch",

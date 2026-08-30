@@ -1,16 +1,27 @@
 use serde::{Deserialize, Serialize};
 use specs::{Component, DenseVecStorage, DerefFlaggedStorage};
 
-/// Le mode construction, porte par tout personnage.
+/// Le mode de jeu du personnage : aventure, ou combat.
 ///
-/// Il n'a plus de zones : tout point du monde est constructible, et la seule
-/// borne est la portee du joueur (`MAX_BUILD_RANGE`). Ce qui reste ici est un
-/// mode, pas une permission — il decide si les touches `1`-`0` selectionnent la
-/// matiere au lieu de l'employer, et si le reticule vise un bloc.
+/// **L'aventure est le mode normal**, et c'est D7 au pied de la lettre — le
+/// present est paisible, on y creuse et on y batit sans rien degainer. Le
+/// combat ne s'y substitue que le temps d'une empoignade : il rend les clics
+/// aux armes, ne laisse que trois cases de matiere pour barricader, et interdit
+/// de creuser.
+///
+/// On y entre en **etant frappe** (`EntityAttackedHookEvent`) ou par la touche,
+/// on en sort par la touche seule. Pas de minuteur : c'est le joueur qui juge
+/// que c'est fini, et se tromper ne coute qu'un coup encaisse — le suivant l'y
+/// ramene.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CanBuild {
-    pub enabled: bool,
+pub struct ModeDeJeu {
+    pub combat: bool,
 }
-impl Component for CanBuild {
+
+impl ModeDeJeu {
+    pub fn aventure(&self) -> bool { !self.combat }
+}
+
+impl Component for ModeDeJeu {
     type Storage = DerefFlaggedStorage<Self, DenseVecStorage<Self>>;
 }

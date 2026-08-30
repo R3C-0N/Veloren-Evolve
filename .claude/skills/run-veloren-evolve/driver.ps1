@@ -272,14 +272,18 @@ switch ($Action) {
     # Clic a la position courante du curseur, sans le deplacer. C'est ce qu'il
     # faut en jeu, ou le curseur est capture et ou la cible est le reticule :
     # deplacer le curseur ferait pivoter la camera.
+    #
+    # Avec -Seconds, le bouton est *maintenu* : c'est ce que demande le
+    # creusement de D34, ou un clic de 110 ms n'entame plus rien.
     $h = (Get-Game).MainWindowHandle; Grab-Focus $h
     $down = @{ left = 0x0002; right = 0x0008; middle = 0x0020 }[$Button]
     $up   = @{ left = 0x0004; right = 0x0010; middle = 0x0040 }[$Button]
+    $tenu = $PSBoundParameters.ContainsKey('Seconds')
     [Vx]::mouse_event([uint32]$down, 0, 0, 0, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 110
+    if ($tenu) { Start-Sleep -Seconds $Seconds } else { Start-Sleep -Milliseconds 110 }
     [Vx]::mouse_event([uint32]$up, 0, 0, 0, [IntPtr]::Zero)
     Release-Focus
-    "clic $Button au reticule"
+    if ($tenu) { "$Button maintenu $Seconds s au reticule" } else { "clic $Button au reticule" }
   }
 
   'key' {

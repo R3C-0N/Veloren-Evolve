@@ -20,3 +20,27 @@ weapon-tool-pickaxe_stone = Pioche en pierre
     .desc = Frappez la terre !
 weapon-tool-shovel_green = Pelle
     .desc = Elle est recouverte de fumier.
+
+weapon-tool-pickaxe_wood = Pioche en bois
+    .desc = À peine une pioche, mais elle ouvre la pierre.
+
+weapon-tool-pickaxe_metal = Pioche en fer
+    .desc = Tête de fer, tranchant franc. Elle mord la roche profonde.
+
+weapon-tool-axe_wood = Hache en bois
+    .desc = Une bûche fendue, affûtée. De quoi abattre un tronc.
+
+weapon-tool-axe_stone = Hache en pierre
+    .desc = Une tête taillée, liée à un manche.
+
+weapon-tool-axe_metal = Hache en fer
+    .desc = Du fer, et cela se voit aux copeaux qu'elle arrache.
+
+weapon-tool-shovel_wood = Pelle en bois
+    .desc = Une planche aplatie. Elle déplace la terre, lentement.
+
+weapon-tool-shovel_stone = Pelle en pierre
+    .desc = Plus lourde qu'il ne faudrait, et elle fait le travail.
+
+weapon-tool-shovel_metal = Pelle en fer
+    .desc = Lame de fer. Le sable et la neige cèdent d'un coup.

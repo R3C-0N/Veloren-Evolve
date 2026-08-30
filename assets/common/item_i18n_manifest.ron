@@ -2697,6 +2697,30 @@
             "common.items.tool.pickaxe_stone",
         ): "weapon-tool-pickaxe_stone",
         Simple(
+            "common.items.tool.pickaxe_wood",
+        ): "weapon-tool-pickaxe_wood",
+        Simple(
+            "common.items.tool.pickaxe_metal",
+        ): "weapon-tool-pickaxe_metal",
+        Simple(
+            "common.items.tool.axe_wood",
+        ): "weapon-tool-axe_wood",
+        Simple(
+            "common.items.tool.axe_stone",
+        ): "weapon-tool-axe_stone",
+        Simple(
+            "common.items.tool.axe_metal",
+        ): "weapon-tool-axe_metal",
+        Simple(
+            "common.items.tool.shovel_wood",
+        ): "weapon-tool-shovel_wood",
+        Simple(
+            "common.items.tool.shovel_stone",
+        ): "weapon-tool-shovel_stone",
+        Simple(
+            "common.items.tool.shovel_metal",
+        ): "weapon-tool-shovel_metal",
+        Simple(
             "common.items.tool.pickaxe_velorite",
         ): "common-items-tool-pickaxe_velorite",
         Simple(
@@ -3576,6 +3600,36 @@
         Simple(
             "common.items.crafting_ing.stones",
         ): "sprite-rocks-rock-0",
+        Simple(
+            "common.items.block.stone",
+        ): "item-block-stone",
+        Simple(
+            "common.items.block.earth",
+        ): "item-block-earth",
+        Simple(
+            "common.items.block.sand",
+        ): "item-block-sand",
+        Simple(
+            "common.items.block.grass",
+        ): "item-block-grass",
+        Simple(
+            "common.items.block.wood",
+        ): "item-block-wood",
+        Simple(
+            "common.items.block.leaves",
+        ): "item-block-leaves",
+        Simple(
+            "common.items.block.snow",
+        ): "item-block-snow",
+        Simple(
+            "common.items.block.ice",
+        ): "item-block-ice",
+        Simple(
+            "common.items.block.hard_rock",
+        ): "item-block-hard_rock",
+        Simple(
+            "common.items.block.obsidian",
+        ): "item-block-obsidian",
         Simple(
             "common.items.crafting_ing.twigs",
         ): "sprite-twigs-twigs-0",

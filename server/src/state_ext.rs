@@ -752,7 +752,7 @@ impl StateExt for State {
             // qui un administrateur l'a accorde : batir est du jeu. Le composant
             // arrive eteint — il dit dans quel mode on est, pas ce qu'on a le
             // droit de faire.
-            self.write_component_ignore_entity_dead(entity, comp::CanBuild::default());
+            self.write_component_ignore_entity_dead(entity, comp::ModeDeJeu::default());
 
             if let Some(hardcore) = hardcore {
                 self.write_component_ignore_entity_dead(entity, hardcore);

@@ -78,7 +78,7 @@ pub use self::{
     gizmos::GizmoSubscriber,
     group::Group,
     hardcore::Hardcore,
-    inputs::CanBuild,
+    inputs::ModeDeJeu,
     inventory::{
         CollectFailedReason, Inventory, InventoryUpdateBuffer, InventoryUpdateEvent,
         item::{

@@ -12,6 +12,7 @@ gameinput-slot8 = Emplacement rapide 8
 gameinput-slot9 = Emplacement rapide 9
 gameinput-slot10 = Emplacement rapide 10
 gameinput-swaploadout = Changer de set d'équipement
+gameinput-basculercombat = Dégainer / Rengainer
 gameinput-togglecursor = Afficher/Cacher le curseur
 gameinput-toggleinterface = Afficher/Cacher l'interface
 gameinput-toggledebug = Afficher/Cacher FPS et infos débug

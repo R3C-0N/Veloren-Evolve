@@ -498,6 +498,16 @@ pub struct PlaceBlockEvent {
     pub slot: comp::slot::InvSlotId,
 }
 
+/// « Je creuse ici », redit a chaque tick tant que le joueur tient le clic.
+///
+/// Ce n'est pas un ordre de casser : le serveur accumule, et decide seul quand
+/// le bloc cede. Une progression que plus personne n'alimente est oubliee, si
+/// bien qu'il n'y a pas de message d'arret a inventer.
+pub struct CreuseBlocEvent {
+    pub entity: EcsEntity,
+    pub pos: Vec3<i32>,
+}
+
 /// Attempt to mine a block, turning it into an item.
 pub struct MineBlockEvent {
     pub entity: EcsEntity,

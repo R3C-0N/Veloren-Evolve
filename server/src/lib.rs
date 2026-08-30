@@ -376,6 +376,13 @@ impl Server {
             .ecs_mut()
             .insert(EventBus::<chunk_serialize::ChunkSendEntry>::default());
         state.ecs_mut().insert(Locations::default());
+        // Les creusements en cours (D34). Inseree ici et non laissee a `Write`
+        // : la repartition des evenements va chercher ses donnees sans passer
+        // par `System::setup`, si bien qu'un `Default` ne suffit pas — le
+        // serveur panique au premier tick, et seul le jeu lance le dit.
+        state
+            .ecs_mut()
+            .insert(events::construction::Creusements::default());
         state.ecs_mut().insert(LoginProvider::new(
             settings.auth_server_address.clone(),
             Arc::clone(&runtime),

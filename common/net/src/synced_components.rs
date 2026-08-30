@@ -72,7 +72,7 @@ macro_rules! synced_components {
             admin: Admin,
             combo: Combo,
             active_abilities: ActiveAbilities,
-            can_build: CanBuild,
+            mode_de_jeu: ModeDeJeu,
             is_interactor: IsInteractor,
             interactors: Interactors,
         }
@@ -304,7 +304,7 @@ impl NetSync for ActiveAbilities {
     const SYNC_FROM: SyncFrom = SyncFrom::ClientSpectatorEntity;
 }
 
-impl NetSync for CanBuild {
+impl NetSync for ModeDeJeu {
     const SYNC_FROM: SyncFrom = SyncFrom::ClientEntity;
 }
 

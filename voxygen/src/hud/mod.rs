@@ -247,6 +247,8 @@ widget_ids! {
     struct Ids {
         // Crosshair
         crosshair_inner,
+        crosshair_creusement,
+        repere_de_mode,
         crosshair_outer,
         crosshair_charge,
 
@@ -668,6 +670,11 @@ pub struct HudInfo<'a> {
     pub selected_entity: Option<(specs::Entity, Instant)>,
     pub persistence_load_error: Option<SkillsPersistenceError>,
     pub key_state: &'a KeyState,
+    /// L'avancement du creusement en cours, de 0 a 1, s'il y en a un.
+    pub creusement: Option<f32>,
+    /// Le mode de jeu courant. Change le sens des clics et de la rangee de
+    /// chiffres, donc le joueur doit pouvoir le lire a l'ecran.
+    pub en_combat: bool,
 }
 
 #[derive(Clone)]
@@ -1666,6 +1673,28 @@ impl Hud {
                     .color(Some(Color::Rgba(1.0, 1.0, 1.0, 0.6)))
                     .set(self.ids.crosshair_inner, ui_widgets);
 
+                // Le creusement emprunte l'anneau de charge : c'est la meme
+                // idee — une jauge autour du reticule — et il est deja dessine.
+                // Les deux ne se croisent pas, creuser demandant le mode
+                // construction.
+                if let Some(avance) = info.creusement {
+                    Image::new(match avance {
+                        _ if avance > 0.999 => self.imgs.crosshair_charge_8,
+                        _ if avance > 0.875 => self.imgs.crosshair_charge_7,
+                        _ if avance > 0.75 => self.imgs.crosshair_charge_6,
+                        _ if avance > 0.625 => self.imgs.crosshair_charge_5,
+                        _ if avance > 0.5 => self.imgs.crosshair_charge_4,
+                        _ if avance > 0.375 => self.imgs.crosshair_charge_3,
+                        _ if avance > 0.25 => self.imgs.crosshair_charge_2,
+                        _ if avance > 0.125 => self.imgs.crosshair_charge_1,
+                        _ => self.imgs.crosshair_charge_0,
+                    })
+                    .w_h(21.0 * 1.5, 21.0 * 1.5)
+                    .middle_of(ui_widgets.window)
+                    .color(Some(Color::Rgba(1.0, 1.0, 1.0, 1.0)))
+                    .set(self.ids.crosshair_creusement, ui_widgets);
+                }
+
                 if let Some(charge) = char_states.get(me).and_then(|cs| cs.charge_frac()) {
                     Image::new(match charge {
                         _ if charge > 0.999 => self.imgs.crosshair_charge_8,
@@ -1689,6 +1718,24 @@ impl Hud {
                     .set(self.ids.crosshair_charge, ui_widgets);
                 }
             }
+
+            // Le mode courant, en clair. Sans ce repere le joueur ne sait pas
+            // pourquoi son clic gauche creuse ou frappe, et c'est la premiere
+            // chose qu'il cherchera quand l'un des deux le surprendra.
+            Text::new(&i18n.get_msg(if info.en_combat {
+                "hud-mode-combat"
+            } else {
+                "hud-mode-aventure"
+            }))
+            .color(if info.en_combat {
+                Color::Rgba(0.85, 0.35, 0.30, 0.9)
+            } else {
+                Color::Rgba(0.75, 0.78, 0.72, 0.7)
+            })
+            .mid_bottom_with_margin_on(ui_widgets.window, 64.0)
+            .font_id(self.fonts.cyri.conrod_id)
+            .font_size(self.fonts.cyri.scale(15))
+            .set(self.ids.repere_de_mode, ui_widgets);
 
             // Max amount the sct font size increases when "flashing"
             const FLASH_MAX: u32 = 2;
@@ -4891,7 +4938,7 @@ impl Hud {
         event: WinEvent,
         global_state: &mut GlobalState,
         client_inventory: Option<&comp::Inventory>,
-        can_build: bool,
+        en_combat: bool,
     ) -> bool {
         // Helper
         fn handle_slot(
@@ -5215,15 +5262,23 @@ impl Hud {
                     // Skillbar
                     input => {
                         if let Some(slot) = try_hotbar_slot_from_input(input) {
-                            // En mode construction, les touches choisissent la
-                            // matiere qu'on pose au lieu d'employer l'objet :
-                            // manger sa pierre en batissant un mur n'aurait
-                            // aucun sens, et il faut bien la designer.
+                            // **La barre a deux visages.** Son contenu ne change
+                            // pas ; c'est sa reponse qui suit le mode.
+                            //
+                            // En aventure, les dix touches choisissent la
+                            // matiere qu'on pose : manger sa pierre en
+                            // batissant un mur n'aurait aucun sens, et il faut
+                            // bien la designer.
+                            //
+                            // En combat, seules les trois premieres restent la
+                            // matiere — de quoi barricader, pas de quoi batir —
+                            // et les sept autres redeviennent la barre de
+                            // Veloren : potions et capacites, qui sont
+                            // justement ce dont on a besoin quand on se bat.
                             //
                             // Sauf quand un objet de l'inventaire est saisi :
                             // c'est alors le geste qui l'assigne a la barre, et
-                            // l'intercepter interdirait de garnir sa barre sans
-                            // quitter le mode construction.
+                            // l'intercepter interdirait de la garnir.
                             let assigning = matches!(
                                 self.slot_manager.selected(),
                                 Some(slots::SlotKind::Inventory(slots::InventorySlot {
@@ -5231,7 +5286,12 @@ impl Hud {
                                     ..
                                 }))
                             );
-                            if can_build && !assigning {
+                            let case_de_matiere = !en_combat
+                                || matches!(
+                                    slot,
+                                    hotbar::Slot::One | hotbar::Slot::Two | hotbar::Slot::Three
+                                );
+                            if case_de_matiere && !assigning {
                                 if state {
                                     self.hotbar.currently_selected_slot = slot;
                                 }

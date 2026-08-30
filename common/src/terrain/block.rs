@@ -45,7 +45,11 @@ make_case_elim!(
         Lava = 0x12,     // TODO: Reevaluate whether this should be in the rock section
         GlowingRock = 0x13,
         GlowingWeakRock = 0x14,
-        // 0x12 <= x < 0x20 is reserved for future rocks
+        // Les deux roches dures de l'echelle des grades : la pierre dure ne cede
+        // qu'a un outil de pierre, l'obsidienne qu'a un outil de metal.
+        HardRock = 0x15,
+        Obsidian = 0x16,
+        // 0x17 <= x < 0x20 is reserved for future rocks
         Grass = 0x20, // Note: *not* the same as grass sprites
         Snow = 0x21,
         // Snow to use with sites, to not attract snowfall particles
@@ -111,6 +115,7 @@ impl BlockKind {
                 | BlockKind::WeakRock
                 | BlockKind::GlowingRock
                 | BlockKind::GlowingWeakRock
+                | BlockKind::HardRock
                 | BlockKind::Grass
                 | BlockKind::Earth
                 | BlockKind::Sand
@@ -133,6 +138,8 @@ impl BlockKind {
             | BlockKind::WeakRock
             | BlockKind::GlowingRock
             | BlockKind::GlowingWeakRock => "common.items.block.stone",
+            BlockKind::HardRock => "common.items.block.hard_rock",
+            BlockKind::Obsidian => "common.items.block.obsidian",
             BlockKind::Grass => "common.items.block.grass",
             BlockKind::Snow | BlockKind::ArtSnow => "common.items.block.snow",
             BlockKind::Earth => "common.items.block.earth",
@@ -146,6 +153,94 @@ impl BlockKind {
             | BlockKind::GlowingMushroom
             | BlockKind::Misc => return None,
         })
+    }
+
+    /// La famille d'outil qui creuse ce bloc a son bon tempo.
+    ///
+    /// A ne pas confondre avec [`Block::mine_tool`], qui reste le verrou du
+    /// minage a l'ability — les sprites-minerais, qu'aucune autre famille ne
+    /// touche. Ici la famille ne verrouille rien : creuser a la hache une
+    /// paroi de roche marche, seulement au tempo de la main nue. C'est le
+    /// *grade* qui verrouille, et lui seul.
+    ///
+    /// `None` signifie qu'il n'y a rien a creuser — les fluides, et eux seuls.
+    pub const fn outil_de_casse(&self) -> Option<ToolKind> {
+        Some(match self {
+            BlockKind::Rock
+            | BlockKind::WeakRock
+            | BlockKind::GlowingRock
+            | BlockKind::GlowingWeakRock
+            | BlockKind::HardRock
+            | BlockKind::Obsidian
+            | BlockKind::Ice
+            | BlockKind::Misc => ToolKind::Pick,
+            BlockKind::Wood
+            | BlockKind::Leaves
+            | BlockKind::ArtLeaves
+            | BlockKind::GlowingMushroom => ToolKind::Axe,
+            BlockKind::Earth
+            | BlockKind::Sand
+            | BlockKind::Grass
+            | BlockKind::Snow
+            | BlockKind::ArtSnow => ToolKind::Shovel,
+            BlockKind::Air | BlockKind::Water | BlockKind::Lava => return None,
+        })
+    }
+
+    /// Le temps, en secondes, qu'une main nue met a venir a bout de ce bloc.
+    ///
+    /// C'est le numerateur de la duree ; le denominateur est la vitesse de
+    /// l'outil. Voir [`crate::creusement::temps_de_casse`], qui les assemble et
+    /// qui est le seul endroit ou la duree se decide.
+    pub const fn durete(&self) -> f32 {
+        match self {
+            BlockKind::Grass
+            | BlockKind::Snow
+            | BlockKind::ArtSnow
+            | BlockKind::Leaves
+            | BlockKind::ArtLeaves
+            | BlockKind::GlowingMushroom => 0.4,
+            BlockKind::Earth | BlockKind::Sand => 0.6,
+            BlockKind::Wood | BlockKind::Ice => 2.0,
+            BlockKind::Rock
+            | BlockKind::WeakRock
+            | BlockKind::GlowingRock
+            | BlockKind::GlowingWeakRock
+            | BlockKind::Misc => 5.0,
+            BlockKind::HardRock => 12.0,
+            BlockKind::Obsidian => 30.0,
+            BlockKind::Air | BlockKind::Water | BlockKind::Lava => 0.0,
+        }
+    }
+
+    /// Le grade d'outil au-dessous duquel le bloc casse **sans rien lacher**.
+    ///
+    /// Le bloc part quand meme : c'est la perte qui enseigne, la ou un bloc qui
+    /// resiste n'enseigne rien. Voir [`crate::creusement::grade_outil`] pour
+    /// l'echelle, empruntee a `MaterialKind`.
+    pub const fn grade_requis(&self) -> u8 {
+        match self {
+            BlockKind::Grass
+            | BlockKind::Snow
+            | BlockKind::ArtSnow
+            | BlockKind::Leaves
+            | BlockKind::ArtLeaves
+            | BlockKind::GlowingMushroom
+            | BlockKind::Earth
+            | BlockKind::Sand
+            | BlockKind::Air
+            | BlockKind::Water
+            | BlockKind::Lava => 0,
+            BlockKind::Wood
+            | BlockKind::Ice
+            | BlockKind::Rock
+            | BlockKind::WeakRock
+            | BlockKind::GlowingRock
+            | BlockKind::GlowingWeakRock
+            | BlockKind::Misc => 1,
+            BlockKind::HardRock => 2,
+            BlockKind::Obsidian => 3,
+        }
     }
 }
 
@@ -167,6 +262,8 @@ impl BlockKind {
 pub fn block_from_item(item_id: &str) -> Option<Block> {
     let (kind, (r, g, b)) = match item_id {
         "common.items.block.stone" => (BlockKind::Rock, (122, 122, 128)),
+        "common.items.block.hard_rock" => (BlockKind::HardRock, (78, 80, 88)),
+        "common.items.block.obsidian" => (BlockKind::Obsidian, (34, 28, 44)),
         "common.items.block.grass" => (BlockKind::Grass, (74, 132, 54)),
         "common.items.block.snow" => (BlockKind::Snow, (238, 242, 248)),
         "common.items.block.earth" => (BlockKind::Earth, (104, 74, 50)),
