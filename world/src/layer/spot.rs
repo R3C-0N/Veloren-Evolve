@@ -350,6 +350,12 @@ impl SpotGenerate for Spot {
                 / 1000.0f32.powi(2))
             .ceil() as u64
         {
+            // Sur un patron de cube, deux tirages sur trois tombent sur un
+            // emplacement mort et sont écartés par `get_mut`. La densité reste
+            // pourtant juste, et par compensation exacte : le nombre d'essais
+            // est calculé sur la grille entière, qui surestime la surface du
+            // monde du même facteur. C'est une coïncidence, pas un dessin —
+            // écrite ici pour qu'elle ne se redécouvre pas de travers.
             let pos = world_size.map(|e| (world.rng.random_range(0..e) & !0b11) as i32);
             if let Some((_, chunk)) = world
                 .get_gradient_approx(pos)

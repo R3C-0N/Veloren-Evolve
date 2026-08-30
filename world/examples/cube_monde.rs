@@ -66,6 +66,7 @@ fn main() {
     echecs += la_mer(sim);
     echecs += tout_s_ecoule_vers_la_mer(sim);
     echecs += le_relief_aux_coutures(sim);
+    echecs += les_sites(sim);
 
     println!();
     if echecs == 0 {
@@ -214,4 +215,61 @@ fn le_relief_aux_coutures(sim: &veloren_world::sim::WorldSim) -> u32 {
     // seuil posé maintenant ne mesurerait que l'endroit où on l'a posé. Le
     // témoin, lui, dit ce qu'un rapport « normal » vaut sur ce terrain.
     0
+}
+
+/// **Les sites, les lieux nommés, et ce qu'ils font des coutures.**
+///
+/// Trois choses à savoir : que les six faces en portent — un tirage qui ignore
+/// le patron gaspille 62,5 % de ses essais sur des emplacements morts —,
+/// qu'aucun site n'enjambe un recollement, et que le nommage des biomes ait eu
+/// lieu.
+fn les_sites(sim: &veloren_world::sim::WorldSim) -> u32 {
+    use std::collections::{HashMap, HashSet};
+
+    let map = sim.map_size_lg();
+    let mut par_face = [0u32; 6];
+    let mut faces_du_site: HashMap<usize, HashSet<u8>> = HashMap::new();
+    let mut pois = 0u32;
+    let mut lieux = 0u32;
+    let mut total_cases = 0u32;
+
+    for posi in vivantes(map) {
+        let cle = uniform_idx_as_vec2(map, posi);
+        let face = cube::face_de_chunk(map, cle).expect("case vivante");
+        let c = sim.get_idx(posi).expect("case vivante");
+        total_cases += 1;
+        if !c.sites.is_empty() {
+            par_face[face as usize] += 1;
+            for site in &c.sites {
+                faces_du_site
+                    .entry(site.id() as usize)
+                    .or_default()
+                    .insert(face);
+            }
+        }
+        // `poi` ne désigne pas un point d'intérêt mais l'appartenance à un
+        // biome nommé : le nommage l'écrit sur chaque case du biome.
+        if c.poi.is_some() {
+            pois += 1;
+        }
+        // `place` n'est écrit nulle part dans Veloren aujourd'hui — le champ
+        // existe et reste vide, sur carte plate comme sur patron. On le compte
+        // pour que son zéro soit su plutôt que découvert plus tard.
+        if c.place.is_some() {
+            lieux += 1;
+        }
+    }
+
+    let total: u32 = par_face.iter().sum();
+    let vides = par_face.iter().filter(|&&n| n == 0).count();
+    let a_cheval = faces_du_site.values().filter(|f| f.len() > 1).count();
+
+    println!("sites : {total} cases occupées, réparties {par_face:?} (faces sans site : {vides})");
+    println!("  sites à cheval sur une couture : {a_cheval} (attendu 0)");
+    println!(
+        "biomes nommés : {pois} cases rattachées ({:.0} %) · champ `place` renseigné : {lieux}",
+        100.0 * pois as f64 / total_cases as f64
+    );
+
+    u32::from(vides != 0) + u32::from(a_cheval != 0) + u32::from(pois == 0)
 }

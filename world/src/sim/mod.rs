@@ -2118,6 +2118,21 @@ impl WorldSim {
         }
     }
 
+    /// La case est-elle à au moins `marge` cases de tout recollement ?
+    ///
+    /// Sur une carte plate il n'y a pas de couture, et la question se ramène à
+    /// « la case existe-t-elle ». Sur un patron, elle sert à poser un site tout
+    /// entier dans une face : son empreinte s'y étend alors sans repliement, et
+    /// son contenu n'a pas à tourner d'un quart de tour en chemin.
+    pub fn loin_des_coutures(&self, chunk_pos: Vec2<i32>, marge: i32) -> bool {
+        if !self.map_size_lg().est_cubique() {
+            return self.contient(chunk_pos);
+        }
+        let f = cube::face_chunks(self.map_size_lg());
+        cube::chunk_en_face(self.map_size_lg(), chunk_pos)
+            .is_some_and(|(_, u, v)| u >= marge && v >= marge && u < f - marge && v < f - marge)
+    }
+
     /// La case d'indice donné. Sert partout où le voisinage a déjà été replié :
     /// l'indice est canonique, la position ne l'est pas forcément.
     #[inline]

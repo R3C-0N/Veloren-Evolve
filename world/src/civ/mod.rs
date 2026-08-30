@@ -854,7 +854,13 @@ impl Civs {
         let mut to_floodfill = Vec::new();
         let mut to_explore = Vec::new();
         // TODO: have start point in center and ignore ocean?
-        let start_point = 0;
+        //
+        // Le point de départ doit **exister**. Sur un patron de cube, la case
+        // (0, 0) est un des dix emplacements morts : sans voisin, le parcours
+        // s'arrêtait à la première itération et pas un seul biome n'était nommé.
+        let start_point = (0..map_size_lg.chunks_len())
+            .find(|&posi| ctx.sim.contient(uniform_idx_as_vec2(map_size_lg, posi)))
+            .unwrap_or(0);
         to_explore.push(start_point);
 
         while let Some(exploring) = to_explore.pop() {
@@ -1591,6 +1597,24 @@ fn find_site_loc(
                     .random_range(location_hint.min.y..location_hint.max.y),
             )
         });
+
+        // **Un site ne se pose pas à moins de son rayon d'une couture.** Le
+        // rayon d'exclusion sert de mesure : le site tient alors tout entier
+        // dans une face, son empreinte se pose sans repliement, et deux sites de
+        // part et d'autre d'un recollement restent séparés d'au moins deux
+        // rayons. C'est une règle grossière, et c'est voulu : faire enjamber une
+        // couture à un plan de ville demanderait de faire tourner tout son
+        // contenu d'un quart de tour.
+        //
+        // Elle écarte aussi les dix emplacements morts du patron, où deux
+        // tirages sur trois tombaient jusqu'ici pour rien.
+        if !ctx
+            .sim
+            .loin_des_coutures(test_loc, site_kind.exclusion_radius())
+        {
+            loc = None;
+            continue;
+        }
 
         let is_suitable_loc = site_kind.is_suitable_loc(test_loc, ctx.sim);
         if is_suitable_loc && proximity_reqs.satisfied_by(test_loc) {
