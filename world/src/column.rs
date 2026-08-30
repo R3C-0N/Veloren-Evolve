@@ -1,7 +1,7 @@
 use crate::{
     CONFIG, IndexRef, Land,
     all::ForestKind,
-    sim::{Path, RiverKind, SimChunk, WorldSim, local_cells},
+    sim::{Endroit, Path, RiverKind, SimChunk, WorldSim, local_cells},
     site::SpawnRules,
     util::{RandomField, RandomPerm, Sampler},
 };
@@ -78,7 +78,11 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
         //     sim.gen_ctx.turb_x_nz.get((wposf.div(48.0)).into_array()) as f32,
         //     sim.gen_ctx.turb_y_nz.get((wposf.div(48.0)).into_array()) as f32,
         // ) * 12.0;
-        let wposf_turb = wposf; // + turb.map(|e| e as f64);
+        // Où le bruit se lit : la position du monde sur une carte plate, le
+        // point de la sphère sur un patron de cube (D27). Deux colonnes voisines
+        // de part et d'autre d'un recollement s'y projettent sur deux points
+        // voisins, donc le grain du terrain y est continu sans effort.
+        let ou = Endroit::nouveau(sim.map_size_lg(), wposf);
 
         let chaos = sim.get_interpolated(wpos, |chunk| chunk.chaos)?;
         let temp = sim.get_interpolated(wpos, |chunk| chunk.temp)?;
@@ -127,18 +131,23 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                         / SAMP_RES as f32
                 });
 
-        let wposf3d = Vec3::new(wposf.x, wposf.y, alt as f64);
+        // L'altitude qui sert au grain, **capturée une fois**. `alt` est reliée
+        // six fois plus bas — rivières, gorges, dunes, mesas — et le
+        // `wposf3d` d'origine en était un instantané pris ici. Relire la valeur
+        // courante à chaque site ferait dépendre le grain de l'ordre des
+        // liaisons.
+        let alt_du_grain = alt as f64;
 
-        let marble_small = (sim.gen_ctx.hill_nz.get((wposf3d.div(3.0)).into_array()) as f32)
+        let marble_small = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 3.0, alt_du_grain) as f32)
             .powi(3)
             .add(1.0)
             .mul(0.5);
-        let marble_mid = (sim.gen_ctx.hill_nz.get((wposf3d.div(12.0)).into_array()) as f32)
+        let marble_mid = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 12.0, alt_du_grain) as f32)
             .mul(0.75)
             .add(1.0)
             .mul(0.5);
         //.add(marble_small.sub(0.5).mul(0.25));
-        let marble = (sim.gen_ctx.hill_nz.get((wposf3d.div(48.0)).into_array()) as f32)
+        let marble = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 48.0, alt_du_grain) as f32)
             .mul(0.75)
             .add(1.0)
             .mul(0.5);
@@ -823,32 +832,27 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                 f32::MIN
             });
 
-        let riverless_alt_delta = (sim.gen_ctx.small_nz.get(
-            (wposf_turb.div(200.0 * (32.0 / TerrainChunkSize::RECT_SIZE.x as f64))).into_array(),
-        ) as f32)
+        let echelle_chunk = 32.0 / TerrainChunkSize::RECT_SIZE.x as f64;
+        let riverless_alt_delta = (ou.lire(&sim.gen_ctx.small_nz, 200.0 * echelle_chunk) as f32)
             .clamp(-1.0, 1.0)
             .abs()
             .mul(3.0)
-            + (sim.gen_ctx.small_nz.get(
-                (wposf_turb.div(400.0 * (32.0 / TerrainChunkSize::RECT_SIZE.x as f64)))
-                    .into_array(),
-            ) as f32)
+            + (ou.lire(&sim.gen_ctx.small_nz, 400.0 * echelle_chunk) as f32)
                 .clamp(-1.0, 1.0)
                 .abs()
                 .mul(3.0);
 
         // Cliffs
         let cliff_factor = (alt
-            + self.sim.gen_ctx.hill_nz.get(wposf.div(64.0).into_array()) as f32 * 8.0
-            + self.sim.gen_ctx.hill_nz.get(wposf.div(350.0).into_array()) as f32 * 128.0)
+            + ou.lire(&self.sim.gen_ctx.hill_nz, 64.0) as f32 * 8.0
+            + ou.lire(&self.sim.gen_ctx.hill_nz, 350.0) as f32 * 128.0)
             .rem_euclid(200.0)
             / 64.0
             - 1.0;
-        let cliff_scale =
-            ((self.sim.gen_ctx.hill_nz.get(wposf.div(128.0).into_array()) as f32 * 1.5 + 0.75)
-                + self.sim.gen_ctx.hill_nz.get(wposf.div(48.0).into_array()) as f32 * 0.1)
-                .clamped(0.0, 1.0)
-                .powf(2.0);
+        let cliff_scale = ((ou.lire(&self.sim.gen_ctx.hill_nz, 128.0) as f32 * 1.5 + 0.75)
+            + ou.lire(&self.sim.gen_ctx.hill_nz, 48.0) as f32 * 0.1)
+            .clamped(0.0, 1.0)
+            .powf(2.0);
         let cliff_height = sim.get_interpolated(wpos, |chunk| chunk.cliff_height)? * cliff_scale;
         let cliff = if cliff_factor < 0.0 {
             cliff_factor.abs().powf(1.5)
@@ -1140,7 +1144,7 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
             .unwrap_or(ground);
 
         let (sub_surface_color, ground, alt, basement) = if mesa > 0.0 {
-            let marble_big = (sim.gen_ctx.hill_nz.get((wposf3d.div(128.0)).into_array()) as f32)
+            let marble_big = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 128.0, alt_du_grain) as f32)
                 .mul(0.75)
                 .add(1.0)
                 .mul(0.5);
@@ -1202,12 +1206,12 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
         let ice_depth = if snow_factor < -0.25
             && water_vel.magnitude_squared() < (0.1f32 + marble_mid * 0.2).powi(2)
         {
-            let cliff = (sim.gen_ctx.hill_nz.get((wposf3d.div(180.0)).into_array()) as f32)
+            let cliff = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 180.0, alt_du_grain) as f32)
                 .add((marble_mid - 0.5) * 0.2)
                 .abs()
                 .powi(3)
                 .mul(32.0);
-            let cliff_ctrl = (sim.gen_ctx.hill_nz.get((wposf3d.div(128.0)).into_array()) as f32)
+            let cliff_ctrl = (ou.lire_en_relief(&sim.gen_ctx.hill_nz, 128.0, alt_du_grain) as f32)
                 .sub(0.4)
                 .add((marble_mid - 0.5) * 0.2)
                 .mul(32.0)

@@ -10,11 +10,16 @@
 //! cargo run --release --example cube_diag -- --x-lg 8
 //! ```
 
-use common::terrain::{
-    MapSizeLg, NEIGHBOR_DELTA, cube, neighbors, neighbors_indexed, uniform_idx_as_vec2,
-    vec2_as_uniform_idx,
+use common::{
+    terrain::{
+        MapSizeLg, NEIGHBOR_DELTA, TerrainChunkSize, cube, neighbors, neighbors_indexed,
+        uniform_idx_as_vec2, vec2_as_uniform_idx,
+    },
+    vol::RectVolSize,
 };
+use noise::{Fbm, MultiFractal, Perlin, SuperSimplex};
 use vek::*;
+use veloren_world::sim::{Bruit, Endroit};
 
 fn main() {
     let x_lg = std::env::args()
@@ -52,6 +57,7 @@ fn main() {
     echecs += les_cases_mortes_sont_isolees(cube_map);
     echecs += reciprocite(cube_map);
     echecs += le_mode_plat_n_a_pas_bouge(plate);
+    echecs += coutures(cube_map);
 
     println!();
     if echecs == 0 {
@@ -206,4 +212,112 @@ fn le_mode_plat_n_a_pas_bouge(map: MapSizeLg) -> u32 {
         map.chunks_len()
     );
     u32::from(fautes != 0)
+}
+
+/// **La continuité du bruit aux douze recollements.**
+///
+/// C'est la moitié bon marché de D27, et la mesure doit le montrer plutôt que
+/// l'affirmer. Le long de chaque arête, on compare le pas du bruit *en travers
+/// de la couture* au pas *une case à l'intérieur* : si la projection fait son
+/// travail, les deux sont indiscernables.
+///
+/// Le chiffre seul ne prouverait rien — un petit nombre est petit. On mesure
+/// donc aussi ce que le même bruit donnait **lu en coordonnées de grille**,
+/// c'est-à-dire comme Veloren le lisait avant. C'est ce rapport-là qui rend la
+/// mesure opposable : elle peut échouer.
+fn coutures(map: MapSizeLg) -> u32 {
+    let f = cube::face_chunks(map);
+    let taille = TerrainChunkSize::RECT_SIZE.x as f64;
+
+    // Trois bruits de caractères différents, aux échelles de la génération.
+    let continents: Fbm<Perlin> = Fbm::new(1).set_octaves(8);
+    let relief: Fbm<Perlin> = Fbm::new(2).set_octaves(3);
+    let collines = SuperSimplex::new(3);
+    let bruits: [(&str, &dyn Bruit, f64); 3] = [
+        ("continents", &continents, 10_000.0),
+        ("relief", &relief, 2_000.0),
+        ("collines", &collines, 400.0),
+    ];
+
+    // Les quatre bords d'une face, et le pas qui en sort.
+    let bords: [(Vec2<i32>, fn(i32, i32) -> (i32, i32)); 4] = [
+        (Vec2::new(1, 0), |f, w| (f - 1, w)),
+        (Vec2::new(-1, 0), |_, w| (0, w)),
+        (Vec2::new(0, 1), |f, w| (w, f - 1)),
+        (Vec2::new(0, -1), |_, w| (w, 0)),
+    ];
+
+    let mut echecs = 0;
+    let mut mesures = 0u32;
+    println!();
+    println!("continuité aux coutures — pas en travers / pas à l'intérieur");
+    println!("                     projete sur la sphere | lu dans la grille");
+
+    for (nom, nz, echelle) in bruits {
+        // On somme les pas, et on divise **à la fin**. Une moyenne de rapports
+        // n'aurait rien dit : le pas ordinaire passe par zéro à chaque extremum
+        // local du bruit, et le quotient y explose sans qu'aucune couture ne
+        // soit en cause. C'est une mesure de la mauvaise forme (D28).
+        let (mut couture, mut ordinaire) = (0.0f64, 0.0f64);
+        let (mut pire, mut pire_ordinaire) = (0.0f64, 0.0f64);
+        let (mut couture_g, mut ordinaire_g) = (0.0f64, 0.0f64);
+        mesures = 0;
+
+        for face in 0..6u8 {
+            for (sortie, place) in bords {
+                // Les coins sont exclus : trois faces s'y rejoignent, et la
+                // notion de « la case d'en face » y perd son sens.
+                for w in (f / 16)..(f - f / 16) {
+                    let (cu, cv) = place(f, w);
+                    let dedans = cube::cle_de_chunk(map, face, cu, cv);
+                    let Some(dehors) = cube::voisin(map, dedans, sortie) else {
+                        continue;
+                    };
+                    let Some(avant) = cube::voisin(map, dedans, -sortie) else {
+                        continue;
+                    };
+
+                    let lu = |cle: Vec2<i32>| {
+                        Endroit::nouveau(map, cle.map(|e| e as f64) * taille).lire(nz, echelle)
+                    };
+                    let pas_couture = (lu(dehors) - lu(dedans)).abs();
+                    let pas_ordinaire = (lu(dedans) - lu(avant)).abs();
+                    couture += pas_couture;
+                    ordinaire += pas_ordinaire;
+                    pire = pire.max(pas_couture);
+                    pire_ordinaire = pire_ordinaire.max(pas_ordinaire);
+
+                    // Le même bruit, lu comme Veloren le lisait : en
+                    // coordonnées de grille, à plat. `en2` est exactement ce
+                    // chemin-là.
+                    let brut = |cle: Vec2<i32>| {
+                        let w = cle.map(|e| e as f64) * taille / echelle;
+                        nz.en2([w.x, w.y])
+                    };
+                    couture_g += (brut(dehors) - brut(dedans)).abs();
+                    ordinaire_g += (brut(dedans) - brut(avant)).abs();
+                    mesures += 1;
+                }
+            }
+        }
+
+        let rapport = couture / ordinaire;
+        let rapport_g = couture_g / ordinaire_g;
+        // Le pire pas en travers, rapporte au **pire** pas ordinaire, et non a
+        // sa moyenne : comparer un maximum a une moyenne est la meme faute de
+        // forme que la moyenne de rapports. La moyenne repond d'un decalage
+        // general, ce pire-ci d'une cassure isolee.
+        let pire_relatif = pire / pire_ordinaire;
+        println!(
+            "  {nom:<11} moyen {rapport:>6.3} · pire isole {pire_relatif:>6.2}  |  moyen              {rapport_g:>7.1}",
+        );
+
+        if !(0.5..1.5).contains(&rapport) || pire_relatif > 2.0 {
+            println!("    ECHEC : la couture se voit dans le bruit");
+            echecs += 1;
+        }
+    }
+
+    println!("  ({mesures} pas le long des 12 recollements, coins exclus)");
+    echecs
 }

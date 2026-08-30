@@ -11,7 +11,9 @@ pub use self::{
     diffusion::diffusion,
     location::Location,
     map::{sample_pos, sample_wpos},
-    util::get_horizon_map,
+    // `Endroit` est publique parce que la mesure de continuité aux coutures
+    // l'interroge du dehors : c'est elle que l'étape a changée.
+    util::{Bruit, Endroit, get_horizon_map},
     way::{Path, Way},
 };
 pub(crate) use self::{
@@ -59,7 +61,7 @@ use common::{
 use common_base::prof_span;
 use common_net::msg::WorldMapMsg;
 use noise::{
-    BasicMulti, Billow, Fbm, HybridMulti, MultiFractal, NoiseFn, Perlin, RidgedMulti, SuperSimplex,
+    BasicMulti, Billow, Fbm, HybridMulti, MultiFractal, Perlin, RidgedMulti, SuperSimplex,
     core::worley::distance_functions,
 };
 use num::{Float, Signed, traits::FloatConst};
@@ -914,7 +916,8 @@ impl WorldSim {
         // returns Some.
         let ((alt_base, _), (chaos, _)) = threadpool.join(
             || {
-                uniform_noise(map_size_lg, |_, wposf| {
+                uniform_noise(map_size_lg, |_, ou| {
+                    let wposf = ou.wposf();
                     match gen_opts.map_kind {
                         // Le patron de cube prend pour l'instant le relief du
                         // carré. Ce qui le distingue vraiment — le bruit lu sur
@@ -928,21 +931,16 @@ impl WorldSim {
                             // 0.35 * (CONFIG.mountain_scale * 0.95), but value here is from -0.3675
                             // to 0.3325).
                             Some(
-                                (gen_ctx
-                                    .alt_nz
-                                    .get((wposf.div(10_000.0)).into_array())
-                                    .clamp(-1.0, 1.0))
-                                .sub(0.05)
-                                .mul(0.35),
+                                (ou.lire(&gen_ctx.alt_nz, 10_000.0).clamp(-1.0, 1.0))
+                                    .sub(0.05)
+                                    .mul(0.35),
                             )
                         },
                         MapKind::Circle => {
                             let world_sizef = map_size_lg.chunks().map(|e| e as f64)
                                 * TerrainChunkSize::RECT_SIZE.map(|e| e as f64);
                             Some(
-                                (gen_ctx
-                                    .alt_nz
-                                    .get((wposf.div(5_000.0 * gen_opts.scale)).into_array())
+                                (ou.lire(&gen_ctx.alt_nz, 5_000.0 * gen_opts.scale)
                                     .clamp(-1.0, 1.0))
                                 .add(
                                     0.2 - ((wposf / world_sizef) * 2.0 - 1.0)
@@ -959,34 +957,16 @@ impl WorldSim {
                 })
             },
             || {
-                uniform_noise(map_size_lg, |_, wposf| {
+                uniform_noise(map_size_lg, |_, ou| {
                     // From 0 to 1.6, but the distribution before the max is from -1 and 1.6, so
                     // there is a 50% chance that hill will end up at 0.3 or
                     // lower, and probably a very high change it will be exactly
                     // 0.
+                    // `wposf * 32 / 32` valait `wposf` : l'échelle est celle
+                    // qui reste après simplification.
                     let hill = (0.0f64
-                        + gen_ctx
-                            .hill_nz
-                            .get(
-                                (wposf
-                                    .mul(32.0)
-                                    .div(TerrainChunkSize::RECT_SIZE.map(|e| e as f64))
-                                    .div(1_500.0))
-                                .into_array(),
-                            )
-                            .clamp(-1.0, 1.0)
-                            .mul(1.0)
-                        + gen_ctx
-                            .hill_nz
-                            .get(
-                                (wposf
-                                    .mul(32.0)
-                                    .div(TerrainChunkSize::RECT_SIZE.map(|e| e as f64))
-                                    .div(400.0))
-                                .into_array(),
-                            )
-                            .clamp(-1.0, 1.0)
-                            .mul(0.3))
+                        + ou.lire(&gen_ctx.hill_nz, 1_500.0).clamp(-1.0, 1.0).mul(1.0)
+                        + ou.lire(&gen_ctx.hill_nz, 400.0).clamp(-1.0, 1.0).mul(0.3))
                     .add(0.3)
                     .max(0.0);
 
@@ -994,19 +974,13 @@ impl WorldSim {
                     // to reflect how "chaotic" the region is--how much weird
                     // stuff is going on on this terrain.
                     Some(
-                        ((gen_ctx
-                            .chaos_nz
-                            .get((wposf.div(3_000.0)).into_array())
-                            .clamp(-1.0, 1.0))
+                        ((ou.lire(&gen_ctx.chaos_nz, 3_000.0).clamp(-1.0, 1.0))
                         .add(1.0)
                         .mul(0.5)
                         // [0, 1] * [0.4, 1] = [0, 1] (but probably towards the lower end)
                         .mul(
-                            (gen_ctx
-                                .chaos_nz
-                                .get((wposf.div(6_000.0)).into_array())
-                                .clamp(-1.0, 1.0))
-                            .abs()
+                            (ou.lire(&gen_ctx.chaos_nz, 6_000.0).clamp(-1.0, 1.0))
+                                .abs()
                                 .clamp(0.4, 1.0),
                         )
                         // Chaos is always increased by a little when we're on a hill (but remember
@@ -1027,7 +1001,7 @@ impl WorldSim {
         //
         // No NaNs in these uniform vectors, since the original noise value always
         // returns Some.
-        let (alt_old, _) = uniform_noise(map_size_lg, |posi, wposf| {
+        let (alt_old, _) = uniform_noise(map_size_lg, |posi, ou| {
             // This is the extension upwards from the base added to some extra noise from -1
             // to 1.
             //
@@ -1049,30 +1023,18 @@ impl WorldSim {
             let alt_main = {
                 // Extension upwards from the base.  A positive number from 0 to 1 curved to be
                 // maximal at 0.  Also to be multiplied by CONFIG.mountain_scale.
-                let alt_main = (gen_ctx
-                    .alt_nz
-                    .get((wposf.div(2_000.0)).into_array())
-                    .clamp(-1.0, 1.0))
-                .abs()
-                .powf(1.35);
+                let alt_main = (ou.lire(&gen_ctx.alt_nz, 2_000.0).clamp(-1.0, 1.0))
+                    .abs()
+                    .powf(1.35);
 
                 fn spring(x: f64, pow: f64) -> f64 { x.abs().powf(pow) * x.signum() }
 
                 0.0 + alt_main
-                    + (gen_ctx
-                        .small_nz
-                        .get(
-                            (wposf
-                                .mul(32.0)
-                                .div(TerrainChunkSize::RECT_SIZE.map(|e| e as f64))
-                                .div(300.0))
-                            .into_array(),
-                        )
-                        .clamp(-1.0, 1.0))
-                    .mul(alt_main.powf(0.8).max(/* 0.25 */ 0.15))
-                    .mul(0.3)
-                    .add(1.0)
-                    .mul(0.4)
+                    + (ou.lire(&gen_ctx.small_nz, 300.0).clamp(-1.0, 1.0))
+                        .mul(alt_main.powf(0.8).max(/* 0.25 */ 0.15))
+                        .mul(0.3)
+                        .add(1.0)
+                        .mul(0.4)
                     + spring(alt_main.abs().sqrt().min(0.75).mul(60.0).sin(), 4.0).mul(0.045)
             };
 
@@ -1223,30 +1185,31 @@ impl WorldSim {
             let wposf = (uniform_idx_as_vec2(map_size_lg, posi)
                 * TerrainChunkSize::RECT_SIZE.map(|e| e as i32))
             .map(|e| e as f64);
-            let turb_wposf = wposf
-                .mul(5_000.0 / continent_scale)
-                .div(TerrainChunkSize::RECT_SIZE.map(|e| e as f64))
-                .div(turb_wposf_div);
+            let ou = Endroit::nouveau(map_size_lg, wposf);
+            // L'échelle du trouble, une fois `wposf * (5000/cs) / 32 / div`
+            // ramené à une division unique.
+            let echelle_turb =
+                TerrainChunkSize::RECT_SIZE.x as f64 * turb_wposf_div * continent_scale / 5_000.0;
             let turb = Vec2::new(
-                gen_ctx.turb_x_nz.get(turb_wposf.into_array()),
-                gen_ctx.turb_y_nz.get(turb_wposf.into_array()),
+                ou.lire(&gen_ctx.turb_x_nz, echelle_turb),
+                ou.lire(&gen_ctx.turb_y_nz, echelle_turb),
             ) * uplift_turb_scale
                 * TerrainChunkSize::RECT_SIZE.map(|e| e as f64);
-            let turb_wposf = wposf + turb;
-            let uheight = gen_ctx
-                .uplift_nz
-                .get(turb_wposf.into_array())
+            // Le trouble déplace le point de lecture le long de la surface ; il
+            // ne produit jamais une position.
+            let uheight = ou
+                .lire_trouble(&gen_ctx.uplift_nz, 1.0, turb)
                 .clamp(-1.0, 1.0)
                 .mul(0.5)
                 .add(0.5);
-            let wposf3 = Vec3::new(
-                wposf.x,
-                wposf.y,
-                uheight * CONFIG.mountain_scale as f64 * rock_strength_div_factor,
-            );
-            let rock_strength = gen_ctx
-                .rock_strength_nz
-                .get(wposf3.into_array())
+            // La troisième coordonnée est une altitude : sur la sphère, elle
+            // éloigne le point du centre.
+            let rock_strength = ou
+                .lire_en_relief(
+                    &gen_ctx.rock_strength_nz,
+                    1.0,
+                    uheight * CONFIG.mountain_scale as f64 * rock_strength_div_factor,
+                )
                 .clamp(-1.0, 1.0)
                 .mul(0.5)
                 .add(0.5);
@@ -1276,30 +1239,31 @@ impl WorldSim {
             let wposf = (uniform_idx_as_vec2(map_size_lg, posi)
                 * TerrainChunkSize::RECT_SIZE.map(|e| e as i32))
             .map(|e| e as f64);
-            let turb_wposf = wposf
-                .mul(5_000.0 / continent_scale)
-                .div(TerrainChunkSize::RECT_SIZE.map(|e| e as f64))
-                .div(turb_wposf_div);
+            let ou = Endroit::nouveau(map_size_lg, wposf);
+            // L'échelle du trouble, une fois `wposf * (5000/cs) / 32 / div`
+            // ramené à une division unique.
+            let echelle_turb =
+                TerrainChunkSize::RECT_SIZE.x as f64 * turb_wposf_div * continent_scale / 5_000.0;
             let turb = Vec2::new(
-                gen_ctx.turb_x_nz.get(turb_wposf.into_array()),
-                gen_ctx.turb_y_nz.get(turb_wposf.into_array()),
+                ou.lire(&gen_ctx.turb_x_nz, echelle_turb),
+                ou.lire(&gen_ctx.turb_y_nz, echelle_turb),
             ) * uplift_turb_scale
                 * TerrainChunkSize::RECT_SIZE.map(|e| e as f64);
-            let turb_wposf = wposf + turb;
-            let uheight = gen_ctx
-                .uplift_nz
-                .get(turb_wposf.into_array())
+            // Le trouble déplace le point de lecture le long de la surface ; il
+            // ne produit jamais une position.
+            let uheight = ou
+                .lire_trouble(&gen_ctx.uplift_nz, 1.0, turb)
                 .clamp(-1.0, 1.0)
                 .mul(0.5)
                 .add(0.5);
-            let wposf3 = Vec3::new(
-                wposf.x,
-                wposf.y,
-                uheight * CONFIG.mountain_scale as f64 * rock_strength_div_factor,
-            );
-            let rock_strength = gen_ctx
-                .rock_strength_nz
-                .get(wposf3.into_array())
+            // La troisième coordonnée est une altitude : sur la sphère, elle
+            // éloigne le point du centre.
+            let rock_strength = ou
+                .lire_en_relief(
+                    &gen_ctx.rock_strength_nz,
+                    1.0,
+                    uheight * CONFIG.mountain_scale as f64 * rock_strength_div_factor,
+                )
                 .clamp(-1.0, 1.0)
                 .mul(0.5)
                 .add(0.5);
@@ -1660,25 +1624,28 @@ impl WorldSim {
                 || {
                     threadpool.join(
                         || {
-                            uniform_noise(map_size_lg, |posi, wposf| {
+                            uniform_noise(map_size_lg, |posi, ou| {
                                 if pure_water(posi) {
                                     None
                                 } else {
                                     // -1 to 1.
-                                    Some(gen_ctx.temp_nz.get((wposf).into_array()) as f32)
+                                    // La température vient encore du bruit. Les
+                                    // bandes de latitude de D24 la prendront de
+                                    // `ou.latitude()`, mais c'est un changement
+                                    // de dessin, pas de continuité.
+                                    Some(ou.lire(&gen_ctx.temp_nz, 1.0) as f32)
                                 }
                             })
                         },
                         || {
-                            uniform_noise(map_size_lg, |posi, wposf| {
+                            uniform_noise(map_size_lg, |posi, ou| {
                                 // Check whether any tiles around this tile are water.
                                 if pure_water(posi) {
                                     None
                                 } else {
                                     // 0 to 1, hopefully.
                                     Some(
-                                        (gen_ctx.humid_nz.get(wposf.div(1024.0).into_array())
-                                            as f32)
+                                        (ou.lire(&gen_ctx.humid_nz, 1024.0) as f32)
                                             .add(1.0)
                                             .mul(0.5),
                                     )
@@ -2597,6 +2564,7 @@ impl SimChunk {
     fn generate(map_size_lg: MapSizeLg, posi: usize, gen_ctx: &GenCtx, gen_cdf: &GenCdf) -> Self {
         let pos = uniform_idx_as_vec2(map_size_lg, posi);
         let wposf = (pos * TerrainChunkSize::RECT_SIZE.map(|e| e as i32)).map(|e| e as f64);
+        let ou = Endroit::nouveau(map_size_lg, wposf);
 
         let (_, chaos) = gen_cdf.chaos[posi];
         let alt_pre = gen_cdf.alt[posi] as f32;
@@ -2631,7 +2599,7 @@ impl SimChunk {
             [
                 temp_uniform,
                 1.0 - alt_uniform, /* 1.0 - abs_lat_uniform*/
-                (gen_ctx.rock_nz.get((wposf.div(50000.0)).into_array()) as f32 * 2.5 + 1.0) * 0.5,
+                (ou.lire(&gen_ctx.rock_nz, 50_000.0) as f32 * 2.5 + 1.0) * 0.5,
             ],
         )
         // Convert to [-1, 1]
@@ -2700,7 +2668,7 @@ impl SimChunk {
             Some(RiverKind::Lake { .. }) => {
                 // Forces lakes to be downhill from the land around them, and adds some noise to
                 // the lake bed to make sure it's not too flat.
-                let lake_bottom_nz = (gen_ctx.small_nz.get((wposf.div(20.0)).into_array()) as f32)
+                let lake_bottom_nz = (ou.lire(&gen_ctx.small_nz, 20.0) as f32)
                     .clamp(-1.0, 1.0)
                     .mul(3.0);
                 alt = alt.min(water_alt - 5.0) + lake_bottom_nz;
@@ -2713,12 +2681,8 @@ impl SimChunk {
         let tree_density = if is_underwater {
             0.0
         } else {
-            let tree_density = Lerp::lerp(
-                -1.5,
-                2.5,
-                gen_ctx.tree_nz.get((wposf.div(1024.0)).into_array()) * 0.5 + 0.5,
-            )
-            .clamp(0.0, 1.0);
+            let tree_density = Lerp::lerp(-1.5, 2.5, ou.lire(&gen_ctx.tree_nz, 1024.0) * 0.5 + 0.5)
+                .clamp(0.0, 1.0);
             // Tree density should go (by a lot) with humidity.
             if humidity <= 0.0 || tree_density <= 0.0 {
                 0.0
@@ -2751,12 +2715,15 @@ impl SimChunk {
             } else {
                 // Sand dunes (formed over a short period of time, so we don't care about erosion sim)
                 let warp = Vec2::new(
-                    gen_ctx.turb_x_nz.get(wposf.div(350.0).into_array()) as f32,
-                    gen_ctx.turb_y_nz.get(wposf.div(350.0).into_array()) as f32,
+                    ou.lire(&gen_ctx.turb_x_nz, 350.0) as f32,
+                    ou.lire(&gen_ctx.turb_y_nz, 350.0) as f32,
                 ) * 200.0;
                 const DUNE_SCALE: f32 = 24.0;
                 const DUNE_LEN: f32 = 96.0;
                 const DUNE_DIR: Vec2<f32> = Vec2::new(1.0, 1.0);
+                // La rampe des dunes est une droite de la grille, pas un
+                // bruit : elle saute à un recollement. Le défaut est confiné
+                // aux déserts, et il attend un champ de direction global.
                 let dune_dist = (wposf.map(|e| e as f32) + warp)
                     .div(DUNE_LEN)
                     .mul(DUNE_DIR.normalized())
@@ -2767,7 +2734,7 @@ impl SimChunk {
                 // Trees bind to soil and their roots result in small accumulating undulations over geologically short
                 // periods of time. Forest floors are generally significantly bumpier than that of deforested areas.
                 // This is particularly pronounced in high-humidity areas.
-                let soil_nz = gen_ctx.hill_nz.get(wposf.div(96.0).into_array()) as f32;
+                let soil_nz = ou.lire(&gen_ctx.hill_nz, 96.0) as f32;
                 let soil_nz = (soil_nz + 1.0) * 0.5;
                 const SOIL_SCALE: f32 = 16.0;
                 let soil = soil_nz * SOIL_SCALE * tree_density.sqrt() * humidity.sqrt();
@@ -2794,7 +2761,7 @@ impl SimChunk {
             temp,
             humidity,
             rockiness: if true {
-                (gen_ctx.rock_nz.get((wposf.div(1024.0)).into_array()) as f32)
+                (ou.lire(&gen_ctx.rock_nz, 1024.0) as f32)
                     //.add(if river.near_river() { 20.0 } else { 0.0 })
                     .sub(0.1)
                     .mul(1.3)

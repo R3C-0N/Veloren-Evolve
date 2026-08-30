@@ -8,12 +8,16 @@
 //! cargo run --release --example empreinte -- --x-lg 8
 //! ```
 
-use common::terrain::uniform_idx_as_vec2;
+use common::{
+    terrain::{TerrainChunkSize, uniform_idx_as_vec2},
+    vol::RectVolSize,
+};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use vek::*;
 use veloren_world::{
     World,
     sim::{FileOpts, GenOpts, WorldOpts},
+    util::Sampler,
 };
 
 fn main() {
@@ -24,7 +28,7 @@ fn main() {
         .unwrap_or(8u32);
 
     let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
-    let (monde, _index) = World::generate(
+    let (monde, index) = World::generate(
         42,
         WorldOpts {
             seed_elements: true,
@@ -49,10 +53,24 @@ fn main() {
     for posi in 0..sim.map_size_lg().chunks_len() {
         let pos = uniform_idx_as_vec2(sim.map_size_lg(), posi);
         let c = sim.get(pos).expect("case de la carte");
-        c.alt.to_bits().hash(&mut h);
-        c.basement.to_bits().hash(&mut h);
-        c.water_alt.to_bits().hash(&mut h);
+        for v in [
+            c.chaos,
+            c.alt,
+            c.basement,
+            c.water_alt,
+            c.flux,
+            c.temp,
+            c.humidity,
+            c.rockiness,
+            c.tree_density,
+            c.spawn_rate,
+            c.surface_veg,
+            c.cliff_height,
+        ] {
+            v.to_bits().hash(&mut h);
+        }
         c.downhill.hash(&mut h);
+        (c.forest_kind as u32).hash(&mut h);
         sommet = sommet.max(c.alt);
     }
 
@@ -62,5 +80,62 @@ fn main() {
         sim.map_size_lg().chunks().y
     );
     println!("altitude maximale : {sommet:.3}");
-    println!("empreinte : {:016x}", h.finish());
+    println!("empreinte de la carte : {:016x}", h.finish());
+
+    // Puis les colonnes, échantillonnées directement.
+    //
+    // Et surtout **pas** des chunks engendrés : `generate_chunk` n'est pas
+    // reproductible d'une exécution à l'autre — trois lancers du même binaire
+    // donnent trois empreintes. Les sites et les couches parcourent des tables
+    // de hachage dont l'ordre change à chaque processus. Une empreinte qui
+    // bouge toute seule n'est pas un oracle, c'est un alibi : elle aurait
+    // accusé `column.rs` d'une faute qu'il n'a pas commise.
+    let colonnes = monde.sample_columns();
+    let mut hc = DefaultHasher::new();
+    let mut n = 0u64;
+    // Sur **toute** la carte, et non sur une tache au centre : un premier
+    // échantillon de 512 blocs de côté ne rencontrait aucune falaise, si bien
+    // que l'oracle restait muet quand on cassait exprès leur calcul. Une mesure
+    // qui ne bouge pas n'est pas une mesure qui prouve (D28).
+    let cote = sim.map_size_lg().chunks().x as i32 * TerrainChunkSize::RECT_SIZE.x as i32;
+    for x in (0..cote).step_by(97) {
+        for y in (0..cote).step_by(89) {
+            let wpos = Vec2::new(x, y);
+            let Some(col) = colonnes.get((wpos, index.as_index_ref(), None)) else {
+                continue;
+            };
+            for v in [
+                col.alt,
+                col.riverless_alt,
+                col.basement,
+                col.chaos,
+                col.water_level,
+                col.warp_factor,
+                col.tree_density,
+                col.marble,
+                col.marble_mid,
+                col.marble_small,
+                col.rock_density,
+                col.temp,
+                col.humidity,
+                col.cliff_offset,
+                col.cliff_height,
+                col.ice_depth,
+            ] {
+                v.to_bits().hash(&mut hc);
+            }
+            col.surface_color
+                .map(f32::to_bits)
+                .into_array()
+                .hash(&mut hc);
+            col.sub_surface_color
+                .map(f32::to_bits)
+                .into_array()
+                .hash(&mut hc);
+            col.stone_col.into_array().hash(&mut hc);
+            col.snow_cover.hash(&mut hc);
+            n += 1;
+        }
+    }
+    println!("empreinte de {n} colonnes : {:016x}", hc.finish());
 }

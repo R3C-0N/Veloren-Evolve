@@ -15,6 +15,125 @@ use rayon::prelude::*;
 use std::sync::Arc;
 use vek::*;
 
+/// Un bruit lisible en deux comme en trois dimensions.
+///
+/// L'implémentation générale ci-dessous couvre tous les bruits de `GenCtx` :
+/// les fractales du crate `noise` comme les deux réimplémentations locales
+/// savent déjà faire les deux. C'est ce qui permet au même objet de servir aux
+/// deux topologies, sans en dupliquer un seul.
+pub trait Bruit {
+    fn en2(&self, p: [f64; 2]) -> f64;
+    fn en3(&self, p: [f64; 3]) -> f64;
+}
+
+impl<T: NoiseFn<f64, 2> + NoiseFn<f64, 3>> Bruit for T {
+    #[inline]
+    fn en2(&self, p: [f64; 2]) -> f64 { NoiseFn::<f64, 2>::get(self, p) }
+
+    #[inline]
+    fn en3(&self, p: [f64; 3]) -> f64 { NoiseFn::<f64, 3>::get(self, p) }
+}
+
+/// L'endroit où un bruit se lit (D27).
+///
+/// Sur une carte plate, c'est la position du monde et rien d'autre. Sur un
+/// patron de cube, c'est un **point de la sphère** : deux cases voisines de
+/// part et d'autre d'un recollement s'y projettent sur deux points voisins,
+/// donc le bruit y est continu **sans effort**. C'est la moitié bon marché de
+/// D27, et c'est la seule qui se règle en changeant d'argument.
+///
+/// Les huit coins ne posent même aucun problème : les trois faces y touchent un
+/// seul et même point de la sphère.
+#[derive(Clone, Copy, Debug)]
+pub struct Endroit {
+    map: MapSizeLg,
+    wposf: Vec2<f64>,
+    /// Le lieu et le point de la sphère unité, sur un patron de cube.
+    sphere: Option<(cube::Lieu, Vec3<f64>)>,
+}
+
+impl Endroit {
+    pub fn nouveau(map: MapSizeLg, wposf: Vec2<f64>) -> Self {
+        let sphere = if map.est_cubique() {
+            cube::lieu_de(map, wposf).map(|lieu| (lieu, cube::direction_de(map, lieu)))
+        } else {
+            None
+        };
+        Self { map, wposf, sphere }
+    }
+
+    /// La position du monde, en blocs. Elle reste ce qu'elle a toujours été :
+    /// une coordonnée de grille, à n'employer que comme telle.
+    #[inline]
+    pub fn wposf(&self) -> Vec2<f64> { self.wposf }
+
+    /// Le point de lecture, à l'échelle donnée en blocs.
+    ///
+    /// L'échelle est celle du site d'appel, celle que la carte plate écrivait
+    /// en divisant `wposf`. Un pas d'un bloc le long de la surface déplace
+    /// le point d'une unité dans les deux régimes : c'est ce qui garde aux
+    /// motifs leur taille.
+    #[inline]
+    pub fn lire(&self, nz: &(impl Bruit + ?Sized), echelle: f64) -> f64 {
+        match self.sphere {
+            None => nz.en2([self.wposf.x / echelle, self.wposf.y / echelle]),
+            Some((_, p)) => {
+                let k = cube::rayon(self.map) / echelle;
+                nz.en3([p.x * k, p.y * k, p.z * k])
+            },
+        }
+    }
+
+    /// Le point de lecture élevé d'une altitude — la troisième coordonnée d'un
+    /// bruit volumique.
+    ///
+    /// Sur la sphère, « monter » est radial : le point s'éloigne du centre. Un
+    /// bloc d'altitude y déplace le point d'une unité, exactement comme sur la
+    /// carte plate.
+    #[inline]
+    pub fn lire_en_relief(&self, nz: &(impl Bruit + ?Sized), echelle: f64, altitude: f64) -> f64 {
+        match self.sphere {
+            None => nz.en3([
+                self.wposf.x / echelle,
+                self.wposf.y / echelle,
+                altitude / echelle,
+            ]),
+            Some((_, p)) => {
+                let k = (cube::rayon(self.map) + altitude) / echelle;
+                nz.en3([p.x * k, p.y * k, p.z * k])
+            },
+        }
+    }
+
+    /// Le point de lecture déplacé de `decalage` blocs **le long de la
+    /// surface** — la turbulence.
+    ///
+    /// Le point déplacé ne sert qu'à lire un bruit ; il n'est jamais rendu
+    /// comme une position, et ne repasse donc pas par l'inverse de la
+    /// projection. Le déplacement se décompose sur les deux tangentes du
+    /// paramétrage, non orthogonalisées : c'est le même chemin que tout ce
+    /// qui a un cap.
+    pub fn lire_trouble(
+        &self,
+        nz: &(impl Bruit + ?Sized),
+        echelle: f64,
+        decalage: Vec2<f64>,
+    ) -> f64 {
+        match self.sphere {
+            None => {
+                let w = self.wposf + decalage;
+                nz.en2([w.x / echelle, w.y / echelle])
+            },
+            Some((lieu, p)) => {
+                let rayon = cube::rayon(self.map);
+                let (_, tu, tv) = cube::repere(self.map, lieu);
+                let q = (p * rayon + tu * decalage.x + tv * decalage.y).normalized() * rayon;
+                nz.en3([q.x / echelle, q.y / echelle, q.z / echelle])
+            },
+        }
+    }
+}
+
 /// Calculates the smallest distance along an axis (x, y) from an edge of
 /// the world.  This value is maximal at map_size_lg.chunks() / 2 and
 /// minimized at the
@@ -172,18 +291,15 @@ pub type HorizonMap<A, H> = (Vec<A>, Vec<H>);
 /// the "inverted index" pointing from a position to a noise.
 pub fn uniform_noise<F: Float + Send>(
     map_size_lg: MapSizeLg,
-    f: impl Fn(usize, Vec2<f64>) -> Option<F> + Sync,
+    f: impl Fn(usize, &Endroit) -> Option<F> + Sync,
 ) -> (InverseCdf<F>, Box<[(usize, F)]>) {
     let mut noise = (0..map_size_lg.chunks_len())
         .into_par_iter()
         .filter_map(|i| {
-            f(
-                i,
-                (uniform_idx_as_vec2(map_size_lg, i)
-                    * TerrainChunkSize::RECT_SIZE.map(|e| e as i32))
-                .map(|e| e as f64),
-            )
-            .map(|res| (i, res))
+            let wposf = (uniform_idx_as_vec2(map_size_lg, i)
+                * TerrainChunkSize::RECT_SIZE.map(|e| e as i32))
+            .map(|e| e as f64);
+            f(i, &Endroit::nouveau(map_size_lg, wposf)).map(|res| (i, res))
         })
         .collect::<Vec<_>>();
 
