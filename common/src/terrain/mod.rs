@@ -1,6 +1,8 @@
 pub mod biome;
 pub mod block;
 pub mod chonk;
+pub mod conforme;
+pub mod cube;
 pub mod map;
 pub mod site;
 pub mod sprite;
@@ -12,7 +14,7 @@ use std::ops::{Add, Mul};
 pub use self::{
     biome::BiomeKind,
     block::{Block, BlockKind},
-    map::MapSizeLg,
+    map::{MapSizeLg, Topologie},
     site::SiteKindMeta,
     sprite::{SpriteCfg, SpriteKind, StructureSprite, UnlockKind},
     structure::{Structure, StructuresGroup},
@@ -430,17 +432,51 @@ pub const NEIGHBOR_DELTA: [(i32, i32); 8] = [
 ];
 
 /// Iterate through all cells adjacent to a chunk.
-#[inline(always)]
+///
+/// C'est **le seul endroit** du moteur qui décide de l'adjacence du graphe de
+/// simulation : `downhill`, les lacs, le drainage, `fill_sinks`, le nommage des
+/// biomes et des pics, l'A\* des routes en dépendent tous. C'est pourquoi la
+/// topologie du cube (D27) s'y branche, et nulle part ailleurs.
+///
+/// Deux régimes, et le premier ne bouge pas d'un octet : en topologie plate, la
+/// carte reste le rectangle borné de Veloren, ce qui garde le monde d'origine
+/// générable à l'identique — c'est l'oracle de non-régression du solveur
+/// d'érosion.
+#[inline]
 pub fn neighbors(map_size_lg: MapSizeLg, posi: usize) -> impl Clone + Iterator<Item = usize> {
     let pos = uniform_idx_as_vec2(map_size_lg, posi);
     let world_size = map_size_lg.chunks();
-    NEIGHBOR_DELTA
-        .iter()
-        .map(move |&(x, y)| Vec2::new(pos.x + x, pos.y + y))
-        .filter(move |pos| {
-            pos.x >= 0 && pos.y >= 0 && pos.x < world_size.x as i32 && pos.y < world_size.y as i32
-        })
-        .map(move |pos| vec2_as_uniform_idx(map_size_lg, pos))
+    let cubique = map_size_lg.est_cubique();
+
+    let mut voisins = [0usize; NEIGHBOR_DELTA.len()];
+    let mut n = 0;
+    for &(x, y) in NEIGHBOR_DELTA.iter() {
+        let candidat = if cubique {
+            match cube::voisin(map_size_lg, pos, Vec2::new(x, y)) {
+                Some(v) => v,
+                None => continue,
+            }
+        } else {
+            let p = Vec2::new(pos.x + x, pos.y + y);
+            if p.x < 0 || p.y < 0 || p.x >= world_size.x as i32 || p.y >= world_size.y as i32 {
+                continue;
+            }
+            p
+        };
+        let idx = vec2_as_uniform_idx(map_size_lg, candidat);
+        // Aux vingt-quatre cases de coin, deux directions mènent à la même
+        // case : trois faces s'y rejoignent et forment un triangle, pas un
+        // carré. Un doublon compterait deux fois dans l'accumulation de flux,
+        // donc on l'écarte ici — le seul endroit qui ait à le savoir. En
+        // topologie plate, aucun doublon n'est possible : on ne paye pas la
+        // recherche.
+        if cubique && voisins[..n].contains(&idx) {
+            continue;
+        }
+        voisins[n] = idx;
+        n += 1;
+    }
+    voisins.into_iter().take(n)
 }
 
 pub fn river_spline_coeffs(

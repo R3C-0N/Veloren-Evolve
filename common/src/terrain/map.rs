@@ -5,6 +5,7 @@ use super::{
 use crate::vol::RectVolSize;
 use common_base::prof_span;
 use core::{f32, f64, iter, ops::RangeInclusive};
+use serde::{Deserialize, Serialize};
 use vek::*;
 
 /// Base two logarithm of the maximum size of the precomputed world, in meters,
@@ -139,8 +140,28 @@ pub const MAX_WORLD_BLOCKS_LG: Vec2<u32> = Vec2 { x: 19, y: 19 };
 /// usize.
 ///
 /// These invariants are all checked on construction of a `MapSizeLg`.
-#[derive(Clone, Copy, Debug)]
-pub struct MapSizeLg(Vec2<u32>);
+///
+/// NOTE (Evolve, D27): a map also carries its **topology**. A `Plate` map is
+/// Veloren's historical bounded rectangle; a `Cube` map lays the net of a cube
+/// inside that same rectangle. The two share every byte of addressing — only
+/// adjacency differs — which is what lets the flat world remain generable as a
+/// regression oracle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapSizeLg {
+    lg: Vec2<u32>,
+    topologie: Topologie,
+}
+
+/// La forme du monde (D27).
+///
+/// `Plate` est le rectangle borné de Veloren : au-delà de ses bords, l'océan.
+/// `Cube` est le patron d'un cube posé dans la même grille : six faces carrées
+/// en croix, recollées par des rotations d'un quart de tour, sans aucun bord.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Topologie {
+    Plate,
+    Cube,
+}
 
 impl MapSizeLg {
     // FIXME: We cannot use is_some() here because it is not currently marked as a
@@ -179,7 +200,10 @@ impl MapSizeLg {
                 1usize.checked_shl(map_size_lg.x + map_size_lg.y).is_some();
             if blocks_in_range && chunks_product_in_range {
                 // Cleared all invariants.
-                Ok(MapSizeLg(map_size_lg))
+                Ok(MapSizeLg {
+                    lg: map_size_lg,
+                    topologie: Topologie::Plate,
+                })
             } else {
                 Err(())
             }
@@ -188,16 +212,46 @@ impl MapSizeLg {
         }
     }
 
+    /// Construit une carte **cubique** : le patron d'un cube posé dans la
+    /// grille (D27).
+    ///
+    /// Deux invariants s'ajoutent à ceux de [`MapSizeLg::new`], et ils ne sont
+    /// pas décoratifs : le patron fait quatre faces de côté, donc la grille
+    /// doit être **carrée** et laisser au moins deux niveaux à l'arête
+    /// d'une face. L'arête d'une face vaut `1 << (x_lg - 2)` chunks.
+    #[inline(always)]
+    #[expect(clippy::result_unit_err)]
+    pub const fn nouvelle_cubique(map_size_lg: Vec2<u32>) -> Result<Self, ()> {
+        if map_size_lg.x != map_size_lg.y || map_size_lg.x < 4 {
+            return Err(());
+        }
+        match Self::new(map_size_lg) {
+            Ok(map) => Ok(MapSizeLg {
+                lg: map.lg,
+                topologie: Topologie::Cube,
+            }),
+            Err(()) => Err(()),
+        }
+    }
+
+    #[inline(always)]
+    /// La forme du monde : rectangle borné, ou patron de cube.
+    pub const fn topologie(self) -> Topologie { self.topologie }
+
+    #[inline(always)]
+    /// Le monde est-il le patron d'un cube (D27) ?
+    pub const fn est_cubique(self) -> bool { matches!(self.topologie, Topologie::Cube) }
+
     #[inline(always)]
     /// Acquire the `MapSizeLg`'s inner vector.
-    pub const fn vec(self) -> Vec2<u32> { self.0 }
+    pub const fn vec(self) -> Vec2<u32> { self.lg }
 
     #[inline(always)]
     /// Get the size of this map in chunks.
-    pub const fn chunks(self) -> Vec2<u16> { Vec2::new(1 << self.0.x, 1 << self.0.y) }
+    pub const fn chunks(self) -> Vec2<u16> { Vec2::new(1 << self.lg.x, 1 << self.lg.y) }
 
     /// Get the size of an array of the correct size to hold all chunks.
-    pub const fn chunks_len(self) -> usize { 1 << (self.0.x + self.0.y) }
+    pub const fn chunks_len(self) -> usize { 1 << (self.lg.x + self.lg.y) }
 
     #[inline(always)]
     /// Determine whether a chunk position is in bounds.
