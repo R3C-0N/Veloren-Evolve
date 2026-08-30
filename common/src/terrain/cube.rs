@@ -573,6 +573,29 @@ pub fn repere(map: MapSizeLg, lieu: Lieu) -> (Vec3<f64>, Vec3<f64>, Vec3<f64>) {
     )
 }
 
+/// Le franchissement d'une arête par une entité.
+///
+/// `depuis` est sa dernière position canonique, `vers` celle que la physique
+/// vient de calculer — écrite dans le repère de `depuis`, et donc possiblement
+/// hors de sa face. Rend le lieu canonique atteint et le nombre de quarts de
+/// tour subis, ou `None` si rien n'a été franchi.
+///
+/// **À savoir — le pas doit rester court.** Le repliement résout `u` puis `v` :
+/// un déplacement qui sort d'une face par deux bords à la fois franchit une
+/// prolongation d'arête qui ne correspond à rien sur la surface, et le résultat
+/// dépend alors de l'ordre du code plutôt que de la géométrie. À moins d'un
+/// bloc par pas le cas ne peut pas se présenter ; au-delà, il faut
+/// sous-découper.
+pub fn franchir(map: MapSizeLg, depuis: Lieu, vers: Vec2<f64>) -> Option<(Lieu, u8)> {
+    let f = face_blocs(map) as f64;
+    let (col, ligne) = PATRON[depuis.face as usize];
+    let locale = vers - Vec2::new(col as f64 * f, ligne as f64 * f);
+    if (0.0..f).contains(&locale.x) && (0.0..f).contains(&locale.y) {
+        return None;
+    }
+    Some(replier_lieu(map, depuis.face, locale.x, locale.y))
+}
+
 /// Transporte un déplacement de grille d'un lieu à un autre, en passant par le
 /// monde.
 ///
@@ -907,6 +930,123 @@ mod tests {
         assert!(pire_angle > 45.0, "tangentes trop proches : {pire_angle}°");
         assert!(court > 0.25, "un pas de grille tombe à {court} bloc");
         assert!(long < 1.01, "un pas de grille monte à {long} bloc");
+    }
+
+    /// **Le franchissement se mesure en marchant.**
+    ///
+    /// Poser deux repères de part et d'autre d'un bord et comparer leurs caps
+    /// ne mesure que la continuité de la projection ; le transport, lui, ne
+    /// se voit qu'en franchissant. C'est la leçon que le banc d'essai a
+    /// payée le plus cher : une mesure de cette forme-là avait *certifié*
+    /// continu un franchissement qui faisait sauter la visée de 25,6°.
+    ///
+    /// On marche donc pas à pas, un bloc à la fois, sur les vingt-quatre arêtes
+    /// et à plusieurs distances des coins, et on relève la rotation du cap
+    /// entre deux pas. Le cap est un **vecteur du monde**, redressé contre
+    /// la verticale locale à chaque pas — le franchissement n'a rien à lui
+    /// faire, et c'est justement ce qu'on vérifie.
+    #[test]
+    fn marcher_a_travers_les_bords() {
+        // Une face plus grande : le plancher géométrique vaut `1 / rayon`, donc
+        // une mesure prise sur un monde minuscule ne distingue rien.
+        let map = MapSizeLg::nouvelle_cubique(Vec2::new(9, 9)).expect("carte cubique");
+        let f = face_blocs(map);
+        let r = rayon(map);
+        let plancher = (1.0f64 / r).to_degrees();
+
+        let bords: [(Vec2<f64>, fn(f64, f64) -> (f64, f64)); 4] = [
+            (Vec2::new(1.0, 0.0), |f, w| (f - 0.5, w)),
+            (Vec2::new(-1.0, 0.0), |_, w| (0.5, w)),
+            (Vec2::new(0.0, 1.0), |f, w| (w, f - 0.5)),
+            (Vec2::new(0.0, -1.0), |_, w| (w, 0.5)),
+        ];
+
+        let (mut pire, mut ou) = (0.0f64, String::new());
+        let mut pas_total = 0u32;
+
+        for face in 0..6u8 {
+            for (sortie, place) in bords {
+                // À plusieurs distances du coin : c'est près de lui que les
+                // tangentes se coupent à 120° et qu'un quart de tour appliqué
+                // en coordonnées se trompe.
+                for coin in [2.0, 12.0, 60.0] {
+                    for biais in [0.0, 0.7, -0.7] {
+                        // On part en retrait, cap vers le bord, et on le franchit.
+                        let (u, v) = place(f as f64, coin);
+                        let depart = Vec2::new(u, v) - sortie * 7.0;
+                        let mut lieu = Lieu {
+                            face,
+                            u: depart.x,
+                            v: depart.y,
+                        };
+
+                        // Le cap, en vecteur du monde dès le départ.
+                        let (_, tu, tv) = repere(map, lieu);
+                        let vise = sortie + Vec2::new(-sortie.y, sortie.x) * biais;
+                        let mut cap = (tu * vise.x + tv * vise.y).normalized();
+
+                        for _ in 0..14 {
+                            let (haut, _, _) = repere(map, lieu);
+                            let redresse = (cap - haut * cap.dot(haut)).normalized();
+                            let rotation = cap.dot(redresse).clamp(-1.0, 1.0).acos().to_degrees();
+                            if rotation > pire {
+                                pire = rotation;
+                                ou = format!(
+                                    "face {}, bord {sortie:?}, à {coin} du coin",
+                                    NOMS[face as usize]
+                                );
+                            }
+
+                            let Some(d) = vers_coordonnees(map, lieu, redresse) else {
+                                break;
+                            };
+                            let (suivant, _) =
+                                replier_lieu(map, lieu.face, lieu.u + d.x, lieu.v + d.y);
+                            lieu = suivant;
+                            cap = redresse;
+                            pas_total += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        println!(
+            "rotation du cap : {pire:.4}°/bloc · plancher géométrique {plancher:.4}° ·              {pas_total} pas · pire en {ou}"
+        );
+        // Le plancher n'est pas zéro : marcher un bloc sur une sphère de rayon
+        // `r` fait tourner le cap de `1/r`. On accepte le double, pas plus.
+        assert!(
+            pire < 2.0 * plancher,
+            "rotation du cap : {pire:.4}°/bloc pour un plancher de {plancher:.4}° ({ou}, \
+             {pas_total} pas)"
+        );
+    }
+
+    /// Le franchissement ne se déclenche que lorsqu'on sort, et il rend une
+    /// position canonique.
+    #[test]
+    fn franchir_ne_bouge_rien_a_l_interieur() {
+        let map = carte();
+        let f = face_blocs(map) as f64;
+        for face in 0..6u8 {
+            let lieu = Lieu {
+                face,
+                u: f / 2.0,
+                v: f / 2.0,
+            };
+            assert!(
+                franchir(map, lieu, lieu.wpos(map)).is_none(),
+                "franchissement déclenché sans sortie"
+            );
+            // Un pas qui sort : la position rendue est canonique.
+            let dehors = lieu.wpos(map) + Vec2::new(f, 0.0);
+            let (arrivee, _) = franchir(map, lieu, dehors).expect("sortie franchie");
+            assert!(
+                (0.0..f).contains(&arrivee.u) && (0.0..f).contains(&arrivee.v),
+                "la position rendue n'est pas canonique"
+            );
+        }
     }
 
     /// Un déplacement transporté d'une case à sa voisine par-delà une couture,

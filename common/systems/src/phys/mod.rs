@@ -15,7 +15,7 @@ use common::{
     resources::{DeltaTime, GameMode, TimeOfDay},
     spiral::Spiral2d,
     states,
-    terrain::{CoordinateConversions, TerrainGrid},
+    terrain::{CoordinateConversions, TerrainGrid, cube},
     uid::Uid,
     util::{Dir, Projection, SpatialGrid},
     weather::WeatherGrid,
@@ -809,6 +809,11 @@ impl PhysicsData<'_> {
         // Third pass: resolve collisions for non-terrain-like entities
         Self::resolve_et_collision(job, read, write, voxel_collider_spatial_grid, false);
 
+        // Ramener dans sa face ce qui vient d'en sortir (D27).
+        prof_span!(guard, "franchir les aretes");
+        Self::franchir_les_aretes(read, write);
+        drop(guard);
+
         // Update cached 'old' physics values to the current values ready for the next
         // tick
         prof_span!(guard, "record ori into phys_cache");
@@ -825,6 +830,67 @@ impl PhysicsData<'_> {
             previous_phys_cache.ori = ori.to_quat();
         }
         drop(guard);
+    }
+
+    /// **Le franchissement d'une arête, pour tout ce qui a une position.**
+    ///
+    /// Une entité qui sort de sa face y est ramenée, et ce qu'elle porte de
+    /// directionnel — sa vitesse, son cap — est transporté **par le monde**. Ce
+    /// n'est pas un quart de tour appliqué aux coordonnées : cette
+    /// correction-là n'est juste que si les deux tangentes de la grille sont
+    /// perpendiculaires, et près d'un coin elles se coupent à 120°. Le banc
+    /// d'essai y avait mesuré 25,6° d'erreur.
+    ///
+    /// Le repère de la face précédente vient de `previous_phys_cache`, seul
+    /// endroit du tick qui garde la position d'avant. C'est lui qui dit dans
+    /// quel repère la position courante a été écrite — une position sortie de
+    /// sa face n'a pas de sens sans lui.
+    fn franchir_les_aretes(read: &PhysicsRead, write: &mut PhysicsWrite) {
+        let map = read.terrain.map_size_lg();
+        if !map.est_cubique() {
+            return;
+        }
+
+        for (pos, vel, ori, cache) in (
+            &mut write.positions,
+            &mut write.velocities,
+            &mut write.orientations,
+            &write.previous_phys_cache,
+        )
+            .join()
+        {
+            let precedente = cache.pos.map_or(pos.0, |p| p.0);
+            let Some(depuis) = cube::lieu_de(map, precedente.xy().as_::<f64>()) else {
+                continue;
+            };
+            let Some((arrivee, _)) = cube::franchir(map, depuis, pos.0.xy().as_::<f64>()) else {
+                continue;
+            };
+
+            let transporte = |v: Vec2<f32>| {
+                cube::transporter(map, depuis, arrivee, v.as_::<f64>()).map(|d| d.as_::<f32>())
+            };
+
+            let cap_avant = Vec2::<f32>::from(*ori);
+            let arrivee_wpos = arrivee.wpos(map).as_::<f32>();
+            pos.0.x = arrivee_wpos.x;
+            pos.0.y = arrivee_wpos.y;
+
+            if let Some(v) = transporte(vel.0.xy()) {
+                vel.0.x = v.x;
+                vel.0.y = v.y;
+            }
+            // Le cap se transporte comme le reste, puis on n'en garde que la
+            // rotation : `prerotated` l'applique dans le repère du monde, ce qui
+            // laisse le tangage intact.
+            if let Some(cap) = transporte(cap_avant)
+                && cap.magnitude_squared() > f32::EPSILON
+                && cap_avant.magnitude_squared() > f32::EPSILON
+            {
+                let angle = cap.y.atan2(cap.x) - cap_avant.y.atan2(cap_avant.x);
+                *ori = ori.prerotated(Quaternion::rotation_z(angle));
+            }
+        }
     }
 
     fn resolve_et_collision(

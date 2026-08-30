@@ -201,6 +201,10 @@ impl<V: RectRasterableVol> VolGrid2d<V> {
     #[inline(always)]
     pub fn contains_key_real(&self, key: Vec2<i32>) -> bool { self.chunks.contains_key(&key) }
 
+    /// La taille et la **forme** du monde — plate, ou patron de cube (D27).
+    #[inline]
+    pub fn map_size_lg(&self) -> MapSizeLg { self.map_size_lg }
+
     #[inline(always)]
     pub fn get_key_arc(&self, key: Vec2<i32>) -> Option<&Arc<V>> {
         self.get_key_arc_real(key).or_else(|| {
