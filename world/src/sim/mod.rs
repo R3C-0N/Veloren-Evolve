@@ -87,6 +87,13 @@ use vek::*;
 /// Currently, our default map dimensions are 2^10 × 2^10 chunks,
 /// mostly for historical reasons.  It is likely that we will increase this
 /// default at some point.
+/// Part de la surface d'un monde cubique qui passe sous le niveau de la mer.
+///
+/// C'est un choix de dessin, pas une constante physique — la Terre est à 0,71.
+/// Il ne règle pas la *forme* des continents, seulement combien de terres
+/// émergent : le relief, lui, vient du bruit comme avant.
+const FRACTION_OCEAN: f64 = 0.65;
+
 const DEFAULT_WORLD_CHUNKS_LG: MapSizeLg =
     if let Ok(map_size_lg) = MapSizeLg::new(Vec2 { x: 10, y: 10 }) {
         map_size_lg
@@ -1001,7 +1008,7 @@ impl WorldSim {
         //
         // No NaNs in these uniform vectors, since the original noise value always
         // returns Some.
-        let (alt_old, _) = uniform_noise(map_size_lg, |posi, ou| {
+        let (mut alt_old, _) = uniform_noise(map_size_lg, |posi, ou| {
             // This is the extension upwards from the base added to some extra noise from -1
             // to 1.
             //
@@ -1062,8 +1069,58 @@ impl WorldSim {
             )
         });
 
+        // **Le niveau de la mer se prend sur la distribution, pas sur un
+        // décalage hérité.**
+        //
+        // Sur une carte plate, l'océan existe parce que `map_edge_factor`
+        // enfonce les bords : la mer est un ourlet, et le reste s'y raccorde. Un
+        // patron de cube n'a pas d'ourlet, et le relief de Veloren est biaisé
+        // vers le haut — sans rien faire, on obtiendrait une planète toute en
+        // terre. On choisit donc le niveau pour qu'une fraction voulue de la
+        // surface passe dessous, ce qui revient à lire un quantile.
+        if map_size_lg.est_cubique() {
+            let mut valeurs: Vec<f32> = (0..map_size_lg.chunks_len())
+                .filter(|&posi| {
+                    cube::chunk_vivant(map_size_lg, uniform_idx_as_vec2(map_size_lg, posi))
+                })
+                .map(|posi| alt_old[posi].1)
+                .collect();
+            valeurs.sort_unstable_by(f32::total_cmp);
+            // Les cases mortes sont exclues du calcul : elles sont déjà au fond
+            // par `map_edge_factor`, et à 62,5 % de la grille elles écraseraient
+            // le quantile.
+            let niveau = valeurs[(valeurs.len() as f64 * FRACTION_OCEAN) as usize];
+            for posi in 0..map_size_lg.chunks_len() {
+                if cube::chunk_vivant(map_size_lg, uniform_idx_as_vec2(map_size_lg, posi)) {
+                    alt_old[posi].1 -= niveau;
+                }
+            }
+            info!(?niveau, "Niveau de la mer choisi sur la distribution");
+        }
+        let alt_old = alt_old;
+
         // Calculate oceans.
         let is_ocean = get_oceans(map_size_lg, |posi: usize| alt_old[posi].1);
+
+        if map_size_lg.est_cubique() {
+            // Sans exutoire, `get_lakes` panique sur « Disconnected lake! » très
+            // loin d'ici, et le message ne dit rien. On échoue donc tôt et en
+            // clair.
+            let vivantes = 6 * (cube::face_chunks(map_size_lg) as usize).pow(2);
+            let mer = (0..map_size_lg.chunks_len())
+                .filter(|&posi| {
+                    is_ocean[posi]
+                        && cube::chunk_vivant(map_size_lg, uniform_idx_as_vec2(map_size_lg, posi))
+                })
+                .count();
+            let part = mer as f64 / vivantes as f64;
+            info!(?part, "Fraction de la surface couverte par la mer");
+            assert!(
+                part > 0.1,
+                "la mer ne couvre que {:.1} % de la surface : sans exutoire commun, l'érosion                  n'aboutira pas. Le niveau est choisi par quantile, donc c'est la connexité qui                  manque — la mer est morcelée en bassins.",
+                part * 100.0
+            );
+        }
         // NOTE: Uncomment if you want oceans to exclusively be on the border of the
         // map.
         /* let is_ocean = (0..map_size_lg.chunks())

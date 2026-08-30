@@ -2,8 +2,8 @@ use super::{diffusion, downhill, uphill};
 use crate::{config::CONFIG, util::RandomField};
 use common::{
     terrain::{
-        MapSizeLg, NEIGHBOR_DELTA, TerrainChunkSize, delta_voisin, neighbors, neighbors_indexed,
-        uniform_idx_as_vec2,
+        MapSizeLg, NEIGHBOR_DELTA, TerrainChunkSize, cube, delta_voisin, neighbors,
+        neighbors_indexed, uniform_idx_as_vec2,
     },
     vol::RectVolSize,
 };
@@ -2290,6 +2290,24 @@ pub fn get_lakes<F: FloatCore>(
                 cur += 1;
             }
         });
+    // Le message d'origine — `left == right` sur deux longueurs — ne dit pas
+    // quelle case manque, et sur un patron de cube c'est justement la question.
+    if newh.len() != downhill.len() {
+        let mut vues = vec![false; downhill.len()];
+        for &i in newh.iter() {
+            vues[i as usize] = true;
+        }
+        for (i, _) in vues.iter().enumerate().filter(|(_, vue)| !**vue).take(8) {
+            let pos = uniform_idx_as_vec2(map_size_lg, i);
+            error!(
+                ?pos,
+                dh = downhill[i],
+                vivante = cube::chunk_vivant(map_size_lg, pos),
+                voisins = neighbors(map_size_lg, i).count(),
+                "case absente de la pile d'écoulement"
+            );
+        }
+    }
     assert_eq!(newh.len(), downhill.len());
     (boundary.len(), indirection, newh.into_boxed_slice(), maxh)
 }

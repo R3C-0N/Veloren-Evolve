@@ -689,6 +689,11 @@ impl Civs {
         let sites = &mut index.sites;
         (0..ctx.sim.map_size_lg().chunks_len()).for_each(|posi| {
             let chpos = uniform_idx_as_vec2(ctx.sim.map_size_lg(), posi);
+            // Les dix emplacements morts du patron de cube n'ont pas de case, et
+            // ne rapportent donc rien à personne.
+            if !ctx.sim.contient(chpos) {
+                return;
+            }
             let wpos = chpos.map(|e| e as i64) * TerrainChunkSize::RECT_SIZE.map(|e| e as i64);
             let closest_site = (*sites)
                 .iter_mut()

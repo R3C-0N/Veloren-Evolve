@@ -189,7 +189,15 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                 } else {
                     lake_width
                 };
-                let downhill_chunk = sim.get(downhill_pos).expect("How can this not work?");
+                // Le repli n'est pas cosmétique. Pour un voisin océanique,
+                // Veloren met ici la position du voisin **en chunks** là où une
+                // position en blocs est attendue ; divisée par 32, elle retombe
+                // n'importe où. Sur une carte plate ce n'importe où existe
+                // toujours, et l'`expect` tenait. Sur un patron de cube il peut
+                // tomber sur un emplacement mort. Le voisin lui-même est le
+                // repli honnête — et l'océan n'a de toute façon aucune courbe à
+                // tracer.
+                let downhill_chunk = sim.get(downhill_pos).unwrap_or(chunkj);
                 let coeffs = river_spline_coeffs(
                     neighbor_wpos,
                     chunkj.river.spline_derivative,
@@ -280,7 +288,7 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                             (
                                 direction,
                                 coeffs,
-                                sim.get(neighbor_pass_pos).expect("Must already work"),
+                                sim.get(neighbor_pass_pos).unwrap_or(chunkj),
                                 0.5,
                                 pos,
                                 pos.distance(wposf),
@@ -293,7 +301,7 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                             (
                                 direction,
                                 coeffs,
-                                sim.get(neighbor_pass_pos).expect("Must already work"),
+                                sim.get(neighbor_pass_pos).unwrap_or(chunkj),
                                 t,
                                 pt,
                                 dist.sqrt(),
@@ -309,7 +317,7 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                             (
                                 direction,
                                 coeffs,
-                                sim.get(neighbor_pass_pos).expect("Must already work"),
+                                sim.get(neighbor_pass_pos).unwrap_or(chunkj),
                                 closest_t,
                                 closest_pos,
                                 closest_dist.sqrt(),
@@ -328,7 +336,10 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
                         (
                             direction,
                             coeffs,
-                            sim.get(posj).expect("Must already work"),
+                            // `posj` est la position **déroulée** du voisin :
+                            // elle sort de la face à une couture. La case est
+                            // déjà là, sous la main.
+                            chunkj,
                             0.5,
                             pos,
                             pos.distance(wposf),

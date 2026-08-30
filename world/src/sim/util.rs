@@ -141,7 +141,18 @@ impl Endroit {
 /// the quantity by cell_size, so the final result is 1 when we are not in a
 /// cell along the edge of the world, and ranges between 0 and 1 otherwise
 /// (lower when the chunk is closer to the edge).
+///
+/// **Un patron de cube n'a pas de bord** (D27) : la fonction y vaut 1 partout,
+/// et 0 sur les dix emplacements morts de la grille. Ce 0 n'est pas une
+/// survivance du régime plat — il fait exactement ce qu'il faut : il enfonce
+/// les cases mortes sous le niveau de la mer, et il annule leur terme de
+/// sédiments. Elles cessent ainsi de participer, sans qu'aucun appelant ait à
+/// les connaître.
 pub fn map_edge_factor(map_size_lg: MapSizeLg, posi: usize) -> f32 {
+    if map_size_lg.est_cubique() {
+        let vivante = cube::chunk_vivant(map_size_lg, uniform_idx_as_vec2(map_size_lg, posi));
+        return if vivante { 1.0 } else { 0.0 };
+    }
     uniform_idx_as_vec2(map_size_lg, posi)
         .map2(map_size_lg.chunks().map(i32::from), |e, sz| {
             (sz / 2 - (e - sz / 2).abs()) as f32 / (16.0 / 1024.0 * sz as f32)
@@ -404,14 +415,26 @@ pub fn downhill<F: Float>(
             } else {
                 let mut best = -1;
                 let mut besth = nh;
+                let mut isolee = true;
                 for nposi in neighbors(map_size_lg, posi) {
+                    isolee = false;
                     let nbh = h(nposi);
                     if nbh < besth {
                         besth = nbh;
                         best = nposi as isize;
                     }
                 }
-                best
+                if isolee {
+                    // **Une case sans voisin est un puits, jamais un lac.** Un
+                    // lac s'échappe par un col ; celle-ci n'en a aucun, et
+                    // `get_lakes` la chercherait indéfiniment. Le cas
+                    // n'existe pas sur une carte plate — il naît des dix
+                    // emplacements morts du patron de cube, que la hauteur
+                    // finit par relever au-dessus du niveau de la mer.
+                    -2
+                } else {
+                    best
+                }
             }
         })
         .collect::<Vec<_>>()
@@ -475,19 +498,47 @@ pub fn get_oceans<F: Float>(map_size_lg: MapSizeLg, oldh: impl Fn(usize) -> F + 
     // tiles must be connected to it.
     let mut is_ocean = bitbox![0; map_size_lg.chunks_len()];
     let mut stack = Vec::new();
-    let mut do_push = |pos| {
-        let posi = vec2_as_uniform_idx(map_size_lg, pos);
-        if oldh(posi) <= F::zero() {
+
+    if map_size_lg.est_cubique() {
+        // Aucun bord où amorcer. La mer part donc de la **case la plus basse du
+        // monde** et gagne de proche en proche : c'est la même définition
+        // inductive qu'avant — être sous le niveau *et* communiquer avec la mer
+        // —, seule son amorce change. La garder est ce qui continue de
+        // distinguer une mer d'un bassin endoréique.
+        let mut plus_basse: Option<(usize, F)> = None;
+        for posi in 0..map_size_lg.chunks_len() {
+            if !cube::chunk_vivant(map_size_lg, uniform_idx_as_vec2(map_size_lg, posi)) {
+                // Les emplacements morts sont mer par définition : ils n'ont
+                // aucun voisin, donc aucun exutoire, et l'érosion s'étranglerait
+                // sur une composante isolée sans issue.
+                is_ocean.set(posi, true);
+                continue;
+            }
+            let h = oldh(posi);
+            if plus_basse.is_none_or(|(_, basse)| h < basse) {
+                plus_basse = Some((posi, h));
+            }
+        }
+        if let Some((posi, h)) = plus_basse
+            && h <= F::zero()
+        {
             stack.push(posi);
         }
-    };
-    for x in 0..map_size_lg.chunks().x as i32 {
-        do_push(Vec2::new(x, 0));
-        do_push(Vec2::new(x, map_size_lg.chunks().y as i32 - 1));
-    }
-    for y in 1..map_size_lg.chunks().y as i32 - 1 {
-        do_push(Vec2::new(0, y));
-        do_push(Vec2::new(map_size_lg.chunks().x as i32 - 1, y));
+    } else {
+        let mut do_push = |pos| {
+            let posi = vec2_as_uniform_idx(map_size_lg, pos);
+            if oldh(posi) <= F::zero() {
+                stack.push(posi);
+            }
+        };
+        for x in 0..map_size_lg.chunks().x as i32 {
+            do_push(Vec2::new(x, 0));
+            do_push(Vec2::new(x, map_size_lg.chunks().y as i32 - 1));
+        }
+        for y in 1..map_size_lg.chunks().y as i32 - 1 {
+            do_push(Vec2::new(0, y));
+            do_push(Vec2::new(map_size_lg.chunks().x as i32 - 1, y));
+        }
     }
     while let Some(chunk_idx) = stack.pop() {
         // println!("Ocean chunk {:?}: {:?}", uniform_idx_as_vec2(map_size_lg,
