@@ -1,6 +1,8 @@
 use bitvec::prelude::{BitBox, bitbox};
 use common::{
-    terrain::{MapSizeLg, TerrainChunkSize, neighbors, uniform_idx_as_vec2, vec2_as_uniform_idx},
+    terrain::{
+        MapSizeLg, TerrainChunkSize, cube, neighbors, uniform_idx_as_vec2, vec2_as_uniform_idx,
+    },
     vol::RectVolSize,
 };
 use common_base::prof_span;
@@ -215,25 +217,47 @@ pub fn uniform_noise<F: Float + Send>(
 /// guarantees that for any point between the given chunk (on the top left) and
 /// its top-right/down-right/down neighbors, the twelve chunks surrounding this
 /// box (its "perimeter") are also inspected.
-pub fn local_cells(map_size_lg: MapSizeLg, posi: usize) -> impl Clone + Iterator<Item = usize> {
+/// Rend, pour chaque case du voisinage, **deux choses** : sa position dans le
+/// repère déroulé autour de `posi`, et l'indice de la case canonique qu'elle
+/// désigne.
+///
+/// La distinction n'existe que sur un patron de cube, et elle y est
+/// essentielle. La *donnée* se lit à l'indice canonique ; la *géométrie* — une
+/// distance, une dérivée, la courbe d'une rivière — se calcule sur la position
+/// déroulée, celle qui prolonge la face au-delà de son bord. Les confondre
+/// revient à croire qu'une case au-delà d'une couture est à l'autre bout de la
+/// carte.
+///
+/// En topologie plate, les deux coïncident et rien ne change.
+pub fn local_cells(
+    map_size_lg: MapSizeLg,
+    posi: usize,
+) -> impl Clone + Iterator<Item = (Vec2<i32>, usize)> {
     let pos = uniform_idx_as_vec2(map_size_lg, posi);
+    let cubique = map_size_lg.est_cubique();
     // NOTE: want to keep this such that the chunk index is in ascending order!
     let grid_size = 3i32;
     let grid_bounds = 2 * grid_size + 1;
     (0..grid_bounds * grid_bounds)
         .map(move |index| {
             Vec2::new(
-                pos.x + (index % grid_bounds) - grid_size,
-                pos.y + (index / grid_bounds) - grid_size,
+                (index % grid_bounds) - grid_size,
+                (index / grid_bounds) - grid_size,
             )
         })
-        .filter(move |pos| {
-            pos.x >= 0
-                && pos.y >= 0
-                && pos.x < map_size_lg.chunks().x as i32
-                && pos.y < map_size_lg.chunks().y as i32
+        .filter_map(move |offset| {
+            let deroulee = pos + offset;
+            if cubique {
+                let canonique = cube::voisin(map_size_lg, pos, offset)?;
+                Some((deroulee, vec2_as_uniform_idx(map_size_lg, canonique)))
+            } else {
+                (deroulee.x >= 0
+                    && deroulee.y >= 0
+                    && deroulee.x < map_size_lg.chunks().x as i32
+                    && deroulee.y < map_size_lg.chunks().y as i32)
+                    .then(|| (deroulee, vec2_as_uniform_idx(map_size_lg, deroulee)))
+            }
         })
-        .map(move |e| vec2_as_uniform_idx(map_size_lg, e))
 }
 
 // Note that we should already have okay cache locality since we have a grid.

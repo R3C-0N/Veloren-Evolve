@@ -45,6 +45,7 @@ main-singleplayer-map_erosion_quality = Erosion quality
 main-singleplayer-map_shape = Shape
 main-singleplayer-map_shape-circle = Circle
 main-singleplayer-map_shape-square = Square
+main-singleplayer-map_shape-cube = Cube
 main-singleplayer-play = Play
 main-singleplayer-generate_and_play = Generate & Play
 menu-singleplayer-confirm_delete = Are you sure you want to delete "{ $world_name }"?

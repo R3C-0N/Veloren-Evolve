@@ -444,13 +444,36 @@ pub const NEIGHBOR_DELTA: [(i32, i32); 8] = [
 /// d'érosion.
 #[inline]
 pub fn neighbors(map_size_lg: MapSizeLg, posi: usize) -> impl Clone + Iterator<Item = usize> {
+    neighbors_indexed(map_size_lg, posi).map(|(_, posj)| posj)
+}
+
+/// Les voisins d'une case, **avec l'indice de la direction empruntée** dans
+/// [`NEIGHBOR_DELTA`].
+///
+/// C'est la forme complète, dont [`neighbors`] n'est que la projection.
+/// L'indice compte : l'érosion range ses receveurs multiples dans un **masque
+/// de bits** indexé par direction, puis reconstruit la case depuis ce bit. Si
+/// le sens de l'indice différait entre l'aller et le retour, le drainage
+/// suivrait des arêtes qui n'existent pas. Une seule fonction les donne donc
+/// tous les deux.
+///
+/// L'indice porte aussi le **déplacement** : `NEIGHBOR_DELTA[k]` est le pas
+/// menant à la case, écrit dans le repère de `posi`. C'est ce qui remplace
+/// l'idiome `uniform_idx_as_vec2(a) - uniform_idx_as_vec2(b)`, lequel rend un
+/// écart énorme et faux dès que les deux cases sont de part et d'autre d'une
+/// couture.
+#[inline]
+pub fn neighbors_indexed(
+    map_size_lg: MapSizeLg,
+    posi: usize,
+) -> impl Clone + Iterator<Item = (usize, usize)> + use<> {
     let pos = uniform_idx_as_vec2(map_size_lg, posi);
     let world_size = map_size_lg.chunks();
     let cubique = map_size_lg.est_cubique();
 
-    let mut voisins = [0usize; NEIGHBOR_DELTA.len()];
+    let mut voisins = [(0usize, 0usize); NEIGHBOR_DELTA.len()];
     let mut n = 0;
-    for &(x, y) in NEIGHBOR_DELTA.iter() {
+    for (k, &(x, y)) in NEIGHBOR_DELTA.iter().enumerate() {
         let candidat = if cubique {
             match cube::voisin(map_size_lg, pos, Vec2::new(x, y)) {
                 Some(v) => v,
@@ -470,13 +493,31 @@ pub fn neighbors(map_size_lg: MapSizeLg, posi: usize) -> impl Clone + Iterator<I
         // donc on l'écarte ici — le seul endroit qui ait à le savoir. En
         // topologie plate, aucun doublon n'est possible : on ne paye pas la
         // recherche.
-        if cubique && voisins[..n].contains(&idx) {
+        if cubique && voisins[..n].iter().any(|&(_, vu)| vu == idx) {
             continue;
         }
-        voisins[n] = idx;
+        voisins[n] = (k, idx);
         n += 1;
     }
     voisins.into_iter().take(n)
+}
+
+/// Le déplacement menant d'une case à une case adjacente, écrit dans le repère
+/// de `de`.
+///
+/// À n'employer que lorsque l'indice de direction n'est pas déjà connu —
+/// [`neighbors_indexed`] le donne pour rien. `None` si les deux cases ne sont
+/// pas voisines.
+#[inline]
+pub fn delta_voisin(map_size_lg: MapSizeLg, de: usize, vers: usize) -> Option<Vec2<i32>> {
+    if map_size_lg.est_cubique() {
+        neighbors_indexed(map_size_lg, de)
+            .find(|&(_, posj)| posj == vers)
+            .map(|(k, _)| Vec2::new(NEIGHBOR_DELTA[k].0, NEIGHBOR_DELTA[k].1))
+    } else {
+        let d = uniform_idx_as_vec2(map_size_lg, vers) - uniform_idx_as_vec2(map_size_lg, de);
+        (d.map(|e| e.abs()).reduce_max() <= 1 && d != Vec2::zero()).then_some(d)
+    }
 }
 
 pub fn river_spline_coeffs(

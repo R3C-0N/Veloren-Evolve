@@ -84,15 +84,15 @@ pub const K: f64 = 0.406_683_250_145_049_9;
 /// | 0,70 | 0,541 | arête | 0,564 |
 ///
 /// **Le minimum est toujours sur l'arête, jamais sur la diagonale.** D27
-/// annonçait « 0,69 au plus bas » : ce chiffre venait d'un profil de cinq points
-/// pris le long de la diagonale d'une face, c'est-à-dire précisément là où le
-/// minimum n'est pas. La zone en losange, elle, concorde : 0,238 de demi-face
-/// donne bien les 364 blocs de D27 sur une face de 3 072.
+/// annonçait « 0,69 au plus bas » : ce chiffre venait d'un profil de cinq
+/// points pris le long de la diagonale d'une face, c'est-à-dire précisément là
+/// où le minimum n'est pas. La zone en losange, elle, concorde : 0,238 de
+/// demi-face donne bien les 364 blocs de D27 sur une face de 3 072.
 ///
 /// La valeur n'est pas retouchée pour autant. Élargir remonte le plancher mais
 /// grossit le losange — passer à 0,50 triple sa surface pour gagner un facteur
-/// deux sur le bloc — et ce compromis-là se juge à l'écran. Il se rouvrira quand
-/// le rendu existera, avec le balayage pour instrument.
+/// deux sur le bloc — et ce compromis-là se juge à l'écran. Il se rouvrira
+/// quand le rendu existera, avec le balayage pour instrument.
 pub const RACCORD: f64 = 0.25;
 
 /// Un complexe, en repère cartésien.

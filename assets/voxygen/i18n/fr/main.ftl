@@ -110,6 +110,7 @@ main-server-rules = Ce serveur a des règles qui doivent être acceptées.
 main-server-rules-seen-before = Ces règles ont changés depuis la dernière fois que vous les avez accepté.
 main-singleplayer-map_shape-circle = Cercle
 main-singleplayer-map_shape-square = Carré
+main-singleplayer-map_shape-cube = Cube
 main-login-banned_until =
     Vous avez été temporairement banni pour la raison suivante : { $reason }
     Jusqu'au : { $end_date }

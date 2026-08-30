@@ -686,6 +686,7 @@ impl Screen {
         match map_kind {
             MapKind::Circle => "main-singleplayer-map_shape-circle",
             MapKind::Square => "main-singleplayer-map_shape-square",
+            MapKind::Cube => "main-singleplayer-map_shape-cube",
         }
     }
 }

@@ -2,8 +2,8 @@ use super::{diffusion, downhill, uphill};
 use crate::{config::CONFIG, util::RandomField};
 use common::{
     terrain::{
-        MapSizeLg, NEIGHBOR_DELTA, TerrainChunkSize, neighbors, uniform_idx_as_vec2,
-        vec2_as_uniform_idx,
+        MapSizeLg, NEIGHBOR_DELTA, TerrainChunkSize, delta_voisin, neighbors, neighbors_indexed,
+        uniform_idx_as_vec2,
     },
     vol::RectVolSize,
 };
@@ -255,8 +255,11 @@ pub fn get_rivers<F: fmt::Debug + Float + Into<f64>, G: Float + Into<f64>>(
             return;
         }
         let downhill_idx = downhill_idx as usize;
-        let downhill_pos = uniform_idx_as_vec2(map_size_lg, downhill_idx);
-        let dxy = (downhill_pos - uniform_idx_as_vec2(map_size_lg, chunk_idx)).map(|e| e as f64);
+        // Le pas vers l'aval, dans le repère de la case : à travers une couture,
+        // la différence des deux positions du patron n'a aucun sens.
+        let dxy = delta_voisin(map_size_lg, chunk_idx, downhill_idx)
+            .expect("l'aval d'une case est une de ses voisines")
+            .map(|e| e as f64);
         let neighbor_dim = neighbor_coef * dxy;
         // First, we calculate the river's volumetric flow rate.
         let chunk_drainage = drainage[chunk_idx].into();
@@ -895,10 +898,9 @@ fn erode(
                         let m = m_f(posi) as f64;
 
                         let mwrec_i = &mwrec[posi];
-                        mrec_downhill(map_size_lg, &mrec, posi).for_each(|(kk, posj)| {
-                            let dxy = (uniform_idx_as_vec2(map_size_lg, posi)
-                                - uniform_idx_as_vec2(map_size_lg, posj))
-                            .map(|e| e as f64);
+                        mrec_downhill(map_size_lg, &mrec, posi).for_each(|(kk, _posj)| {
+                            let (dx, dy) = NEIGHBOR_DELTA[kk];
+                            let dxy = Vec2::new(-dx, -dy).map(|e| e as f64);
                             let neighbor_distance = (neighbor_coef * dxy).magnitude();
                             let knew = (k * (p * chunk_area * (area[posi] * mwrec_i[kk])).powf(m)
                                 / neighbor_distance.powf(n))
@@ -2298,18 +2300,12 @@ pub fn mrec_downhill(
     mrec: &[u8],
     posi: usize,
 ) -> impl Clone + Iterator<Item = (usize, usize)> + use<> {
-    let pos = uniform_idx_as_vec2(map_size_lg, posi);
     let mrec_i = mrec[posi];
-    NEIGHBOR_DELTA
-        .iter()
-        .enumerate()
-        .filter(move |&(k, _)| (mrec_i >> k as isize) & 1 == 1)
-        .map(move |(k, &(x, y))| {
-            (
-                k,
-                vec2_as_uniform_idx(map_size_lg, Vec2::new(pos.x + x, pos.y + y)),
-            )
-        })
+    // La case n'est plus reconstruite par arithmétique depuis l'indice : elle est
+    // relue par la même fonction qui a posé les bits. Reconstruire séparément,
+    // c'était deux définitions de l'adjacence — et sur un patron de cube elles
+    // divergent à chaque couture.
+    neighbors_indexed(map_size_lg, posi).filter(move |&(k, _)| (mrec_i >> k) & 1 == 1)
 }
 
 /// Algorithm for computing multi-receiver flow.
@@ -2411,19 +2407,7 @@ pub fn get_multi_rec<F: fmt::Debug + Float + Sync + Into<Compute>>(
             let wh_ij = wh[ij];
             let mut mrec_ij = 0u8;
             let mut ndon_ij = 0u8;
-            let neighbor_iter = |posi| {
-                let pos = uniform_idx_as_vec2(map_size_lg, posi);
-                NEIGHBOR_DELTA
-                    .iter()
-                    .map(move |&(x, y)| Vec2::new(pos.x + x, pos.y + y))
-                    .enumerate()
-                    .filter(move |&(_, pos)| {
-                        pos.x >= 0 && pos.y >= 0 && pos.x < nx as i32 && pos.y < ny as i32
-                    })
-                    .map(move |(k, pos)| (k, vec2_as_uniform_idx(map_size_lg, pos)))
-            };
-
-            neighbor_iter(ij).for_each(|(k, ijk)| {
+            neighbors_indexed(map_size_lg, ij).for_each(|(k, ijk)| {
                 let wh_ijk = wh[ijk];
                 if wh_ij > wh_ijk {
                     // Set neighboring edge lower than this one as being downhill.
@@ -2448,11 +2432,11 @@ pub fn get_multi_rec<F: fmt::Debug + Float + Sync + Into<Compute>>(
                     let mut wrec = [czero; 8];
                     let mut nrec = 0;
                     mrec_downhill(map_size_lg, &mrec, ij).for_each(|(k, ijk)| {
-                        let lrec_ijk = ((uniform_idx_as_vec2(map_size_lg, ijk)
-                            - uniform_idx_as_vec2(map_size_lg, ij))
-                        .map(|e| e as Compute)
-                            * dxdy)
-                            .magnitude();
+                        // Le pas est celui de la direction empruntée, jamais la
+                        // différence des deux positions : à travers une couture,
+                        // deux cases voisines sont à l'autre bout du patron.
+                        let (dx, dy) = NEIGHBOR_DELTA[k];
+                        let lrec_ijk = (Vec2::new(dx, dy).map(|e| e as Compute) * dxdy).magnitude();
                         let wrec_ijk = (wh[ij] - wh[ijk]).into() / lrec_ijk;
                         // NOTE: To emulate single-direction flow, uncomment this line.
                         // let wrec_ijk = if ijk as isize == downhill[ij] { <Compute as One>::one()

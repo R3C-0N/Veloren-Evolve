@@ -133,6 +133,10 @@ pub enum MapKind {
     Square,
     /// A more circular map, might have more islands
     Circle,
+    /// Le patron d'un cube : six faces carrées recollées, sans aucun bord
+    /// (D27). La grille doit être carrée, et l'arête d'une face vaut le quart
+    /// de son côté.
+    Cube,
 }
 
 impl std::fmt::Display for MapKind {
@@ -140,6 +144,7 @@ impl std::fmt::Display for MapKind {
         match self {
             MapKind::Square => f.write_str("Square"),
             MapKind::Circle => f.write_str("Circle"),
+            MapKind::Cube => f.write_str("Cube"),
         }
     }
 }

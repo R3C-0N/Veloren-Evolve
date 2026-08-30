@@ -51,7 +51,7 @@ use common::{
     spot::Spot,
     store::{Id, Store},
     terrain::{
-        BiomeKind, CoordinateConversions, MapSizeLg, TerrainChunk, TerrainChunkSize,
+        BiomeKind, CoordinateConversions, MapSizeLg, TerrainChunk, TerrainChunkSize, cube,
         map::MapConfig, uniform_idx_as_vec2, vec2_as_uniform_idx,
     },
     vol::RectVolSize,
@@ -242,11 +242,18 @@ impl FileOpts {
     fn map_size(&self) -> MapSizeLg {
         match self {
             Self::Generate(opts) | Self::Save(_, opts) | Self::LoadOrGenerate { opts, .. } => {
-                MapSizeLg::new(Vec2 {
+                let dims = Vec2 {
                     x: opts.x_lg,
                     y: opts.y_lg,
-                })
-                .unwrap_or_else(|e| {
+                };
+                let taille = if opts.map_kind == MapKind::Cube {
+                    // Le patron impose une grille carrée, et son arête doit
+                    // laisser au moins deux niveaux à une face.
+                    MapSizeLg::nouvelle_cubique(dims)
+                } else {
+                    MapSizeLg::new(dims)
+                };
+                taille.unwrap_or_else(|e| {
                     warn!("World size does not satisfy invariants: {:?}", e);
                     DEFAULT_WORLD_CHUNKS_LG
                 })
@@ -909,7 +916,12 @@ impl WorldSim {
             || {
                 uniform_noise(map_size_lg, |_, wposf| {
                     match gen_opts.map_kind {
-                        MapKind::Square => {
+                        // Le patron de cube prend pour l'instant le relief du
+                        // carré. Ce qui le distingue vraiment — le bruit lu sur
+                        // la sphère, et l'océan qui vient du bruit au lieu des
+                        // bords — arrive aux étapes suivantes ; la présente ne
+                        // porte que l'adressage.
+                        MapKind::Square | MapKind::Cube => {
                             // "Base" of the chunk, to be multiplied by CONFIG.mountain_scale
                             // (multiplied value is from -0.35 *
                             // (CONFIG.mountain_scale * 1.05) to
@@ -2070,13 +2082,47 @@ impl WorldSim {
     }
 
     pub fn get(&self, chunk_pos: Vec2<i32>) -> Option<&SimChunk> {
-        if chunk_pos
-            .map2(self.map_size_lg().chunks(), |e, sz| e >= 0 && e < sz as i32)
-            .reduce_and()
-        {
+        if self.contient(chunk_pos) {
             Some(&self.chunks[vec2_as_uniform_idx(self.map_size_lg(), chunk_pos)])
         } else {
             None
+        }
+    }
+
+    /// La case existe-t-elle ?
+    ///
+    /// Sur un patron de cube, « dans les bornes » ne suffit pas : dix des seize
+    /// emplacements de la grille sont morts, et aucune position canonique n'y
+    /// tombe jamais.
+    #[inline]
+    pub fn contient(&self, chunk_pos: Vec2<i32>) -> bool {
+        if self.map_size_lg().est_cubique() {
+            cube::chunk_vivant(self.map_size_lg(), chunk_pos)
+        } else {
+            chunk_pos
+                .map2(self.map_size_lg().chunks(), |e, sz| e >= 0 && e < sz as i32)
+                .reduce_and()
+        }
+    }
+
+    /// La case d'indice donné. Sert partout où le voisinage a déjà été replié :
+    /// l'indice est canonique, la position ne l'est pas forcément.
+    #[inline]
+    pub fn get_idx(&self, idx: usize) -> Option<&SimChunk> { self.chunks.get(idx) }
+
+    /// La case atteinte depuis `base` en suivant `offset`, dans le repère de
+    /// `base`.
+    ///
+    /// C'est le seul accès correct à un voisinage d'échantillonnage : sur un
+    /// patron de cube, `base + offset` désigne une case d'une tout autre face
+    /// dès qu'on franchit une couture, sans que rien ne le signale.
+    #[inline]
+    pub fn get_local(&self, base: Vec2<i32>, offset: Vec2<i32>) -> Option<&SimChunk> {
+        if self.map_size_lg().est_cubique() {
+            let canonique = cube::voisin(self.map_size_lg(), base, offset)?;
+            self.get(canonique)
+        } else {
+            self.get(base + offset)
         }
     }
 
@@ -2110,10 +2156,7 @@ impl WorldSim {
 
     pub fn get_mut(&mut self, chunk_pos: Vec2<i32>) -> Option<&mut SimChunk> {
         let map_size_lg = self.map_size_lg();
-        if chunk_pos
-            .map2(map_size_lg.chunks(), |e, sz| e >= 0 && e < sz as i32)
-            .reduce_and()
-        {
+        if self.contient(chunk_pos) {
             Some(&mut self.chunks[vec2_as_uniform_idx(map_size_lg, chunk_pos)])
         } else {
             None
@@ -2121,20 +2164,28 @@ impl WorldSim {
     }
 
     pub fn get_base_z(&self, chunk_pos: Vec2<i32>) -> Option<f32> {
-        let in_bounds = chunk_pos
-            .map2(self.map_size_lg().chunks(), |e, sz| {
-                e > 0 && e < sz as i32 - 2
-            })
-            .reduce_and();
+        // La bordure morte de deux chunks n'a de sens que sur une carte bornée.
+        // Un patron de cube n'a pas de bord : seule la case morte est exclue.
+        let in_bounds = if self.map_size_lg().est_cubique() {
+            self.contient(chunk_pos)
+        } else {
+            chunk_pos
+                .map2(self.map_size_lg().chunks(), |e, sz| {
+                    e > 0 && e < sz as i32 - 2
+                })
+                .reduce_and()
+        };
         if !in_bounds {
             return None;
         }
 
         let chunk_idx = vec2_as_uniform_idx(self.map_size_lg(), chunk_pos);
         local_cells(self.map_size_lg(), chunk_idx)
-            .flat_map(|neighbor_idx| {
-                let neighbor_pos = uniform_idx_as_vec2(self.map_size_lg(), neighbor_idx);
-                let neighbor_chunk = self.get(neighbor_pos);
+            .flat_map(|(neighbor_pos, neighbor_idx)| {
+                // `neighbor_pos` est la position déroulée : c'est elle qui dit
+                // si la case est immédiatement voisine. L'indice, lui, dit où
+                // la donnée se lit.
+                let neighbor_chunk = self.get_idx(neighbor_idx);
                 let river_kind = neighbor_chunk.and_then(|c| c.river.river_kind);
                 let has_water = river_kind.is_some() && river_kind != Some(RiverKind::Ocean);
                 if (neighbor_pos - chunk_pos).reduce_partial_max() <= 1 || has_water {
@@ -2167,11 +2218,15 @@ impl WorldSim {
 
         let mut x = [T::default(); 4];
 
+        // Le pochoir 4 x 4 se prend autour de la case de base, en suivant des
+        // déplacements : sur un patron de cube, une somme de coordonnées saute
+        // d'une face à l'autre sans rotation dès qu'elle franchit une couture.
+        let base = pos.map(|e| e.max(0.0) as i32);
         for (x_idx, j) in (-1..3).enumerate() {
-            let y0 = f(self.get(pos.map2(Vec2::new(j, -1), |e, q| e.max(0.0) as i32 + q))?);
-            let y1 = f(self.get(pos.map2(Vec2::new(j, 0), |e, q| e.max(0.0) as i32 + q))?);
-            let y2 = f(self.get(pos.map2(Vec2::new(j, 1), |e, q| e.max(0.0) as i32 + q))?);
-            let y3 = f(self.get(pos.map2(Vec2::new(j, 2), |e, q| e.max(0.0) as i32 + q))?);
+            let y0 = f(self.get_local(base, Vec2::new(j, -1))?);
+            let y1 = f(self.get_local(base, Vec2::new(j, 0))?);
+            let y2 = f(self.get_local(base, Vec2::new(j, 1))?);
+            let y3 = f(self.get_local(base, Vec2::new(j, 2))?);
 
             x[x_idx] = cubic(y0, y1, y2, y3, pos.y.fract() as f32);
         }
@@ -2237,11 +2292,15 @@ impl WorldSim {
 
         let mut x = [T::default(); 4];
 
+        // Le pochoir 4 x 4 se prend autour de la case de base, en suivant des
+        // déplacements : sur un patron de cube, une somme de coordonnées saute
+        // d'une face à l'autre sans rotation dès qu'elle franchit une couture.
+        let base = pos.map(|e| e.max(0.0) as i32);
         for (x_idx, j) in (-1..3).enumerate() {
-            let y0 = f(self.get(pos.map2(Vec2::new(j, -1), |e, q| e.max(0.0) as i32 + q))?);
-            let y1 = f(self.get(pos.map2(Vec2::new(j, 0), |e, q| e.max(0.0) as i32 + q))?);
-            let y2 = f(self.get(pos.map2(Vec2::new(j, 1), |e, q| e.max(0.0) as i32 + q))?);
-            let y3 = f(self.get(pos.map2(Vec2::new(j, 2), |e, q| e.max(0.0) as i32 + q))?);
+            let y0 = f(self.get_local(base, Vec2::new(j, -1))?);
+            let y1 = f(self.get_local(base, Vec2::new(j, 0))?);
+            let y2 = f(self.get_local(base, Vec2::new(j, 1))?);
+            let y3 = f(self.get_local(base, Vec2::new(j, 2))?);
 
             x[x_idx] = cubic(y0, y1, y2, y3, pos.y.fract() as f32);
         }
@@ -2271,21 +2330,11 @@ impl WorldSim {
 
         // Orient the chunk in the direction of the most downhill point of the four.  If
         // there is no "most downhill" point, then we don't care.
-        let x0 = pos.map2(Vec2::new(0, 0), |e, q| e.max(0.0) as i32 + q);
-        let p0 = self.get(x0)?;
-        let y0 = f(p0);
-
-        let x1 = pos.map2(Vec2::new(1, 0), |e, q| e.max(0.0) as i32 + q);
-        let p1 = self.get(x1)?;
-        let y1 = f(p1);
-
-        let x2 = pos.map2(Vec2::new(0, 1), |e, q| e.max(0.0) as i32 + q);
-        let p2 = self.get(x2)?;
-        let y2 = f(p2);
-
-        let x3 = pos.map2(Vec2::new(1, 1), |e, q| e.max(0.0) as i32 + q);
-        let p3 = self.get(x3)?;
-        let y3 = f(p3);
+        let base = pos.map(|e| e.max(0.0) as i32);
+        let y0 = f(self.get_local(base, Vec2::new(0, 0))?);
+        let y1 = f(self.get_local(base, Vec2::new(1, 0))?);
+        let y2 = f(self.get_local(base, Vec2::new(0, 1))?);
+        let y3 = f(self.get_local(base, Vec2::new(1, 1))?);
 
         let z0 = y0
             .mul(1.0 - pos.x.fract() as f32)
