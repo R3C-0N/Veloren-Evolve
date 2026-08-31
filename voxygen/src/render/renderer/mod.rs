@@ -153,6 +153,8 @@ pub struct Renderer {
     locals: Locals,
     views: Views,
     noise_tex: Texture,
+    /// La table conforme (D27), partagée avec le CPU.
+    conforme_tex: Texture,
 
     quad_index_buffer_u16: Buffer<u16>,
     quad_index_buffer_u32: Buffer<u32>,
@@ -545,6 +547,35 @@ impl Renderer {
             Some(AddressMode::Repeat),
         )?;
 
+        // La table conforme (D27), montée telle quelle : le shader la lira au
+        // texel près et refera la bilinéaire à la main, exactement comme le CPU.
+        let conforme_tex = {
+            use common::terrain::conforme;
+            let cote = conforme::N as u32;
+            let octets = conforme::table().octets_serres();
+            let tex = Texture::new_raw(
+                &device,
+                &wgpu::TextureDescriptor {
+                    label: Some("table conforme"),
+                    size: wgpu::Extent3d {
+                        width: cote,
+                        height: cote,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                &wgpu::TextureViewDescriptor::default(),
+                &wgpu::SamplerDescriptor::default(),
+            );
+            tex.update(&queue, [0, 0], [cote, cote], &octets);
+            tex
+        };
+
         let clouds_locals =
             Self::create_consts_inner(&device, &queue, &[clouds::Locals::default()]);
         let postprocess_locals =
@@ -622,6 +653,7 @@ impl Renderer {
             sampler,
             depth_sampler,
             noise_tex,
+            conforme_tex,
 
             quad_index_buffer_u16,
             quad_index_buffer_u32,

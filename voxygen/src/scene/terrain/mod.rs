@@ -1236,6 +1236,13 @@ impl<V: RectRasterableVol> Terrain<V> {
                                 Quaternion::identity(),
                                 atlas_offs,
                                 load_time,
+                                // La base de la face qui porte ce chunk : le
+                                // shader la reçoit toute faite plutôt que de
+                                // replier lui-même (D27).
+                                base_de_face(
+                                    scene_data.state.terrain().map_size_lg(),
+                                    response.pos,
+                                ),
                             )]),
                             visible: Visibility {
                                 in_range: false,
@@ -1831,4 +1838,33 @@ fn glow_normal_at_wpos_inner<'a>(
         bias * weight,
         glow_at_wpos_inner(chunk_glow_map, wpos.map(|e| e.floor() as i32)),
     )
+}
+
+/// La base 3D de la face qui porte un chunk, et l'origine de cette face dans le
+/// patron, en blocs (D27).
+///
+/// `None` sur une carte plate : il n'y a alors ni face ni projection.
+fn base_de_face(
+    map_size_lg: common::terrain::MapSizeLg,
+    cle: Vec2<i32>,
+) -> Option<(Mat3<f32>, Vec2<f32>)> {
+    use common::terrain::cube;
+    let face = cube::face_de_chunk(map_size_lg, cle)?;
+    let base = cube::BASES[face as usize];
+    let f = cube::face_blocs(map_size_lg);
+    let (col, ligne) = cube::PATRON[face as usize];
+    Some((
+        Mat3::new(
+            base.r[0] as f32,
+            base.h[0] as f32,
+            base.n[0] as f32,
+            base.r[1] as f32,
+            base.h[1] as f32,
+            base.n[1] as f32,
+            base.r[2] as f32,
+            base.h[2] as f32,
+            base.n[2] as f32,
+        ),
+        Vec2::new((col * f) as f32, (ligne * f) as f32),
+    ))
 }

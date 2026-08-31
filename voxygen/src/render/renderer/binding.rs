@@ -17,9 +17,13 @@ impl Renderer {
         global_model: &GlobalModel,
         lod_data: &lod_terrain::LodData,
     ) -> GlobalsBindGroup {
-        self.layouts
-            .global
-            .bind(&self.device, global_model, lod_data, &self.noise_tex)
+        self.layouts.global.bind(
+            &self.device,
+            global_model,
+            lod_data,
+            &self.noise_tex,
+            &self.conforme_tex,
+        )
     }
 
     pub fn bind_sprite_globals(
@@ -33,6 +37,7 @@ impl Renderer {
             global_model,
             lod_data,
             &self.noise_tex,
+            &self.conforme_tex,
             sprite_verts,
         )
     }

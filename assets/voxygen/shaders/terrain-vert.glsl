@@ -22,6 +22,7 @@
 #include <srgb.glsl>
 #include <lod.glsl>
 #include <shadows.glsl>
+#include <cube.glsl>
 
 
 layout(location = 0) in uint v_pos_norm;
@@ -34,6 +35,17 @@ uniform u_locals {
     // TODO: consider whether these need to be signed
     ivec4 atlas_offs;
     float load_time;
+    // Le remplissage que Rust garde ici : il doit apparaître, sinon ce qui suit
+    // tomberait au mauvais endroit.
+    float locals_dummy0;
+    float locals_dummy1;
+    float locals_dummy2;
+    // La base 3D de la face qui porte ce chunk, et l'origine de cette face dans
+    // le patron (D27).
+    vec4 cube_r;
+    vec4 cube_h;
+    vec4 cube_n;
+    vec4 cube_face;
 };
 
 //struct ShadowLocals {
@@ -85,6 +97,20 @@ void main() {
             // f_pos.z -= min(32.0, 25.0 * pow(distance(focus_pos.xy, f_pos.xy) / view_distance.x, 20.0));
         #endif
     #endif
+
+    // La courbure du monde (D27). Le crochet expérimental de Veloren occupait
+    // déjà exactement cette place : il déformait `v_pos` en laissant `f_pos`
+    // intact pour l'éclairage, et c'est le partage qu'il fallait.
+    if (cube.z > 0.5) {
+        vec3 absolu = v_pos + focus_off.xyz;
+        v_pos = cube_projeter(
+            absolu.xy - cube_face.xy,
+            absolu.z,
+            cube_r.xyz,
+            cube_h.xyz,
+            cube_n.xyz
+        );
+    }
 
     #ifdef EXPERIMENTAL_CURVEDWORLD
         v_pos.z -= pow(distance(v_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);

@@ -77,6 +77,18 @@ pub struct Globals {
     player_ori: f32,
     screen_fade: f32,
     globals_dummy: [f32; 3],
+    /// La forme du monde (D27) : rayon de la planète et arête d'une face, en
+    /// blocs, puis `1.0` si le monde est un patron de cube.
+    ///
+    /// Ces trois nombres sont la seule chose que le shader ait besoin de savoir
+    /// de la topologie : le reste — la table conforme, la base de chaque face —
+    /// lui arrive autrement.
+    cube: [f32; 4],
+    /// Le point de convergence, **déjà projeté**. Les sommets s'y ramènent, de
+    /// la même façon que `focus_off` les ramène aujourd'hui : sans cela, ils
+    /// vivraient à 2 500 blocs de l'origine et la précision des `f32` y
+    /// laisserait des plumes.
+    cube_origine: [f32; 4],
 }
 /// Make sure Globals is 16-byte-aligned.
 const _: () = assert!(core::mem::size_of::<Globals>().is_multiple_of(16));
@@ -128,6 +140,10 @@ impl Globals {
         sprite_render_distance: f32,
         player_ori: f32,
         screen_fade: f32,
+        // Rayon et arête de face en blocs, et si le monde est cubique (D27).
+        cube: (f32, f32, bool),
+        // Le point de convergence, déjà projeté.
+        cube_origine: Vec3<f32>,
     ) -> Self {
         Self {
             view_mat: view_mat.into_col_arrays(),
@@ -202,6 +218,8 @@ impl Globals {
             player_ori,
             screen_fade: screen_fade.clamp(0.0, 1.0),
             globals_dummy: [0.0; 3],
+            cube: [cube.0, cube.1, if cube.2 { 1.0 } else { 0.0 }, 0.0],
+            cube_origine: [cube_origine.x, cube_origine.y, cube_origine.z, 0.0],
         }
     }
 }
@@ -236,6 +254,8 @@ impl Default for Globals {
             250.0,
             0.0,
             1.0,
+            (0.0, 0.0, false),
+            Vec3::zero(),
         )
     }
 }
@@ -561,6 +581,22 @@ impl GlobalsLayouts {
                 },
                 count: None,
             },
+            // La table conforme (D27).
+            //
+            // Non filtrable, et lue au texel près : le shader refait la
+            // bilinéaire à la main, exactement comme le CPU. Un échantillonneur
+            // matériel n'offre aucune garantie d'arrondi, et deux définitions
+            // de la forme du monde remettraient la visée à côté.
+            wgpu::BindGroupLayoutEntry {
+                binding: 15,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ]
     }
 
@@ -640,6 +676,7 @@ impl GlobalsLayouts {
         global_model: &'a GlobalModel,
         lod_data: &'a lod_terrain::LodData,
         noise: &'a Texture,
+        conforme: &'a Texture,
     ) -> Vec<wgpu::BindGroupEntry<'a>> {
         vec![
             // Global uniform
@@ -711,6 +748,11 @@ impl GlobalsLayouts {
                 binding: 14,
                 resource: global_model.rain_occlusion_mats.buf().as_entire_binding(),
             },
+            // La table conforme (D27).
+            wgpu::BindGroupEntry {
+                binding: 15,
+                resource: wgpu::BindingResource::TextureView(&conforme.view),
+            },
         ]
     }
 
@@ -720,11 +762,12 @@ impl GlobalsLayouts {
         global_model: &GlobalModel,
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
+        conforme: &Texture,
     ) -> GlobalsBindGroup {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.globals,
-            entries: &Self::bind_base_globals(global_model, lod_data, noise),
+            entries: &Self::bind_base_globals(global_model, lod_data, noise, conforme),
         });
 
         GlobalsBindGroup { bind_group }

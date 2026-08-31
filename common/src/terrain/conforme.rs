@@ -310,6 +310,21 @@ impl Table {
         w
     }
 
+    /// La table serrée, sans marge de ligne — la forme qu'attend une copie vers
+    /// une texture dont l'appelant calcule lui-même la disposition.
+    ///
+    /// C'est **la même définition du monde** que celle que lit [`Table::ab`] :
+    /// les mêmes `f32`, dans le même ordre. Un shader qui refait la bilinéaire
+    /// sur ces octets voit exactement la planète que voit le CPU.
+    pub fn octets_serres(&self) -> Vec<u8> {
+        let mut octets = Vec::with_capacity(N * N * 8);
+        for v in &self.ab {
+            octets.extend_from_slice(&v[0].to_le_bytes());
+            octets.extend_from_slice(&v[1].to_le_bytes());
+        }
+        octets
+    }
+
     /// La table telle que le shader la lira : lignes complétées au multiple de
     /// 256 octets qu'exige la copie vers une texture.
     pub fn octets(&self) -> (Vec<u8>, u32) {
@@ -439,6 +454,82 @@ mod tests {
                 ou.0, ou.1, losange
             );
         }
+    }
+
+    /// **La table montée en texture est la table du CPU, au bit près.**
+    ///
+    /// C'est l'exigence centrale de D27, et la seule qu'on puisse éprouver sans
+    /// GPU : le shader lit ces octets et refait la bilinéaire à la main, donc
+    /// on refait ici *sa* lecture — même indexation, même bornage, même
+    /// mélange — et on la confronte à [`Table::ab`]. Deux définitions de la
+    /// forme du monde remettraient la visée à côté du bloc surligné.
+    ///
+    /// L'égalité attendue est **exacte**, pas approchée : les deux chemins
+    /// partent des mêmes `f32` et font les mêmes opérations dans le même ordre.
+    #[test]
+    fn le_shader_lit_la_meme_table() {
+        let t = table();
+        let octets = t.octets_serres();
+        assert_eq!(octets.len(), N * N * 8);
+
+        // Ce que fera `texelFetch` : deux `f32` petit-boutiens par texel.
+        let texel = |i: usize, j: usize| {
+            let o = (j * N + i) * 8;
+            let lis = |k: usize| {
+                f32::from_le_bytes([
+                    octets[o + k],
+                    octets[o + k + 1],
+                    octets[o + k + 2],
+                    octets[o + k + 3],
+                ])
+            };
+            (lis(0), lis(4))
+        };
+
+        // Et la bilinéaire du shader, écrite comme il l'écrit.
+        let comme_le_shader = |s: f64, u: f64| {
+            let n = (N - 1) as f32;
+            let x = (((s as f32 + 1.0) * 0.5 * n).clamp(0.0, n - 0.0001), 0);
+            let y = (((u as f32 + 1.0) * 0.5 * n).clamp(0.0, n - 0.0001), 0);
+            let (i, j) = (x.0 as usize, y.0 as usize);
+            let (fx, fy) = (x.0 - i as f32, y.0 - j as f32);
+            let (a, b, c, d) = (
+                texel(i, j),
+                texel(i + 1, j),
+                texel(i, j + 1),
+                texel(i + 1, j + 1),
+            );
+            let melange = |p: (f32, f32), q: (f32, f32), t: f32| {
+                (p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t)
+            };
+            let bas = melange(a, b, fx);
+            let haut = melange(c, d, fx);
+            melange(bas, haut, fy)
+        };
+
+        let pas = 2.0 / 97.0;
+        let mut pire = 0.0f64;
+        let mut s = -1.0;
+        while s <= 1.0 {
+            let mut u = -1.0;
+            while u <= 1.0 {
+                let cpu = t.ab(s, u);
+                let gpu = comme_le_shader(s, u);
+                pire = pire
+                    .max((cpu.0 - gpu.0 as f64).abs())
+                    .max((cpu.1 - gpu.1 as f64).abs());
+                u += pas;
+            }
+            s += pas;
+        }
+
+        // Le seul écart possible vient de l'ordre des opérations en `f32` du
+        // côté shader contre `f64` du côté CPU sur les mêmes valeurs `f32` : il
+        // reste à la résolution du `f32`, pas au-delà.
+        assert!(
+            pire < 1e-6,
+            "la table du shader et celle du CPU divergent de {pire:e}"
+        );
     }
 
     /// L'intégration numérique tombe où la théorie l'attend.

@@ -35,6 +35,8 @@ impl Asset for Shaders {
             "include.random",
             "include.lod",
             "include.shadows",
+            // La projection du cube sur la sphère (D27).
+            "include.cube",
             "include.rain_occlusion",
             "include.point_glow",
             "include.fxaa",

@@ -191,11 +191,11 @@ pub struct SpriteLayout {
 impl SpriteLayout {
     pub fn new(device: &wgpu::Device) -> Self {
         let mut entries = GlobalsLayouts::base_globals_layout();
-        debug_assert_eq!(15, entries.len()); // To remember to adjust the bindings below
+        debug_assert_eq!(16, entries.len()); // To remember to adjust the bindings below
         entries.extend_from_slice(&[
             // sprite_verts
             wgpu::BindGroupLayoutEntry {
-                binding: 15,
+                binding: 16,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -220,14 +220,16 @@ impl SpriteLayout {
         global_model: &GlobalModel,
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
+        conforme: &Texture,
         sprite_verts: &SpriteVerts,
     ) -> wgpu::BindGroup {
-        let mut entries = GlobalsLayouts::bind_base_globals(global_model, lod_data, noise);
+        let mut entries =
+            GlobalsLayouts::bind_base_globals(global_model, lod_data, noise, conforme);
 
         entries.extend_from_slice(&[
             // sprite_verts
             wgpu::BindGroupEntry {
-                binding: 15,
+                binding: 16,
                 resource: sprite_verts.0.buf.as_entire_binding(),
             },
         ]);
@@ -245,10 +247,17 @@ impl SpriteLayout {
         global_model: &GlobalModel,
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
+        conforme: &Texture,
         sprite_verts: &SpriteVerts,
     ) -> SpriteGlobalsBindGroup {
-        let bind_group =
-            self.bind_globals_inner(device, global_model, lod_data, noise, sprite_verts);
+        let bind_group = self.bind_globals_inner(
+            device,
+            global_model,
+            lod_data,
+            noise,
+            conforme,
+            sprite_verts,
+        );
 
         SpriteGlobalsBindGroup { bind_group }
     }

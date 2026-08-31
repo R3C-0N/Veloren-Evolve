@@ -29,7 +29,7 @@ layout(location = 7) in float inst_light;
 layout(location = 8) in float model_wind_sway; // NOTE: this only varies per model
 layout(location = 9) in float model_z_scale; // NOTE: this only varies per model
 
-layout(set = 0, binding = 15) restrict readonly buffer sprite_verts {
+layout(set = 0, binding = 16) restrict readonly buffer sprite_verts {
     uvec2 verts[];
 };
 

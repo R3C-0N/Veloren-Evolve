@@ -147,6 +147,16 @@ pub struct Locals {
     atlas_offs: [i32; 4],
     load_time: f32,
     _dummy: [f32; 3],
+    /// La base 3D de la face qui porte ce chunk, et l'origine de cette face
+    /// dans le patron (D27).
+    ///
+    /// Elle est portée **par chunk** plutôt que recalculée : le shader n'a
+    /// alors jamais à replier une position, ce qui lui épargne la boucle de
+    /// bascule des bases. Le CPU la connaît déjà, il la donne.
+    cube_r: [f32; 4],
+    cube_h: [f32; 4],
+    cube_n: [f32; 4],
+    cube_face: [f32; 4],
 }
 
 impl Locals {
@@ -155,13 +165,19 @@ impl Locals {
         ori: Quaternion<f32>,
         atlas_offs: Vec2<u32>,
         load_time: f32,
+        cube: Option<(Mat3<f32>, Vec2<f32>)>,
     ) -> Self {
         let mat = Mat4::from(ori).translated_3d(model_offs);
+        let (base, origine) = cube.unwrap_or((Mat3::identity(), Vec2::zero()));
         Self {
             model_mat: mat.into_col_array(),
             load_time,
             atlas_offs: Vec4::new(atlas_offs.x as i32, atlas_offs.y as i32, 0, 0).into_array(),
             _dummy: [0.0; 3],
+            cube_r: Vec4::from(base.cols[0]).into_array(),
+            cube_h: Vec4::from(base.cols[1]).into_array(),
+            cube_n: Vec4::from(base.cols[2]).into_array(),
+            cube_face: Vec4::new(origine.x, origine.y, 0.0, 0.0).into_array(),
         }
     }
 }
@@ -173,6 +189,10 @@ impl Default for Locals {
             load_time: 0.0,
             atlas_offs: [0; 4],
             _dummy: [0.0; 3],
+            cube_r: [1.0, 0.0, 0.0, 0.0],
+            cube_h: [0.0, 1.0, 0.0, 0.0],
+            cube_n: [0.0, 0.0, 1.0, 0.0],
+            cube_face: [0.0; 4],
         }
     }
 }

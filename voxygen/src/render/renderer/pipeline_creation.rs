@@ -176,6 +176,8 @@ impl ShaderModules {
         let random = shaders.get("include.random").unwrap();
         let lod = shaders.get("include.lod").unwrap();
         let shadows = shaders.get("include.shadows").unwrap();
+        // La projection du cube sur la sphère (D27).
+        let cube = shaders.get("include.cube").unwrap();
         let rain_occlusion = shaders.get("include.rain_occlusion").unwrap();
         let point_glow = shaders.get("include.point_glow").unwrap();
         let fxaa = shaders.get("include.fxaa").unwrap();
@@ -294,6 +296,7 @@ impl ShaderModules {
                 "constants.glsl" => constants.clone(),
                 "globals.glsl" => globals.0.to_owned(),
                 "shadows.glsl" => shadows.0.to_owned(),
+                "cube.glsl" => cube.0.to_owned(),
                 "rain_occlusion.glsl" => rain_occlusion.0.to_owned(),
                 "sky.glsl" => sky.0.to_owned(),
                 "light.glsl" => light.0.to_owned(),

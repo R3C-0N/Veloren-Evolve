@@ -34,6 +34,16 @@ layout(std140, set = 0, binding = 0) uniform u_globals {
     float sprite_render_distance;
     float u_rotation;
     float screen_fade;
+    // Le remplissage que Rust garde en fin de structure : il doit apparaître
+    // ici, sinon ce qui suit tomberait au mauvais endroit.
+    float globals_dummy0;
+    float globals_dummy1;
+    float globals_dummy2;
+    // La forme du monde (D27) : .x le rayon de la planète en blocs, .y l'arête
+    // d'une face, .z vaut 1.0 si le monde est un patron de cube.
+    vec4 cube;
+    // Le point de convergence, déjà projeté.
+    vec4 cube_origine;
 };
 
 float distance_divider = 2.0;

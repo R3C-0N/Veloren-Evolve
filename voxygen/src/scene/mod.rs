@@ -976,6 +976,25 @@ impl Scene {
             };
 
         // Update global constants.
+        // La forme du monde, et le point de convergence **déjà projeté** (D27).
+        // Les sommets s'y ramènent, comme `focus_off` les ramène aujourd'hui :
+        // sans cela ils vivraient à quelques milliers de blocs de l'origine, et
+        // la précision des `f32` y laisserait des plumes.
+        let map_size_lg = scene_data.state.terrain().map_size_lg();
+        let (cube, cube_origine) = if map_size_lg.est_cubique() {
+            use common::terrain::cube;
+            let rayon = cube::rayon(map_size_lg);
+            let origine = cube::direction(map_size_lg, focus_off.xy().map(|e| e as f64))
+                .map(|d| (d * rayon).map(|e| e as f32))
+                .unwrap_or_default();
+            (
+                (rayon as f32, cube::face_blocs(map_size_lg) as f32, true),
+                origine,
+            )
+        } else {
+            ((0.0, 0.0, false), Vec3::zero())
+        };
+
         renderer.update_consts(&mut self.data.globals, &[Globals::new(
             view_mat,
             proj_mat,
@@ -1012,6 +1031,8 @@ impl Scene {
             scene_data.sprite_render_distance - 20.0,
             player_mmap_ori,
             self.screen_fade,
+            cube,
+            cube_origine,
         )]);
         renderer.update_clouds_locals(CloudsLocals::new(proj_mat_inv, view_mat_inv));
         renderer.update_postprocess_locals(PostProcessLocals::new(proj_mat_inv, view_mat_inv));

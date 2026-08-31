@@ -8376,6 +8376,7 @@ impl FigureData for BoundTerrainLocals {
             Quaternion::identity(),
             Vec2::zero(),
             0.0,
+            None,
         )])
     }
 
@@ -8385,6 +8386,7 @@ impl FigureData for BoundTerrainLocals {
             parameters.ori.into_vec4().into(),
             Vec2::zero(),
             0.0,
+            None,
         )])
     }
 }
