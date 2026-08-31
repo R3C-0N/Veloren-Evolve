@@ -1876,6 +1876,7 @@ impl WorldSim {
             },
         );
         WorldMapMsg {
+            topologie: self.map_size_lg().topologie(),
             dimensions_lg: self.map_size_lg().vec(),
             max_height: self.max_height,
             rgba: Grid::from_raw(self.get_size().map(|e| e as i32), v),

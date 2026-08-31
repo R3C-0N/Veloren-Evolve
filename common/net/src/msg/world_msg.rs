@@ -1,4 +1,9 @@
-use common::{grid::Grid, map::Marker, terrain::TerrainChunk, trade::Good};
+use common::{
+    grid::Grid,
+    map::Marker,
+    terrain::{TerrainChunk, Topologie},
+    trade::Good,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use vek::*;
@@ -26,6 +31,14 @@ pub struct WorldMapMsg {
     ///
     /// NOTE: Invariant: chunk count fits in a u16.
     pub dimensions_lg: Vec2<u32>,
+    /// La **forme** du monde (D27) — plate, ou patron de cube.
+    ///
+    /// Les dimensions seules ne la disent pas : un patron de cube est un
+    /// rectangle en mémoire, et un client qui reconstruit sa carte à partir des
+    /// seules dimensions en fait toujours une carte plate. Il ne replie alors
+    /// rien, ne courbe rien, et rend le patron à plat — sans que rien ne le
+    /// signale.
+    pub topologie: Topologie,
     /// Max height (used to scale altitudes).
     pub max_height: f32,
     /// RGB+A; the alpha channel is currently unused, but will be used in the

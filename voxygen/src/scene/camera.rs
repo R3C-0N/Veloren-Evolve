@@ -1,4 +1,7 @@
-use common::{terrain::TerrainGrid, vol::ReadVol};
+use common::{
+    terrain::{MapSizeLg, TerrainGrid, cube},
+    vol::ReadVol,
+};
 use common_base::span;
 use core::{f32::consts::PI, fmt::Debug, ops::Range};
 use num::traits::{FloatConst, real::Real};
@@ -52,6 +55,14 @@ pub struct Camera {
     mode: CameraMode,
 
     last_time: Option<f64>,
+
+    /// La forme du monde, et le point de convergence **déjà projeté** (D27).
+    ///
+    /// `None` sur une carte plate. La caméra en a besoin parce qu'elle cesse
+    /// alors d'avoir une verticale fixe : son « haut » est celui du lieu où
+    /// elle regarde, et sa position vit dans l'espace courbé où vivent les
+    /// sommets.
+    cube: Option<(MapSizeLg, Vec3<f32>)>,
 
     dependents: Dependents,
     frustum: Frustum<f32>,
@@ -337,6 +348,7 @@ impl Camera {
             mode,
 
             last_time: None,
+            cube: None,
 
             dependents: Dependents {
                 view_mat: Mat4::identity(),
@@ -354,7 +366,39 @@ impl Camera {
     /// Compute the transformation matrices (view matrix and projection matrix)
     /// and position of the camera.
     pub fn compute_dependents(&mut self, terrain: &TerrainGrid) {
+        self.poser_cube(terrain.map_size_lg());
         self.compute_dependents_full(terrain, |block| block.is_opaque())
+    }
+
+    /// Fixe la forme du monde, et calcule le point de convergence.
+    ///
+    /// Il se prend sur la **partie entière** du foyer, comme `focus_off` sur
+    /// une carte plate : c'est ce qui garde les sommets près de l'origine,
+    /// où les `f32` ont encore de la résolution.
+    pub fn poser_cube(&mut self, map: MapSizeLg) {
+        self.cube = map.est_cubique().then(|| {
+            let entier = self.focus.map(|e| e.trunc());
+            let rayon = cube::rayon(map);
+            let origine = cube::direction(map, entier.xy().map(|e| e as f64))
+                .map(|d| (d * rayon).map(|e| e as f32))
+                .unwrap_or_default();
+            (map, origine)
+        });
+    }
+
+    /// Le point de convergence, déjà projeté. C'est **la** valeur que le rendu
+    /// doit employer : la calculer une seconde fois ailleurs serait s'exposer à
+    /// ce que les deux divergent.
+    pub fn cube_origine(&self) -> Vec3<f32> {
+        self.cube.map_or_else(Vec3::zero, |(_, origine)| origine)
+    }
+
+    /// La forme du monde, telle que le rendu doit la déclarer : rayon, arête
+    /// d'une face, et si le monde est un patron de cube.
+    pub fn cube_params(&self) -> (f32, f32, bool) {
+        self.cube.map_or((0.0, 0.0, false), |(map, _)| {
+            (cube::rayon(map) as f32, cube::face_blocs(map) as f32, true)
+        })
     }
 
     /// The is_fluid argument should return true for transparent voxels.
@@ -470,13 +514,25 @@ impl Camera {
     }
 
     fn compute_dependents_helper(&self, dist: f32) -> Dependents {
-        let view_mat = Mat4::<f32>::identity()
-            * Mat4::translation_3d(-Vec3::unit_z() * dist)
-            * Mat4::rotation_z(self.ori.z)
-            * Mat4::rotation_x(self.ori.y)
-            * Mat4::rotation_y(self.ori.x)
-            * Mat4::rotation_3d(PI / 2.0, -Vec4::unit_x())
-            * Mat4::translation_3d(-self.focus.map(|e| e.fract()));
+        let view_mat = match self.cube {
+            None => {
+                Mat4::<f32>::identity()
+                    * Mat4::translation_3d(-Vec3::unit_z() * dist)
+                    * Mat4::rotation_z(self.ori.z)
+                    * Mat4::rotation_x(self.ori.y)
+                    * Mat4::rotation_y(self.ori.x)
+                    * Mat4::rotation_3d(PI / 2.0, -Vec4::unit_x())
+                    * Mat4::translation_3d(-self.focus.map(|e| e.fract()))
+            },
+            // **Sur une planète, le haut n'est plus une constante.**
+            //
+            // Le cap de la caméra reste ce qu'il a toujours été — un lacet et un
+            // tangage —, mais il ne s'exprime plus dans un repère fixe : il se
+            // pose sur le repère **local au foyer**, dont la verticale est celle
+            // du lieu regardé. C'est le même principe que pour les entités :
+            // l'orientation appartient au monde, pas à la grille.
+            Some((map, origine)) => self.vue_sur_la_sphere(map, origine, dist),
+        };
         let view_mat_inv: Mat4<f32> = view_mat.inverted();
 
         let fov = self.get_effective_fov();
@@ -499,12 +555,47 @@ impl Camera {
         }
     }
 
+    /// La matrice de vue sur une planète.
+    ///
+    /// Le foyer est projeté, la caméra se place derrière lui le long du regard,
+    /// et le « haut » est la verticale du lieu. Les tangentes du paramétrage ne
+    /// sont pas orthogonales — près d'un coin elles se coupent à 120° — ; on en
+    /// tire donc un repère orthonormé, ce qui est légitime ici : une caméra a
+    /// besoin d'un repère de vue, pas du paramétrage du monde.
+    fn vue_sur_la_sphere(&self, map: MapSizeLg, origine: Vec3<f32>, dist: f32) -> Mat4<f32> {
+        let Some(lieu) = cube::lieu_de(map, self.focus.xy().map(|e| e as f64)) else {
+            return Mat4::identity();
+        };
+        let (haut, _, tv) = cube::repere(map, lieu);
+        let haut = haut.map(|e| e as f32);
+        let nord = {
+            let t = tv.map(|e| e as f32);
+            (t - haut * t.dot(haut)).normalized()
+        };
+        let est = nord.cross(haut);
+
+        // Le regard, tel que la caméra plate le donne, reposé sur le repère
+        // local : `x` vers l'est, `y` vers le nord, `z` vers le haut.
+        let f = self.forward();
+        let avant = (est * f.x + nord * f.y + haut * f.z).normalized();
+
+        let foyer = haut * (cube::rayon(map) as f32 + self.focus.z) - origine;
+        let oeil = foyer - avant * dist;
+        // `roll` reste appliqué autour du regard, comme sur une carte plate.
+        let haut_vue = Mat3::rotation_3d(self.ori.z, avant) * haut;
+        Mat4::look_at_rh(oeil, foyer, haut_vue)
+    }
+
     fn compute_frustum(&mut self, dependents: &Dependents) -> Frustum<f32> {
+        // Sur un patron de cube, les sommets sont déjà ramenés au point de
+        // convergence : il n'y a pas de décalage supplémentaire à retirer.
+        let recentrage = if self.cube.is_some() {
+            Mat4::identity()
+        } else {
+            Mat4::translation_3d(-self.focus.map(|e| e.trunc()))
+        };
         Frustum::from_modelview_projection(
-            (dependents.proj_mat_treeculler
-                * dependents.view_mat
-                * Mat4::translation_3d(-self.focus.map(|e| e.trunc())))
-            .into_col_arrays(),
+            (dependents.proj_mat_treeculler * dependents.view_mat * recentrage).into_col_arrays(),
         )
     }
 

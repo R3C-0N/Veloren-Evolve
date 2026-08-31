@@ -696,13 +696,24 @@ impl Client {
         // Spawn in a blocking thread (leaving the network thread free).  This is mostly
         // useful for bots.
         let mut task = tokio::task::spawn_blocking(move || {
-            let map_size_lg =
-                common::terrain::MapSizeLg::new(world_map.dimensions_lg).map_err(|_| {
-                    Error::Other(format!(
-                        "Server sent bad world map dimensions: {:?}",
-                        world_map.dimensions_lg,
-                    ))
-                })?;
+            // La **forme** du monde vient du serveur, pas des dimensions. Un
+            // patron de cube est un rectangle en mémoire : reconstruit à partir
+            // des seules dimensions, il redevient une carte plate, et le client
+            // rend alors le patron à plat sans que rien ne le signale (D27).
+            let map_size_lg = match world_map.topologie {
+                common::terrain::Topologie::Cube => {
+                    common::terrain::MapSizeLg::nouvelle_cubique(world_map.dimensions_lg)
+                },
+                common::terrain::Topologie::Plate => {
+                    common::terrain::MapSizeLg::new(world_map.dimensions_lg)
+                },
+            }
+            .map_err(|_| {
+                Error::Other(format!(
+                    "Server sent bad world map dimensions: {:?}",
+                    world_map.dimensions_lg,
+                ))
+            })?;
             let sea_level = world_map.default_chunk.get_min_z() as f32;
 
             // Initialize `State`
