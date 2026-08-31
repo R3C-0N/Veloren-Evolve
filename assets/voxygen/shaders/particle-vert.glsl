@@ -14,6 +14,7 @@
 
 #include <globals.glsl>
 #include <srgb.glsl>
+#include <cube.glsl>
 #include <random.glsl>
 #include <lod.glsl>
 
@@ -1349,6 +1350,13 @@ void main() {
     attr.scale *= pow(attr.col.a, 0.25);
 
     f_pos = start_pos + (v_pos * attr.scale * SCALE * mat3(attr.rot) + attr.offs);
+
+    // La courbure du monde (D27). Une particule n'appartient à aucun chunk : son
+    // repère se prend à `inst_pos`, l'ancre de l'instance, et vaut donc pour
+    // tous ses sommets.
+    if (cube.z > 0.5) {
+        f_pos = cube_poser(inst_pos, f_pos);
+    }
 
     #ifdef EXPERIMENTAL_CURVEDWORLD
         f_pos.z -= pow(distance(f_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);

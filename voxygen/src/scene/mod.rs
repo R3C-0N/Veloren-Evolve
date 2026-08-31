@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod cube;
 pub mod debug;
 pub mod figure;
 pub mod lod;

@@ -14,6 +14,7 @@
 
 #include <globals.glsl>
 #include <srgb.glsl>
+#include <cube.glsl>
 #include <sky.glsl>
 #include <light.glsl>
 
@@ -38,6 +39,16 @@ uniform u_terrain_locals {
     mat4 model_mat;
     ivec4 atlas_offs;
     float load_time;
+    // Le remplissage que Rust garde ici, puis la base de face (D27). Les sprites
+    // lisent les `Locals` du chunk : tous ceux d'un même chunk partagent donc sa
+    // face, et aucun modèle ne se retrouve à cheval sur une couture.
+    float locals_dummy0;
+    float locals_dummy1;
+    float locals_dummy2;
+    vec4 cube_r;
+    vec4 cube_h;
+    vec4 cube_n;
+    vec4 cube_face;
 };
 
 // TODO: consider grouping into vec4's
@@ -224,6 +235,20 @@ void main() {
     #ifdef EXPERIMENTAL_DISCARDTRANSPARENCY
         f_inst_idx = gl_InstanceIndex;
     #endif
+
+    // La courbure du monde (D27), appliquée **en dernier** : le balancement du
+    // vent perturbe `f_pos.xy`, et il doit le faire dans le repère plat de la
+    // face, pas sur une position déjà posée sur la sphère.
+    if (cube.z > 0.5) {
+        vec3 absolu = f_pos + focus_off.xyz;
+        f_pos = cube_projeter(
+            absolu.xy - cube_face.xy,
+            absolu.z,
+            cube_r.xyz,
+            cube_h.xyz,
+            cube_n.xyz
+        );
+    }
 
     gl_Position =
         all_mat *

@@ -322,6 +322,8 @@ impl Scene {
 
         fn figure_params(dt: f32, pos: Vec3<f32>) -> FigureUpdateCommonParameters<'static> {
             FigureUpdateCommonParameters {
+                // La scène de l'écran-titre est plate.
+                cube: None,
                 entity: None,
                 pos,
                 ori: anim::vek::Quaternion::identity().rotated_z(std::f32::consts::PI * -0.5),

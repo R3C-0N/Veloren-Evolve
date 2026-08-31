@@ -569,6 +569,8 @@ struct FigureUpdateData<'a, CSS, COR> {
     plugins: &'a mut common_state::plugin::PluginMgr,
     scene_data: &'a SceneData<'a>,
     terrain: Option<&'a Terrain>,
+    /// De quoi poser les figures sur la planète (D27).
+    pose_cube: Option<crate::scene::cube::PoseSpherique>,
     camera_mode: CameraMode,
     can_shadow_sun: CSS,
     can_occlude_rain: COR,
@@ -1083,6 +1085,13 @@ impl FigureMgr {
             plugins: &mut ecs.write_resource(),
             scene_data,
             terrain,
+            // La caméra tient la forme du monde et le point de convergence : on
+            // les lui demande plutôt que de les recalculer (D27).
+            pose_cube: crate::scene::cube::PoseSpherique::nouvelle(
+                scene_data.state.terrain().map_size_lg(),
+                camera.cube_origine(),
+                camera.get_focus_pos().map(|e| e.trunc()),
+            ),
             camera_mode: camera.get_mode(),
             can_shadow_sun,
             can_occlude_rain,
@@ -1413,6 +1422,7 @@ impl FigureMgr {
             dt,
             is_player: is_viewpoint,
             terrain: data.terrain,
+            cube: data.pose_cube,
             ground_vel: physics.ground_vel,
             primary_trail_points: self.trail_points(data.scene_data, entity, true),
             secondary_trail_points: self.trail_points(data.scene_data, entity, false),
@@ -8351,6 +8361,9 @@ pub struct FigureUpdateCommonParameters<'a> {
     pub dt: f32,
     pub is_player: bool,
     pub terrain: Option<&'a Terrain>,
+    /// De quoi poser la figure sur la planète (D27). `None` sur une carte
+    /// plate.
+    pub cube: Option<crate::scene::cube::PoseSpherique>,
     pub ground_vel: Vec3<f32>,
     pub primary_trail_points: Option<(anim::vek::Vec3<f32>, anim::vek::Vec3<f32>)>,
     pub secondary_trail_points: Option<(anim::vek::Vec3<f32>, anim::vek::Vec3<f32>)>,
@@ -8429,6 +8442,7 @@ impl<S: Skeleton, D: FigureData> FigureState<S, D> {
         buf: &mut [anim::FigureBoneData; anim::MAX_BONE_COUNT],
         parameters @ FigureUpdateCommonParameters {
             entity,
+            cube,
             pos,
             ori,
             scale,
@@ -8564,6 +8578,23 @@ impl<S: Skeleton, D: FigureData> FigureState<S, D> {
         self.last_glow.1 = Lerp::lerp(self.last_glow.1, glow.1, 16.0 * dt);
 
         let pos_with_mount_offset = mount_transform_pos.map_or(*pos, |(_, pos)| pos);
+
+        // La figure est petite devant le rayon : la projection s'y réduit à une
+        // transformation rigide, et se compose donc dans sa matrice de modèle
+        // sans que le shader ait à changer (D27).
+        let (mat, pos_with_mount_offset) = match cube {
+            Some(pose) => {
+                let (m, p) = pose.appliquer(
+                    Mat4::from_col_arrays(mat.into_col_arrays()),
+                    pos_with_mount_offset,
+                );
+                (
+                    anim::vek::Mat4::from_col_arrays(m.into_col_arrays()),
+                    anim::vek::Vec3::from(p.into_array()),
+                )
+            },
+            None => (mat, pos_with_mount_offset),
+        };
 
         let locals = FigureLocals::new(
             mat,

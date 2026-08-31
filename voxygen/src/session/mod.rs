@@ -648,7 +648,42 @@ impl PlayState for SessionState {
             } = self.scene.camera().dependents();
             let focus_pos = self.scene.camera().get_focus_pos();
             let focus_off = focus_pos.map(|e| e.trunc());
-            let cam_pos = cam_pos + focus_off;
+
+            // **Le rayon d'écran se redresse une fois, ici, et le monde n'est
+            // ensuite interrogé qu'à plat** (D27).
+            //
+            // Sur une carte plate, la position du monde se retrouve en rajoutant
+            // le foyer entier. Sur une planète, la caméra vit dans l'espace
+            // courbé : il faut lui appliquer l'**inverse** de la projection, et
+            // redécomposer son regard sur les tangentes. Sans ce redressement, le
+            // banc d'essai a mesuré jusqu'à 45 blocs d'écart entre le réticule et
+            // le bloc surligné.
+            let map_size_lg = client.state().terrain().map_size_lg();
+            let (cam_pos, cam_dir) = if map_size_lg.est_cubique() {
+                use common::terrain::cube;
+                let rayon = cube::rayon(map_size_lg);
+                let p3 = (cam_pos + self.scene.camera().cube_origine()).map(|e| e as f64);
+                let lieu = cube::depuis_direction(map_size_lg, p3.normalized());
+                let (haut, _, _) = cube::repere(map_size_lg, lieu);
+                let plat = cube::vers_coordonnees(map_size_lg, lieu, cam_dir.map(|e| e as f64))
+                    .unwrap_or_default();
+                let wpos = lieu.wpos(map_size_lg);
+                (
+                    Vec3::new(
+                        wpos.x as f32,
+                        wpos.y as f32,
+                        (p3.magnitude() - rayon) as f32,
+                    ),
+                    Vec3::new(
+                        plat.x as f32,
+                        plat.y as f32,
+                        cam_dir.map(|e| e as f64).dot(haut) as f32,
+                    )
+                    .normalized(),
+                )
+            } else {
+                (cam_pos + focus_off, cam_dir)
+            };
 
             let (is_aiming, aim_dir_offset) = {
                 let is_aiming = client

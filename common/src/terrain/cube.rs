@@ -610,6 +610,44 @@ pub fn transporter(map: MapSizeLg, de: Lieu, vers: Lieu, v: Vec2<f64>) -> Option
     vers_coordonnees(map, vers, tu * v.x + tv * v.y)
 }
 
+/// **La transformation qui pose un objet plat sur la sphère** (D27).
+///
+/// Un objet petit devant le rayon ne subit de la projection qu'une
+/// transformation **rigide** : sa flèche vaut `w²/8r`, soit 6·10⁻⁴ bloc pour un
+/// objet de cinq blocs sur un rayon de cinq mille. C'est l'argument que D29
+/// employait déjà pour la nappe du portail — localement, la sphère est plate,
+/// et c'est tout ce qu'on lui demande ici.
+///
+/// D'où : rien à changer dans les shaders. Il suffit de composer la matrice de
+/// modèle que chaque objet possède déjà — figure, sprite, particule — avec le
+/// repère local de sa position, et de la placer au point projeté.
+///
+/// **Le repère est pris à l'origine de l'objet, jamais par sommet.** Chercher
+/// la face sommet par sommet déchirerait en deux tout modèle à cheval sur une
+/// couture : ses sommets se répartiraient entre deux bases. C'est la même
+/// raison qui fait porter sa base à un chunk plutôt que de la lui faire
+/// deviner.
+///
+/// `origine` est le point de convergence déjà projeté, celui que le rendu
+/// retire à tout le monde. Rend `None` hors du patron.
+pub fn pose(map: MapSizeLg, wpos: Vec3<f64>, origine: Vec3<f64>) -> Option<Mat4<f64>> {
+    let lieu = lieu_de(map, wpos.xy())?;
+    let (haut, _, tv) = repere(map, lieu);
+    // Les tangentes ne sont pas orthogonales — près d'un coin elles se coupent à
+    // 120°. Un objet a besoin d'un repère rigide, pas du paramétrage : on
+    // orthonormalise, ce qui est légitime ici et ne l'est pas pour un cap.
+    let nord = (tv - haut * tv.dot(haut)).normalized();
+    let est = nord.cross(haut);
+    let place = haut * (rayon(map) + wpos.z) - origine;
+
+    Some(Mat4::new(
+        est.x, nord.x, haut.x, place.x, //
+        est.y, nord.y, haut.y, place.y, //
+        est.z, nord.z, haut.z, place.z, //
+        0.0, 0.0, 0.0, 1.0,
+    ))
+}
+
 /// Décompose un déplacement du monde sur les deux tangentes du paramétrage.
 ///
 /// Seul endroit où une intention 3D redevient un déplacement de grille. La

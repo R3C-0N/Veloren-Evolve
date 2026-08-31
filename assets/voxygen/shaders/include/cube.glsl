@@ -58,4 +58,62 @@ vec3 cube_projeter(vec2 uv, float altitude, vec3 base_r, vec3 base_h, vec3 base_
 // Le monde est-il un patron de cube ?
 bool cube_actif() { return cube.z > 0.5; }
 
+// Les six bases de face, et la place de chacune dans le patron (D27).
+//
+// Elles ne servent qu'aux objets **sans chunk** — une particule n'appartient à
+// aucun. Tout ce qui en a un reçoit sa base toute faite, ce qui vaut mieux :
+// aucune recherche, et tous les sommets d'un même objet voient la même face.
+const vec3 CUBE_BASES_R[6] = vec3[6](
+    vec3( 0.0,  1.0,  0.0), vec3(-1.0,  0.0,  0.0), vec3( 0.0, -1.0,  0.0),
+    vec3( 1.0,  0.0,  0.0), vec3(-1.0,  0.0,  0.0), vec3(-1.0,  0.0,  0.0)
+);
+const vec3 CUBE_BASES_H[6] = vec3[6](
+    vec3( 0.0,  0.0,  1.0), vec3( 0.0,  0.0,  1.0), vec3( 0.0,  0.0,  1.0),
+    vec3( 0.0,  0.0,  1.0), vec3( 0.0, -1.0,  0.0), vec3( 0.0,  1.0,  0.0)
+);
+const vec3 CUBE_BASES_N[6] = vec3[6](
+    vec3( 1.0,  0.0,  0.0), vec3( 0.0,  1.0,  0.0), vec3(-1.0,  0.0,  0.0),
+    vec3( 0.0, -1.0,  0.0), vec3( 0.0,  0.0,  1.0), vec3( 0.0,  0.0, -1.0)
+);
+
+// La face qui contient une position du monde. `-1` sur un emplacement mort.
+int cube_face_de(vec2 wpos, out vec2 origine) {
+    ivec2 case_ = ivec2(floor(wpos / cube.y));
+    origine = vec2(case_) * cube.y;
+    if (case_.y == 1 && case_.x >= 0 && case_.x <= 3) { return case_.x; }
+    if (case_.x == 1 && case_.y == 2) { return 4; }
+    if (case_.x == 1 && case_.y == 0) { return 5; }
+    return -1;
+}
+
+// **Pose un objet plat sur la planète, rigidement.**
+//
+// Pour ce qui n'a pas de chunk où ranger sa face : on prend le repère à l'ancre
+// de l'objet — jamais par sommet, ce qui le déchirerait à une couture — et on y
+// applique son déplacement local. Un objet petit devant le rayon ne subit de la
+// projection qu'une transformation rigide (D29).
+//
+// `ancre` est la position du monde de l'objet ; `plat` sa position rendue telle
+// que la carte plate l'aurait donnée, c'est-à-dire déjà diminuée de `focus_off`.
+vec3 cube_poser(vec3 ancre, vec3 plat) {
+    vec2 origine_face;
+    int face = cube_face_de(ancre.xy, origine_face);
+    if (face < 0) { return plat; }
+
+    vec3 r = CUBE_BASES_R[face];
+    vec3 h = CUBE_BASES_H[face];
+    vec3 n = CUBE_BASES_N[face];
+    vec2 uv = ancre.xy - origine_face;
+
+    vec3 haut = cube_direction(uv, r, h, n);
+    vec3 tv = cube_direction(uv + vec2(0.0, 0.5), r, h, n)
+            - cube_direction(uv - vec2(0.0, 0.5), r, h, n);
+    vec3 nord = normalize(tv - haut * dot(tv, haut));
+    vec3 est = cross(nord, haut);
+
+    vec3 place = haut * (cube.x + ancre.z) - cube_origine.xyz;
+    vec3 d = plat - (ancre - focus_off.xyz);
+    return place + est * d.x + nord * d.y + haut * d.z;
+}
+
 #endif
