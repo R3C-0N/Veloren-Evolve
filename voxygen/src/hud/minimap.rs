@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     GlobalState,
-    hud::{Graphic, Ui},
+    hud::{Graphic, Ui, globe, globe::Planete},
     session::settings_change::Interface::{self as InterfaceChange, *},
     settings::HudPositionSettings,
     ui::{KeyedJobs, fonts::Fonts, img_ids},
@@ -421,6 +421,9 @@ pub struct MiniMap<'a> {
     location_markers: &'a MapMarkers,
     voxel_minimap: &'a VoxelMinimap,
     extra_markers: &'a [super::map::ExtraMarker],
+    /// La planète et l'image du globe local déjà rastérisée (D38). `None` sur
+    /// une carte plate — le chemin d'origine sert alors, inchangé.
+    globe: Option<(&'a Planete, conrod_core::image::Id)>,
 }
 
 impl<'a> MiniMap<'a> {
@@ -436,6 +439,7 @@ impl<'a> MiniMap<'a> {
         location_markers: &'a MapMarkers,
         voxel_minimap: &'a VoxelMinimap,
         extra_markers: &'a [super::map::ExtraMarker],
+        globe: Option<(&'a Planete, conrod_core::image::Id)>,
     ) -> Self {
         Self {
             client,
@@ -450,6 +454,7 @@ impl<'a> MiniMap<'a> {
             location_markers,
             voxel_minimap,
             extra_markers,
+            globe,
         }
     }
 }
@@ -638,6 +643,26 @@ impl Widget for MiniMap<'_> {
                 .get(self.client.entity())
                 .map_or(Vec3::zero(), |pos| pos.0);
 
+            // Le repère local du joueur, et l'échelle du globe en points de
+            // l'écran. `rayon_mini` rend un rayon en pixels de tampon ; on le
+            // ramène ici à la taille réellement affichée.
+            let (vue_locale, rayon_pts) = match self.globe {
+                Some((planete, _)) => {
+                    let cap = if is_facing_north {
+                        0.0
+                    } else {
+                        self.ori.x as f64
+                    };
+                    (
+                        planete.vue_locale(player_pos.xy().map(|e| e as f64), cap),
+                        globe::rayon_mini(planete, zoom, self.world_map.1.map(|e| e as u16))
+                            * map_size.x
+                            / globe::COTE_MINI as f64,
+                    )
+                },
+                None => (None, 0.0),
+            };
+
             // Get map image source rectangle dimensions.
             let w_src = max_zoom / zoom;
             let h_src = max_zoom / zoom;
@@ -654,27 +679,40 @@ impl Widget for MiniMap<'_> {
 
             // Map Image
             // Map Layer Images
-            for (index, layer) in self.world_map.0.iter().enumerate() {
-                let world_map_rotation = if is_facing_north {
-                    layer.none
-                } else {
-                    layer.source_north
-                };
-                if index == 0 {
-                    Image::new(world_map_rotation)
-                        .middle_of(state.ids.mmap_frame_bg)
-                        .w_h(map_size.x, map_size.y)
-                        .parent(state.ids.mmap_frame_bg)
-                        .source_rectangle(rect_src)
-                        .set(state.ids.map_layers[index], ui);
-                } else if show_topo_map {
-                    Image::new(world_map_rotation)
-                        .middle_of(state.ids.mmap_frame_bg)
-                        .w_h(map_size.x, map_size.y)
-                        .parent(state.ids.mmap_frame_bg)
-                        .source_rectangle(rect_src)
-                        .graphics_for(state.ids.map_layers[0])
-                        .set(state.ids.map_layers[index], ui);
+            //
+            // Sur une planète, le fond est **déjà** rastérisé autour du joueur,
+            // cap compris : on le pose tel quel. Le tour de passe-passe
+            // `Rotation::SourceNorth` tourne un *rectangle source*, et il n'y
+            // en a plus.
+            if let Some((_, image)) = self.globe {
+                Image::new(image)
+                    .middle_of(state.ids.mmap_frame_bg)
+                    .w_h(map_size.x, map_size.y)
+                    .parent(state.ids.mmap_frame_bg)
+                    .set(state.ids.map_layers[0], ui);
+            } else {
+                for (index, layer) in self.world_map.0.iter().enumerate() {
+                    let world_map_rotation = if is_facing_north {
+                        layer.none
+                    } else {
+                        layer.source_north
+                    };
+                    if index == 0 {
+                        Image::new(world_map_rotation)
+                            .middle_of(state.ids.mmap_frame_bg)
+                            .w_h(map_size.x, map_size.y)
+                            .parent(state.ids.mmap_frame_bg)
+                            .source_rectangle(rect_src)
+                            .set(state.ids.map_layers[index], ui);
+                    } else if show_topo_map {
+                        Image::new(world_map_rotation)
+                            .middle_of(state.ids.mmap_frame_bg)
+                            .w_h(map_size.x, map_size.y)
+                            .parent(state.ids.mmap_frame_bg)
+                            .source_rectangle(rect_src)
+                            .graphics_for(state.ids.map_layers[0])
+                            .set(state.ids.map_layers[index], ui);
+                    }
                 }
             }
             if show_voxel_map {
@@ -730,18 +768,29 @@ impl Widget for MiniMap<'_> {
             }
 
             let wpos_to_rpos = |wpos: Vec2<f32>, limit: bool| {
-                // Site pos in world coordinates relative to the player
-                let rwpos = wpos - player_pos;
-                // Convert to chunk coordinates
-                let rcpos = rwpos.wpos_to_cpos();
-                // Convert to fractional coordinates relative to the worldsize
-                let rfpos = rcpos / max_zoom as f32;
-                // Convert to unrotated pixel coordinates from the player location on the map
-                // (the center)
-                // Accounting for zooming
-                let rpixpos = rfpos.map2(map_size, |e, sz| e * sz as f32 * zoom as f32);
-                let rpos = Vec2::unit_x().rotated_z(orientation.x) * rpixpos.x
-                    + Vec2::unit_y().rotated_z(orientation.x) * rpixpos.y;
+                let rpos = match (self.globe, vue_locale) {
+                    (Some((planete, _)), Some(vue)) => {
+                        // Le cap est déjà dans le repère : pas de rotation à
+                        // rajouter ici, contrairement au chemin plat où
+                        // l'image et les marqueurs tournent séparément.
+                        let p = vue.projeter(planete.direction(wpos.map(|e| e as f64))?)?;
+                        p.map(|e| (e * rayon_pts) as f32)
+                    },
+                    _ => {
+                        // Site pos in world coordinates relative to the player
+                        let rwpos = wpos - player_pos.xy();
+                        // Convert to chunk coordinates
+                        let rcpos = rwpos.wpos_to_cpos();
+                        // Convert to fractional coordinates relative to the worldsize
+                        let rfpos = rcpos / max_zoom as f32;
+                        // Convert to unrotated pixel coordinates from the player location on the
+                        // map (the center)
+                        // Accounting for zooming
+                        let rpixpos = rfpos.map2(map_size, |e, sz| e * sz as f32 * zoom as f32);
+                        Vec2::unit_x().rotated_z(orientation.x) * rpixpos.x
+                            + Vec2::unit_y().rotated_z(orientation.x) * rpixpos.y
+                    },
+                };
 
                 if rpos
                     .map2(map_size, |e, sz| e.abs() > sz as f32 / 2.0)

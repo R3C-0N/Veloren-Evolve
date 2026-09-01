@@ -158,6 +158,27 @@ pub enum ClientInitStage {
     StartingClient,
 }
 
+/// Une couche de carte, empaquetée telle quelle pour le globe (D38).
+///
+/// Aucune géométrie ici, et c'est le correctif : la première version relisait
+/// le patron dans une nappe équirectangulaire, dont les colonnes s'effondrent
+/// au pôle — des dizaines d'entre elles y retombaient sur le même pixel, et le
+/// plus proche voisin en faisait une rosace de secteurs. Le globe lit désormais
+/// **le patron lui-même**, face par face, et un cube n'a pas de pôle.
+///
+/// On ne fait donc que remettre les octets dans une image indexée par les
+/// coordonnées du patron — non retournée, contrairement à celle de `make_raw`,
+/// parce que `cube::PATRON` parle dans ce repère-là.
+fn image_du_patron(couche: &[u32], map_size: Vec2<u16>) -> image::RgbaImage {
+    let (l, h) = (map_size.x as u32, map_size.y as u32);
+    let mut brut = vec![0u8; (l as usize) * (h as usize) * 4];
+    for (i, px) in couche.iter().enumerate() {
+        let [r, g, b, _] = px.to_le_bytes();
+        brut[i * 4..i * 4 + 4].copy_from_slice(&[r, g, b, 255]);
+    }
+    image::ImageBuffer::from_raw(l, h, brut).expect("les dimensions viennent du tampon lui-même")
+}
+
 pub struct WorldData {
     /// Just the "base" layer for LOD; currently includes colors and nothing
     /// else. In the future we'll add more layers, like shadows, rivers, and
@@ -182,6 +203,12 @@ pub struct WorldData {
     /// any land chunk (i.e. the sea level) in its x coordinate, and the maximum
     /// land height above this height (i.e. the max height) in its y coordinate.
     map: (Vec<Arc<DynamicImage>>, Vec2<u16>, Vec2<f32>),
+    /// Les mêmes couches, en coordonnées du patron et non retournées : c'est
+    /// ce que le globe échantillonne, face par face (D38).
+    ///
+    /// `None` sur une carte plate — c'est ce `None` qui laisse la carte
+    /// d'origine intacte, et donc le monde plat jouable.
+    patron: Option<Vec<Arc<image::RgbaImage>>>,
 }
 
 impl WorldData {
@@ -192,6 +219,9 @@ impl WorldData {
     pub fn map_image(&self) -> &Arc<DynamicImage> { &self.map.0[0] }
 
     pub fn topo_map_image(&self) -> &Arc<DynamicImage> { &self.map.0[1] }
+
+    /// Les couches en coordonnées du patron, ou `None` si le monde est plat.
+    pub fn couches_du_patron(&self) -> Option<&Vec<Arc<image::RgbaImage>>> { self.patron.as_ref() }
 
     pub fn min_chunk_alt(&self) -> f32 { self.map.2.x }
 
@@ -999,6 +1029,16 @@ impl Client {
                     .flipv(),
                 ))
             };
+            // Les couches du globe se prennent sur les tampons **avant** le
+            // retournement de `make_raw` : leurs indices sont ceux du patron,
+            // et c'est dans ce repère que parle `cube::PATRON`.
+            let patron = map_size_lg.est_cubique().then(|| {
+                debug!("Preparing patron layers...");
+                vec![
+                    Arc::new(image_du_patron(&world_map_rgba, map_size)),
+                    Arc::new(image_du_patron(&world_map_topo, map_size)),
+                ]
+            });
             let lod_base = rgba;
             let lod_alt = alt;
             let world_map_rgb_img = make_raw(&world_map_rgba)?;
@@ -1018,6 +1058,7 @@ impl Client {
                 lod_alt,
                 Grid::from_raw(map_size.map(|e| e as i32), lod_horizon),
                 (world_map_layers, map_size, map_bounds),
+                patron,
                 world_map.sites,
                 world_map.possible_starting_sites,
                 world_map.pois,
@@ -1036,6 +1077,7 @@ impl Client {
             lod_alt,
             lod_horizon,
             world_map,
+            patron,
             sites,
             possible_starting_sites,
             pois,
@@ -1071,6 +1113,7 @@ impl Client {
                 lod_alt,
                 lod_horizon,
                 map: world_map,
+                patron,
             },
             weather: WeatherLerp::default(),
             player_list: HashMap::new(),

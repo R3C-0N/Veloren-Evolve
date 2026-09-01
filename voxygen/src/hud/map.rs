@@ -6,6 +6,7 @@ use super::{
 use crate::{
     GlobalState,
     game_input::GameInput,
+    hud::globe::Planete,
     session::settings_change::{Interface as InterfaceChange, Interface::*},
     ui::{ImageFrame, Tooltip, TooltipManager, Tooltipable, fonts::Fonts, img_ids},
     window::KeyMouse,
@@ -131,6 +132,10 @@ pub struct Map<'a> {
     location_markers: &'a MapMarkers,
     map_drag: Vec2<f64>,
     extra_markers: &'a [ExtraMarker],
+    /// La planète et les images de globe déjà rastérisées, quand le monde est
+    /// un patron de cube (D38). `None` sur une carte plate, et c'est alors le
+    /// chemin d'origine — découpe de source dans le patron — qui sert.
+    globe: Option<(&'a Planete, conrod_core::image::Id)>,
 }
 impl<'a> Map<'a> {
     pub fn new(
@@ -146,6 +151,7 @@ impl<'a> Map<'a> {
         location_markers: &'a MapMarkers,
         map_drag: Vec2<f64>,
         extra_markers: &'a [ExtraMarker],
+        globe: Option<(&'a Planete, conrod_core::image::Id)>,
     ) -> Self {
         Self {
             imgs,
@@ -161,6 +167,7 @@ impl<'a> Map<'a> {
             location_markers,
             map_drag,
             extra_markers,
+            globe,
         }
     }
 }
@@ -377,11 +384,26 @@ impl Widget for Map<'_> {
 
         let map_size = Vec2::new(760.0, 760.0);
 
-        let player_pos_chunks =
-            player_pos.xy().map(|x| x as f64) / TerrainChunkSize::RECT_SIZE.map(|x| x as f64);
-        let min_drag = player_pos_chunks - worldsize.map(|x| x as f64);
-        let max_drag = player_pos_chunks;
-        let drag = self.map_drag.clamped(min_drag, max_drag);
+        // Sur une planète, `map_drag` n'est plus un décalage en chunks mais un
+        // **écart d'angles** — longitude et latitude — depuis le lieu du
+        // joueur. Il change de sens plutôt que de s'ajouter : c'est de l'état
+        // de HUD, il ne se persiste pas, et deux notions de « où l'on
+        // regarde » finiraient par diverger.
+        let (drag, vue, rayon_px) = match self.globe {
+            Some((planete, _)) => {
+                let joueur = player_pos.xy().map(|e| e as f64);
+                let drag = planete.borner_glissement(joueur, self.map_drag);
+                let vue = planete.vue_carte(joueur, drag);
+                (drag, Some(vue), planete.rayon_px(zoom))
+            },
+            None => {
+                let player_pos_chunks = player_pos.xy().map(|x| x as f64)
+                    / TerrainChunkSize::RECT_SIZE.map(|x| x as f64);
+                let min_drag = player_pos_chunks - worldsize.map(|x| x as f64);
+                let max_drag = player_pos_chunks;
+                (self.map_drag.clamped(min_drag, max_drag), None, 0.0)
+            },
+        };
 
         enum MarkerChange {
             Pos(Vec2<f32>),
@@ -403,9 +425,23 @@ impl Widget for Map<'_> {
                             events.push(Event::SetLocationMarker(wpos.as_()))
                         },
                         MarkerChange::ClickPos => {
-                            let tmp: Vec2<f64> = Vec2::<f64>::from(click.xy) / zoom - drag;
-                            let wpos = tmp.as_::<f32>().cpos_to_wpos() + player_pos;
-                            events.push(Event::SetLocationMarker(wpos.as_()));
+                            // Le clic est redressé **une fois**, ici, et le
+                            // monde n'est ensuite interrogé qu'à plat : c'est
+                            // la règle du sens unique de D27. Hors du disque
+                            // l'écran ne montre pas la planète, et il n'y a
+                            // rien à désigner.
+                            let wpos = match (self.globe, vue) {
+                                (Some((planete, _)), Some(vue)) => vue
+                                    .depuis_ecran(Vec2::<f64>::from(click.xy) / rayon_px)
+                                    .map(|d| planete.wpos_de(d).map(|e| e as f32)),
+                                _ => {
+                                    let tmp: Vec2<f64> = Vec2::<f64>::from(click.xy) / zoom - drag;
+                                    Some(tmp.as_::<f32>().cpos_to_wpos() + player_pos.xy())
+                                },
+                            };
+                            if let Some(wpos) = wpos {
+                                events.push(Event::SetLocationMarker(wpos.as_()));
+                            }
                         },
                         MarkerChange::Remove => events.push(Event::RemoveMarker),
                     }
@@ -419,7 +455,13 @@ impl Widget for Map<'_> {
                     .sum();
                 if scrolled != 0.0 {
                     let max_zoom = 16.0;
-                    let min_zoom = map_size.x / worldsize.reduce_partial_max() as f64 / 2.0;
+                    // Sur une planète, le cran le plus large est celui où le
+                    // globe entier tient dans le cadre : au-delà on ne ferait
+                    // que l'éloigner dans du vide.
+                    let min_zoom = match self.globe {
+                        Some((planete, _)) => planete.zoom_ajuste(map_size.x),
+                        None => map_size.x / worldsize.reduce_partial_max() as f64 / 2.0,
+                    };
                     let new_zoom_lvl: f64 = (f64::log2(zoom) - scrolled * 0.03)
                         .exp2()
                         .clamp(min_zoom.min(max_zoom), max_zoom); // min_zoom can > 16 for small maps
@@ -430,7 +472,14 @@ impl Widget for Map<'_> {
                         .map(|mouse| mouse.rel_xy());
                     if let Some(cursor_pos) = cursor_mouse_pos {
                         let mouse_pos = Vec2::from_slice(&cursor_pos);
-                        let drag_new = drag + mouse_pos * (1.0 / new_zoom_lvl - 1.0 / zoom);
+                        let drag_new = match self.globe {
+                            // Le zoom du globe ne déplace pas le centre : le
+                            // point sous le curseur ne peut pas être tenu fixe
+                            // sans faire tourner la planète, et une carte qui
+                            // tourne à la molette se pilote très mal.
+                            Some(_) => drag,
+                            None => drag + mouse_pos * (1.0 / new_zoom_lvl - 1.0 / zoom),
+                        };
                         if drag_new != drag {
                             events.push(Event::MapDrag(drag_new));
                         }
@@ -444,8 +493,15 @@ impl Widget for Map<'_> {
                     .left()
                     .map(|drag| Vec2::<f64>::from(drag.delta_xy))
                     .sum();
-                // Drag represents offset of view from the player_pos in chunk coords
-                let drag_new = drag + dragged / zoom;
+                // Sur un patron, le glisser est un décalage en chunks ; sur
+                // une planète, il fait **tourner le globe**, et un pixel vaut
+                // un rayon d'angle. Le signe est celui qu'attend la main : la
+                // planète suit le curseur.
+                let drag_new = match self.globe {
+                    Some(_) if rayon_px > 0.0 => drag + dragged / rayon_px,
+                    Some(_) => drag,
+                    None => drag + dragged / zoom,
+                };
                 if drag_new != drag {
                     events.push(Event::MapDrag(drag_new));
                 }
@@ -481,20 +537,35 @@ impl Widget for Map<'_> {
         }
 
         // Map Layer Images
-        for (index, layer) in self.world_map.0.iter().enumerate() {
+        //
+        // Sur une planète, le globe est **déjà** rastérisé à la taille du
+        // cadre : on le pose tel quel, sans découpe de source. Un rectangle
+        // source ne saurait de toute façon pas dessiner une sphère.
+        // Les deux couches sont opaques : la topographique recouvre l'ombrée
+        // plutôt qu'elle ne s'y ajoute. Le globe n'en rastérise donc qu'une —
+        // celle qu'on va voir —, là où le patron les empile.
+        let couches: Vec<conrod_core::image::Id> = match self.globe {
+            Some((_, image)) => vec![image],
+            None => self.world_map.0.iter().map(|l| l.none).collect(),
+        };
+        for (index, layer) in couches.iter().enumerate() {
+            if index >= state.ids.map_layers.len() {
+                break;
+            }
+            if index != 0 && !show_topo_map {
+                continue;
+            }
+            let mut bouton = Button::image(*layer)
+                .mid_top_with_margin_on(state.ids.map_align, 10.0)
+                .w_h(map_size.x, map_size.y)
+                .parent(state.ids.bg);
+            if self.globe.is_none() {
+                bouton = bouton.source_rectangle(rect_src);
+            }
             if index == 0 {
-                Button::image(layer.none)
-                    .mid_top_with_margin_on(state.ids.map_align, 10.0)
-                    .w_h(map_size.x, map_size.y)
-                    .parent(state.ids.bg)
-                    .source_rectangle(rect_src)
-                    .set(state.ids.map_layers[index], ui);
-            } else if show_topo_map {
-                Button::image(layer.none)
-                    .mid_top_with_margin_on(state.ids.map_align, 10.0)
-                    .w_h(map_size.x, map_size.y)
-                    .parent(state.ids.bg)
-                    .source_rectangle(rect_src)
+                bouton.set(state.ids.map_layers[index], ui);
+            } else {
+                bouton
                     .graphics_for(state.ids.map_layers[0])
                     .set(state.ids.map_layers[index], ui);
             }
@@ -971,17 +1042,42 @@ impl Widget for Map<'_> {
             });
         }
 
+        // Le point de passage **unique** de tout ce qui se pose sur la carte :
+        // sites, POI, pics, biomes, membres du groupe, marqueur de lieu, flèche
+        // du joueur. C'est ce seul endroit qui corrige le défaut de fond — sur
+        // le patron, un site au-delà d'une couture s'affichait à la distance du
+        // dépliage, donc à l'autre bout de la carte.
         let wpos_to_rpos_fade =
             |wpos: Vec2<f32>, bounding_rect_size: Vec2<f32>, fade_start: f32| {
-                // Site pos in world coordinates relative to the player
-                let rwpos = wpos - player_pos;
-                // Convert to chunk coordinates
-                let rcpos = rwpos.wpos_to_cpos()
-                // Add map dragging
-                + drag.map(|e| e as f32);
-                // Convert to relative pixel coordinates from the center of the map
-                // Accounting for zooming
-                let rpos = rcpos.map(|e| e * zoom as f32);
+                let (rpos, fondu_limbe) = match (self.globe, vue) {
+                    (Some((planete, _)), Some(vue)) => {
+                        let v = vue.decomposer(planete.direction(wpos.map(|e| e as f64))?);
+                        if v.z <= 0.0 {
+                            // La face cachée du globe. Sans ce test, un site des
+                            // antipodes viendrait se poser exactement sur son
+                            // symétrique visible.
+                            return None;
+                        }
+                        // Au ras du limbe, la sphère file de profil : deux lieux
+                        // très éloignés s'y écrasent au même pixel. On les
+                        // efface plutôt que de les empiler.
+                        (
+                            Vec2::new(v.x * rayon_px, v.y * rayon_px).map(|e| e as f32),
+                            (v.z / 0.12).clamp(0.0, 1.0) as f32,
+                        )
+                    },
+                    _ => {
+                        // Site pos in world coordinates relative to the player
+                        let rwpos = wpos - player_pos.xy();
+                        // Convert to chunk coordinates
+                        let rcpos = rwpos.wpos_to_cpos()
+                        // Add map dragging
+                        + drag.map(|e| e as f32);
+                        // Convert to relative pixel coordinates from the center of the map
+                        // Accounting for zooming
+                        (rcpos.map(|e| e * zoom as f32), 1.0)
+                    },
+                };
 
                 let dist_to_closest_map_edge =
                     (rpos.map2(map_size, |e, sz| sz as f32 / 2.0 - e.abs()) - bounding_rect_size)
@@ -991,9 +1087,9 @@ impl Widget for Map<'_> {
                     x if x < fade_start => Some((
                         rpos,
                         // Easing function
-                        1.0 - 2.0_f32.powf(-10.0 * x / fade_start),
+                        (1.0 - 2.0_f32.powf(-10.0 * x / fade_start)) * fondu_limbe,
                     )),
-                    _ => Some((rpos, 1.0)),
+                    _ => Some((rpos, fondu_limbe)),
                 }
             };
 

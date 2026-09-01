@@ -8,6 +8,7 @@ mod chat;
 mod crafting;
 mod diary;
 mod esc_menu;
+mod globe;
 mod group;
 mod hotbar;
 mod loot_scroller;
@@ -1366,6 +1367,14 @@ pub struct Hud {
     crosshair_opacity: f32,
     floaters: Floaters,
     voxel_minimap: VoxelMinimap,
+    /// Le tampon du globe de la grande carte (D38). Jamais créé sur un monde
+    /// plat.
+    globe: Option<globe::Globe>,
+    /// Le tampon de la minicarte, quand le monde est une planète.
+    globe_mini: Option<globe::Globe>,
+    /// La planète, retenue d'une image sur l'autre : le raccourci de zoom est
+    /// traité hors de la mise en page, où le client n'est pas sous la main.
+    planete: Option<globe::Planete>,
     map_drag: Vec2<f64>,
     force_chat: bool,
     clear_chat: bool,
@@ -1439,6 +1448,9 @@ impl Hud {
 
         Self {
             voxel_minimap: VoxelMinimap::new(&mut ui),
+            globe: None,
+            globe_mini: None,
+            planete: None,
             ui,
             imgs,
             world_map,
@@ -1524,6 +1536,73 @@ impl Hud {
         if global_state.settings.interface.map_show_voxel_map {
             self.voxel_minimap.maintain(client, &mut self.ui);
         }
+
+        // Le globe se rastérise **ici** : c'est le dernier endroit du tick où
+        // l'on tient encore `&mut Ui`, et il faut `replace_graphic` pour
+        // échanger le tampon. C'est aussi le mécanisme de `VoxelMinimap`, à
+        // ceci près qu'un globe se refait quand la *vue* bouge, pas le joueur.
+        let planete = globe::Planete::depuis(client);
+        self.planete = planete;
+        let mut image_globe = None;
+        if let (Some(planete), Some(couches)) = (planete, client.world_data().couches_du_patron()) {
+            let couches = couches.clone();
+            // Les deux couches sont opaques et se recouvrent : la topographique
+            // remplace l'ombrée plutôt qu'elle ne s'y ajoute. On ne rastérise
+            // donc que celle qu'on va voir, et non les deux.
+            let couche = usize::from(global_state.settings.interface.map_show_topo_map)
+                .min(couches.len().saturating_sub(1));
+            let joueur = client
+                .state()
+                .read_storage::<comp::Pos>()
+                .get(client.entity())
+                .map_or(Vec2::zero(), |p| p.0.xy().map(|e| e as f64));
+
+            if self.show.map {
+                let g = self
+                    .globe
+                    .get_or_insert_with(|| globe::Globe::nouveau(&mut self.ui, globe::COTE));
+                let drag = planete.borner_glissement(joueur, self.map_drag);
+                let vue = planete.vue_carte(joueur, drag);
+                let rayon = planete.rayon_px(global_state.settings.interface.map_zoom);
+                g.maintain(
+                    &mut self.ui,
+                    &couches[couche],
+                    &planete,
+                    couche,
+                    &vue,
+                    rayon,
+                );
+                image_globe = Some(g.image());
+            }
+
+            if global_state.settings.interface.minimap_show {
+                let mini = self
+                    .globe_mini
+                    .get_or_insert_with(|| globe::Globe::nouveau(&mut self.ui, globe::COTE_MINI));
+                let cap = if global_state.settings.interface.minimap_face_north {
+                    0.0
+                } else {
+                    camera.get_orientation().x as f64
+                };
+                if let Some(vue) = planete.vue_locale(joueur, cap) {
+                    let rayon = globe::rayon_mini(
+                        &planete,
+                        global_state.settings.interface.minimap_zoom,
+                        client.world_data().chunk_size(),
+                    );
+                    mini.maintain(
+                        &mut self.ui,
+                        &couches[couche],
+                        &planete,
+                        couche,
+                        &vue,
+                        rayon,
+                    );
+                }
+            }
+        }
+        let image_globe_mini = planete.and(self.globe_mini.as_ref().map(|g| g.image()));
+
         let scale = self.ui.scale();
         let (ui_widgets, item_tooltip_manager, tooltip_manager) = &mut self.ui.set_widgets();
         // self.ui.set_item_widgets(); pulse time for pulsating elements
@@ -3548,6 +3627,7 @@ impl Hud {
             &persisted_state.location_markers,
             &self.voxel_minimap,
             &self.extra_markers,
+            planete.as_ref().zip(image_globe_mini),
         )
         .set(self.ids.minimap, ui_widgets)
         {
@@ -4040,6 +4120,7 @@ impl Hud {
                 &persisted_state.location_markers,
                 self.map_drag,
                 &self.extra_markers,
+                planete.as_ref().zip(image_globe),
             )
             .set(self.ids.map, ui_widgets)
             {
@@ -4994,6 +5075,7 @@ impl Hud {
         fn handle_map_zoom(
             factor: f64,
             world_size: Vec2<u32>,
+            planete: Option<globe::Planete>,
             show: &Show,
             global_state: &mut GlobalState,
         ) -> bool {
@@ -5002,8 +5084,11 @@ impl Hud {
             let max_zoom = world_size.reduce_partial_max() as f64;
 
             if show.map {
+                // Sur une planète, le cran le plus large est celui où le globe
+                // entier tient dans le cadre — pas la largeur du patron.
+                let min_zoom = planete.map_or(1.25, |p| p.zoom_ajuste(760.0));
                 let new_zoom_lvl = (global_state.settings.interface.map_zoom * factor)
-                    .clamped(1.25, max_zoom / 64.0);
+                    .clamped(min_zoom.min(max_zoom / 64.0), max_zoom / 64.0);
                 global_state.settings.interface.map_zoom = new_zoom_lvl;
             } else if global_state.settings.interface.minimap_show {
                 // Duplicated code from voxygen/src/hud/minimap.rs:522 in the update fn
@@ -5202,12 +5287,20 @@ impl Hud {
                         self.show.ingame = !self.show.ingame;
                         true
                     },
-                    GameInput::MapZoomIn if state => {
-                        handle_map_zoom(2.0, self.world_map.1, &self.show, global_state)
-                    },
-                    GameInput::MapZoomOut if state => {
-                        handle_map_zoom(0.5, self.world_map.1, &self.show, global_state)
-                    },
+                    GameInput::MapZoomIn if state => handle_map_zoom(
+                        2.0,
+                        self.world_map.1,
+                        self.planete,
+                        &self.show,
+                        global_state,
+                    ),
+                    GameInput::MapZoomOut if state => handle_map_zoom(
+                        0.5,
+                        self.world_map.1,
+                        self.planete,
+                        &self.show,
+                        global_state,
+                    ),
                     GameInput::MuteMaster if state => {
                         toggle_mute(Audio::MuteMasterVolume(!gs_audio.master_volume.muted))
                     },
