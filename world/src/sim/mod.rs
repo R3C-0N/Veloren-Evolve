@@ -53,8 +53,8 @@ use common::{
     spot::Spot,
     store::{Id, Store},
     terrain::{
-        BiomeKind, CoordinateConversions, MapSizeLg, TerrainChunk, TerrainChunkSize, cube,
-        map::MapConfig, neighbors, uniform_idx_as_vec2, vec2_as_uniform_idx,
+        BiomeKind, CoordinateConversions, MapSizeLg, TerrainChunk, TerrainChunkSize, Topologie,
+        cube, map::MapConfig, neighbors, uniform_idx_as_vec2, vec2_as_uniform_idx,
     },
     vol::RectVolSize,
 };
@@ -217,8 +217,16 @@ impl FileOpts {
         let mut gen_opts = self.gen_opts().unwrap_or_default();
 
         let map_size_lg = if let Some(map) = &parsed_world_file {
-            MapSizeLg::new(map.map_size_lg)
-                .expect("World size of loaded map does not satisfy invariants.")
+            // **Les dimensions ne disent pas la forme** (D37) : un patron de
+            // cube est un rectangle en mémoire. Reconstruire la carte à partir
+            // des seules dimensions la rendait plate, sans que rien ne le
+            // signale — une planète redevenait un plan à la deuxième ouverture
+            // de son monde. La topologie est donc enregistrée avec la carte.
+            match map.topologie {
+                Topologie::Cube => MapSizeLg::nouvelle_cubique(map.map_size_lg),
+                Topologie::Plate => MapSizeLg::new(map.map_size_lg),
+            }
+            .expect("World size of loaded map does not satisfy invariants.")
         } else {
             self.map_size()
         };
@@ -380,10 +388,20 @@ impl FileOpts {
                 let GenOpts {
                     x_lg, y_lg, scale, ..
                 } = opts;
+                // On passe par `into_modern` plutôt que de filtrer une seule
+                // version : la comparaison qui suit ne regarde que des champs
+                // que toutes les versions portent, et une carte d'avant le cube
+                // n'a aucune raison d'être refusée ici.
                 let map = match map {
-                    WorldFile::Veloren0_7_0(map) => map,
                     WorldFile::Veloren0_5_0(_) => {
                         panic!("World file v0.5.0 isn't supported with LoadOrGenerate.")
+                    },
+                    autre => match autre.into_modern() {
+                        Ok(map) => map,
+                        Err(WorldFileError::WorldSizeInvalid) => {
+                            warn!("World size of map is invalid.");
+                            return None;
+                        },
                     },
                 };
 
@@ -525,6 +543,29 @@ pub struct WorldMap_0_7_0 {
     pub basement: Box<[Alt]>,
 }
 
+/// Version du fichier de carte pour Veloren 0.18.0 — celle du fork.
+///
+/// Elle ajoute un seul champ, et il est indispensable : **la forme du monde**.
+/// `map_size_lg` ne porte que les dimensions, or un patron de cube *est* un
+/// rectangle en mémoire (D37). Une carte rechargée à partir des seules
+/// dimensions redevenait donc une carte plate — en silence, sans que rien ne
+/// plante : la planète disparaissait à la deuxième ouverture d'un monde.
+#[derive(Serialize, Deserialize)]
+#[repr(C)]
+pub struct WorldMap_0_18_0 {
+    /// Saved map size.
+    pub map_size_lg: Vec2<u32>,
+    /// La topologie : plate, ou patron de cube.
+    pub topologie: Topologie,
+    /// Saved continent_scale hack, to try to better approximate the correct
+    /// seed according to varying map size.
+    pub continent_scale_hack: f64,
+    /// Saved altitude height map.
+    pub alt: Box<[Alt]>,
+    /// Saved basement height map.
+    pub basement: Box<[Alt]>,
+}
+
 /// Errors when converting a map to the most recent type (currently,
 /// shared by the various map types, but at some point we might switch to
 /// version-specific errors if it feels worthwhile).
@@ -564,6 +605,7 @@ pub enum WorldFileError {
 pub enum WorldFile {
     Veloren0_5_0(WorldMap_0_5_0) = 0,
     Veloren0_7_0(WorldMap_0_7_0) = 1,
+    Veloren0_18_0(WorldMap_0_18_0) = 2,
 }
 
 impl FileAsset for WorldFile {
@@ -574,7 +616,7 @@ impl FileAsset for WorldFile {
 
 /// Data for the most recent map type.  Update this when you add a new map
 /// version.
-pub type ModernMap = WorldMap_0_7_0;
+pub type ModernMap = WorldMap_0_18_0;
 
 /// The default world map.
 ///
@@ -661,6 +703,28 @@ impl WorldMap_0_7_0 {
             return Err(WorldFileError::WorldSizeInvalid);
         }
 
+        // Toute carte enregistrée avant que le cube n'existe est plate, et le
+        // rester est la bonne réponse — pas un défaut de conversion.
+        Ok(WorldMap_0_18_0 {
+            map_size_lg: self.map_size_lg,
+            topologie: Topologie::Plate,
+            continent_scale_hack: self.continent_scale_hack,
+            alt: self.alt,
+            basement: self.basement,
+        })
+    }
+}
+
+impl WorldMap_0_18_0 {
+    #[inline]
+    pub fn into_modern(self) -> Result<ModernMap, WorldFileError> {
+        if self.alt.len() != self.basement.len()
+            || self.alt.len() != (1 << (self.map_size_lg.x + self.map_size_lg.y))
+            || self.continent_scale_hack <= 0.0
+        {
+            return Err(WorldFileError::WorldSizeInvalid);
+        }
+
         Ok(self)
     }
 }
@@ -670,7 +734,7 @@ impl WorldFile {
     /// for serialization. Whenever a new map is updated, just change the
     /// variant we construct here to make sure we're using the latest map
     /// version.
-    pub fn new(map: ModernMap) -> Self { WorldFile::Veloren0_7_0(map) }
+    pub fn new(map: ModernMap) -> Self { WorldFile::Veloren0_18_0(map) }
 
     #[inline]
     /// Turns a WorldFile into the latest version.  Whenever a new map version
@@ -679,6 +743,7 @@ impl WorldFile {
         match self {
             WorldFile::Veloren0_5_0(map) => map.into_modern(),
             WorldFile::Veloren0_7_0(map) => map.into_modern(),
+            WorldFile::Veloren0_18_0(map) => map.into_modern(),
         }
     }
 }
@@ -1459,6 +1524,7 @@ impl WorldSim {
         let map = WorldFile::new(ModernMap {
             continent_scale_hack: gen_opts.scale,
             map_size_lg: map_size_lg.vec(),
+            topologie: map_size_lg.topologie(),
             alt,
             basement,
         });
@@ -1471,6 +1537,7 @@ impl WorldSim {
         let ModernMap {
             continent_scale_hack: _,
             map_size_lg: _,
+            topologie: _,
             alt,
             basement,
         } = map.into_modern().unwrap();
