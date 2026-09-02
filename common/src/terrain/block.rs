@@ -49,7 +49,15 @@ make_case_elim!(
         // qu'a un outil de pierre, l'obsidienne qu'a un outil de metal.
         HardRock = 0x15,
         Obsidian = 0x16,
-        // 0x17 <= x < 0x20 is reserved for future rocks
+        // Les deux roches des regions extremes (D43) : le basalte des mers de
+        // lave, le cristal des zones de magie instable.
+        Basalt = 0x17,
+        Crystal = 0x18,
+        // Le gres des deserts. Il existait deja comme *apparence* — un
+        // `WeakRock` teinte dans `world/src/layer/rock.rs` —, ce qui donnait
+        // deux gres : l'un lachait de la pierre, l'autre du gres.
+        Sandstone = 0x19,
+        // 0x1A <= x < 0x20 is reserved for future rocks
         Grass = 0x20, // Note: *not* the same as grass sprites
         Snow = 0x21,
         // Snow to use with sites, to not attract snowfall particles
@@ -57,13 +65,27 @@ make_case_elim!(
         // 0x21 <= x < 0x30 is reserved for future grasses
         Earth = 0x30,
         Sand = 0x31,
-        // 0x32 <= x < 0x40 is reserved for future earths/muds/gravels/sands/etc.
+        // Les trois sols des regions extremes (D43) : la cendre volcanique, la
+        // tourbe des marais miasmiques, le sable vitrifie par la foudre.
+        Ash = 0x32,
+        Peat = 0x33,
+        Fulgurite = 0x34,
+        // La pierraille des pentes de montagne : de la roche **deliee**, d'ou
+        // sa place chez les sols et non chez les roches.
+        Scree = 0x35,
+        // 0x36 <= x < 0x40 is reserved for future earths/muds/gravels/sands/etc.
         Wood = 0x40,
         Leaves = 0x41,
         GlowingMushroom = 0x42,
         Ice = 0x43,
         ArtLeaves = 0x44,
-        // 0x43 <= x < 0x50 is reserved for future tree parts
+        // Les deux glaces des calottes (D42) et le bois pourri des marais.
+        // `Ice` occupait deja cette plage en amont, malgre son intitule : les
+        // glaces se rangent aupres d'elle plutot que de se disperser.
+        PackIce = 0x45,
+        ShelfIce = 0x46,
+        Blight = 0x47,
+        // 0x48 <= x < 0x50 is reserved for future tree parts
         // Covers all other cases (we sometimes have bizarrely coloured misc blocks, and also we
         // often want to experiment with new kinds of block without allocating them a
         // dedicated block kind.
@@ -116,9 +138,16 @@ impl BlockKind {
                 | BlockKind::GlowingRock
                 | BlockKind::GlowingWeakRock
                 | BlockKind::HardRock
+                | BlockKind::Basalt
+                | BlockKind::Crystal
+                | BlockKind::Sandstone
                 | BlockKind::Grass
                 | BlockKind::Earth
                 | BlockKind::Sand
+                | BlockKind::Ash
+                | BlockKind::Peat
+                | BlockKind::Fulgurite
+                | BlockKind::Scree
         )
     }
 
@@ -140,6 +169,16 @@ impl BlockKind {
             | BlockKind::GlowingWeakRock => "common.items.block.stone",
             BlockKind::HardRock => "common.items.block.hard_rock",
             BlockKind::Obsidian => "common.items.block.obsidian",
+            BlockKind::Sandstone => "common.items.block.sandstone",
+            BlockKind::Scree => "common.items.block.scree",
+            BlockKind::Basalt => "common.items.block.basalt",
+            BlockKind::Crystal => "common.items.block.crystal",
+            BlockKind::Ash => "common.items.block.ash",
+            BlockKind::Peat => "common.items.block.peat",
+            BlockKind::Fulgurite => "common.items.block.fulgurite",
+            BlockKind::PackIce => "common.items.block.pack_ice",
+            BlockKind::ShelfIce => "common.items.block.shelf_ice",
+            BlockKind::Blight => "common.items.block.blight",
             BlockKind::Grass => "common.items.block.grass",
             BlockKind::Snow | BlockKind::ArtSnow => "common.items.block.snow",
             BlockKind::Earth => "common.items.block.earth",
@@ -172,17 +211,27 @@ impl BlockKind {
             | BlockKind::GlowingWeakRock
             | BlockKind::HardRock
             | BlockKind::Obsidian
+            | BlockKind::Basalt
+            | BlockKind::Crystal
+            | BlockKind::Sandstone
             | BlockKind::Ice
+            | BlockKind::PackIce
+            | BlockKind::ShelfIce
             | BlockKind::Misc => ToolKind::Pick,
             BlockKind::Wood
             | BlockKind::Leaves
             | BlockKind::ArtLeaves
+            | BlockKind::Blight
             | BlockKind::GlowingMushroom => ToolKind::Axe,
             BlockKind::Earth
             | BlockKind::Sand
             | BlockKind::Grass
             | BlockKind::Snow
-            | BlockKind::ArtSnow => ToolKind::Shovel,
+            | BlockKind::ArtSnow
+            | BlockKind::Ash
+            | BlockKind::Peat
+            | BlockKind::Fulgurite
+            | BlockKind::Scree => ToolKind::Shovel,
             BlockKind::Air | BlockKind::Water | BlockKind::Lava => return None,
         })
     }
@@ -201,12 +250,24 @@ impl BlockKind {
             | BlockKind::ArtLeaves
             | BlockKind::GlowingMushroom => 0.4,
             BlockKind::Earth | BlockKind::Sand => 0.6,
+            BlockKind::Ash | BlockKind::Peat => 0.5,
+            BlockKind::Blight => 1.5,
+            // De la roche, mais deliee : on la deplace, on ne la casse pas.
+            BlockKind::Scree => 1.2,
+            BlockKind::Fulgurite => 1.6,
             BlockKind::Wood | BlockKind::Ice => 2.0,
+            // La banquise est broyee et fracturee, la barriere est du neve
+            // tasse : la seconde resiste plus que la premiere.
+            BlockKind::PackIce => 2.0,
+            BlockKind::ShelfIce => 3.0,
             BlockKind::Rock
             | BlockKind::WeakRock
             | BlockKind::GlowingRock
             | BlockKind::GlowingWeakRock
             | BlockKind::Misc => 5.0,
+            BlockKind::Sandstone => 3.0,
+            BlockKind::Basalt => 8.0,
+            BlockKind::Crystal => 10.0,
             BlockKind::HardRock => 12.0,
             BlockKind::Obsidian => 30.0,
             BlockKind::Air | BlockKind::Water | BlockKind::Lava => 0.0,
@@ -228,6 +289,10 @@ impl BlockKind {
             | BlockKind::GlowingMushroom
             | BlockKind::Earth
             | BlockKind::Sand
+            | BlockKind::Ash
+            | BlockKind::Peat
+            | BlockKind::Blight
+            | BlockKind::Scree
             | BlockKind::Air
             | BlockKind::Water
             | BlockKind::Lava => 0,
@@ -237,8 +302,14 @@ impl BlockKind {
             | BlockKind::WeakRock
             | BlockKind::GlowingRock
             | BlockKind::GlowingWeakRock
+            | BlockKind::Fulgurite
+            | BlockKind::Sandstone
+            | BlockKind::PackIce
+            | BlockKind::ShelfIce
             | BlockKind::Misc => 1,
-            BlockKind::HardRock => 2,
+            // Le basalte et le cristal sont des roches de region extreme : on
+            // ne les rapporte pas avec une pioche de bois.
+            BlockKind::HardRock | BlockKind::Basalt | BlockKind::Crystal => 2,
             BlockKind::Obsidian => 3,
         }
     }
@@ -264,6 +335,16 @@ pub fn block_from_item(item_id: &str) -> Option<Block> {
         "common.items.block.stone" => (BlockKind::Rock, (122, 122, 128)),
         "common.items.block.hard_rock" => (BlockKind::HardRock, (78, 80, 88)),
         "common.items.block.obsidian" => (BlockKind::Obsidian, (34, 28, 44)),
+        "common.items.block.sandstone" => (BlockKind::Sandstone, (204, 166, 110)),
+        "common.items.block.scree" => (BlockKind::Scree, (122, 118, 112)),
+        "common.items.block.basalt" => (BlockKind::Basalt, (56, 52, 58)),
+        "common.items.block.crystal" => (BlockKind::Crystal, (150, 116, 214)),
+        "common.items.block.ash" => (BlockKind::Ash, (92, 86, 84)),
+        "common.items.block.peat" => (BlockKind::Peat, (66, 54, 40)),
+        "common.items.block.fulgurite" => (BlockKind::Fulgurite, (196, 186, 214)),
+        "common.items.block.pack_ice" => (BlockKind::PackIce, (176, 206, 220)),
+        "common.items.block.shelf_ice" => (BlockKind::ShelfIce, (222, 234, 246)),
+        "common.items.block.blight" => (BlockKind::Blight, (72, 66, 48)),
         "common.items.block.grass" => (BlockKind::Grass, (74, 132, 54)),
         "common.items.block.snow" => (BlockKind::Snow, (238, 242, 248)),
         "common.items.block.earth" => (BlockKind::Earth, (104, 74, 50)),
@@ -573,6 +654,9 @@ impl Block {
         let glow_level = match self.kind() {
             BlockKind::Lava => 24,
             BlockKind::GlowingRock | BlockKind::GlowingWeakRock => 10,
+            // Le cristal arcanique luit faiblement : assez pour qu'une pastille
+            // de magie instable se repere de loin, pas assez pour eclairer.
+            BlockKind::Crystal => 6,
             BlockKind::GlowingMushroom => 20,
             _ => match self.get_sprite()? {
                 SpriteKind::StreetLamp | SpriteKind::StreetLampTall | SpriteKind::BonfireMLit => 24,

@@ -113,6 +113,7 @@ hud-settings-particles = Particles
 hud-settings-particle-chance = Particle Chance
 hud-settings-lossy_terrain_compression = Lossy terrain compression
 hud-settings-weapon_trails = Weapon trails
+hud-settings-material_grain = Material grain
 hud-settings-flashing_lights = Flashing lights
 hud-settings-flashing_lights_info = Enables all kinds of flashing, e.g. flickering or lightning strikes
 hud-settings-resolution = Resolution

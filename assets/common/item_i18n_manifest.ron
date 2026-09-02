@@ -3631,6 +3631,96 @@
             "common.items.block.obsidian",
         ): "item-block-obsidian",
         Simple(
+            "common.items.block.basalt",
+        ): "item-block-basalt",
+        Simple(
+            "common.items.block.crystal",
+        ): "item-block-crystal",
+        Simple(
+            "common.items.block.ash",
+        ): "item-block-ash",
+        Simple(
+            "common.items.block.peat",
+        ): "item-block-peat",
+        Simple(
+            "common.items.block.fulgurite",
+        ): "item-block-fulgurite",
+        Simple(
+            "common.items.block.pack_ice",
+        ): "item-block-pack_ice",
+        Simple(
+            "common.items.block.shelf_ice",
+        ): "item-block-shelf_ice",
+        Simple(
+            "common.items.block.blight",
+        ): "item-block-blight",
+        Simple(
+            "common.items.block.sandstone",
+        ): "item-block-sandstone",
+        Simple(
+            "common.items.block.scree",
+        ): "item-block-scree",
+        Simple(
+            "common.items.block.basalt",
+        ): "item-block-basalt",
+        Simple(
+            "common.items.block.crystal",
+        ): "item-block-crystal",
+        Simple(
+            "common.items.block.ash",
+        ): "item-block-ash",
+        Simple(
+            "common.items.block.peat",
+        ): "item-block-peat",
+        Simple(
+            "common.items.block.fulgurite",
+        ): "item-block-fulgurite",
+        Simple(
+            "common.items.block.pack_ice",
+        ): "item-block-pack_ice",
+        Simple(
+            "common.items.block.shelf_ice",
+        ): "item-block-shelf_ice",
+        Simple(
+            "common.items.block.blight",
+        ): "item-block-blight",
+        Simple(
+            "common.items.block.sandstone",
+        ): "item-block-sandstone",
+        Simple(
+            "common.items.block.scree",
+        ): "item-block-scree",
+        Simple(
+            "common.items.block.basalt",
+        ): "item-block-basalt",
+        Simple(
+            "common.items.block.crystal",
+        ): "item-block-crystal",
+        Simple(
+            "common.items.block.ash",
+        ): "item-block-ash",
+        Simple(
+            "common.items.block.peat",
+        ): "item-block-peat",
+        Simple(
+            "common.items.block.fulgurite",
+        ): "item-block-fulgurite",
+        Simple(
+            "common.items.block.pack_ice",
+        ): "item-block-pack_ice",
+        Simple(
+            "common.items.block.shelf_ice",
+        ): "item-block-shelf_ice",
+        Simple(
+            "common.items.block.blight",
+        ): "item-block-blight",
+        Simple(
+            "common.items.block.sandstone",
+        ): "item-block-sandstone",
+        Simple(
+            "common.items.block.scree",
+        ): "item-block-scree",
+        Simple(
             "common.items.crafting_ing.twigs",
         ): "sprite-twigs-twigs-0",
         Simple(

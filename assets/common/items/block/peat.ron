@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Peat",
+    legacy_description: "Waterlogged fibre from the miasmic bogs, dark and heavy with what rotted into it.",
+    kind: Ingredient(
+        descriptor: "Peat",
+    ),
+    quality: Common,
+    tags: [],
+)

@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Volcanic Ash",
+    legacy_description: "Fine grey powder, still warm underfoot. It holds no shape of its own.",
+    kind: Ingredient(
+        descriptor: "Ash",
+    ),
+    quality: Common,
+    tags: [],
+)

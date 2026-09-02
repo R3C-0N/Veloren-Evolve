@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Fulgurite",
+    legacy_description: "Sand the lightning fused where it struck, veined with the shape of the bolt.",
+    kind: Ingredient(
+        descriptor: "Fulgurite",
+    ),
+    quality: Moderate,
+    tags: [],
+)

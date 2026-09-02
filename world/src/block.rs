@@ -7,7 +7,7 @@ use common::{
     calendar::{Calendar, CalendarEvent},
     comp::item::ItemDefinitionIdOwned,
     terrain::{
-        Block, BlockKind, SpriteCfg, SpriteKind, UnlockKind,
+        BiomeKind, Block, BlockKind, SpriteCfg, SpriteKind, UnlockKind,
         structure::{self, StructureBlock},
     },
 };
@@ -17,6 +17,24 @@ use serde::Deserialize;
 use vek::*;
 
 type Gradients = Vec<Range<(u8, u8, u8)>>;
+
+/// Les teintes des matieres qui ne suivent pas le degrade climatique.
+///
+/// Le sol d'un biome prend la couleur du climat melangee a la teinte du biome
+/// (D43) ; ces quatre-la n'ont pas de sol sous elles — une roche de falaise,
+/// une glace posee sur l'ocean — et portent donc leur couleur en propre.
+const TEINTE_BASALTE: Rgb<u8> = Rgb::new(56, 52, 58);
+const TEINTE_CRISTAL: Rgb<u8> = Rgb::new(150, 116, 214);
+const TEINTE_BANQUISE: Rgb<u8> = Rgb::new(176, 206, 220);
+const TEINTE_BARRIERE: Rgb<u8> = Rgb::new(222, 234, 246);
+
+/// Epaisseur minimale des deux calottes, en blocs.
+///
+/// La barriere est plus epaisse que la banquise : c'est du neve tasse contre
+/// des plaques flottantes. C'est aussi ce qui donnera son front de falaise,
+/// quand le relief des calottes viendra.
+const EPAISSEUR_CALOTTE: f32 = 4.0;
+const EPAISSEUR_BARRIERE: f32 = 7.0;
 
 #[derive(Deserialize)]
 pub struct Colors {
@@ -79,6 +97,10 @@ impl<'a> BlockGen<'a> {
 
         let wposf = wpos.map(|e| e as f64);
 
+        // **Le biome designe la matiere** (D43). Il est gratuit : le
+        // `&SimChunk` est deja dans la colonne, on ne le rechercher pas.
+        let biome = sample.chunk.get_biome();
+
         // Sample blocks
         let water = Block::new(BlockKind::Water, Rgb::zero());
         let grass_depth = (1.5 + 2.0 * chaos).min(alt - basement);
@@ -93,10 +115,20 @@ impl<'a> BlockGen<'a> {
         const PROFONDEUR_ROCHE_DURE: f32 = 40.0;
         let profonde = alt - wposf.z as f32 > PROFONDEUR_ROCHE_DURE;
         let roche = |col: Rgb<u8>| {
-            if profonde {
-                Block::new(BlockKind::HardRock, col.map(|e| (e as f32 * 0.62) as u8))
-            } else {
-                Block::new(BlockKind::Rock, col)
+            // Deux regions ont leur propre roche. En profondeur elles cedent la
+            // place a la roche dure : le verrou des grades de D34 vaut partout,
+            // et une region ne doit pas offrir un raccourci vers le fond.
+            match biome {
+                _ if profonde => {
+                    Block::new(BlockKind::HardRock, col.map(|e| (e as f32 * 0.62) as u8))
+                },
+                BiomeKind::Volcanic => Block::new(BlockKind::Basalt, TEINTE_BASALTE),
+                BiomeKind::Arcane => Block::new(BlockKind::Crystal, TEINTE_CRISTAL),
+                // Creuser un desert tombait sur de la roche grise au deuxieme
+                // bloc. Le gres garde sa couleur du degrade, comme la roche
+                // ordinaire : c'est sa matiere qui le distingue, pas sa teinte.
+                BiomeKind::Desert => Block::new(BlockKind::Sandstone, col),
+                _ => Block::new(BlockKind::Rock, col),
             }
         };
         if (wposf.z as f32) < alt - grass_depth {
@@ -132,7 +164,14 @@ impl<'a> BlockGen<'a> {
                     Some(roche(col))
                 }
             } else {
-                Some(Block::new(BlockKind::Earth, col))
+                // Sous la surface, la matiere du biome plutot que de la terre
+                // partout : du gres sous un desert, de la pierraille sous une
+                // montagne. C'est la meme regle qu'en surface, un cran plus bas.
+                Some(match biome {
+                    BiomeKind::Desert => Block::new(BlockKind::Sandstone, col),
+                    BiomeKind::Mountain => Block::new(BlockKind::Scree, col),
+                    _ => Block::new(BlockKind::Earth, col),
+                })
             }
         } else if wposf.z as i32 <= alt as i32 {
             let grass_factor = (wposf.z as f32 - (alt - grass_depth))
@@ -146,13 +185,38 @@ impl<'a> BlockGen<'a> {
                 )
             } else {
                 let col = Lerp::lerp(sub_surface_color, surface_color, grass_factor);
-                if grass_factor < 0.7 {
-                    Block::new(BlockKind::Earth, col.map(|e| (e * 255.0) as u8))
-                } else if snow_cover {
-                    //if temp < CONFIG.snow_temp + 0.031 {
-                    Block::new(BlockKind::Snow, col.map(|e| (e * 255.0) as u8))
-                } else {
-                    Block::new(BlockKind::Grass, col.map(|e| (e * 255.0) as u8))
+                let col = col.map(|e| (e * 255.0) as u8);
+                // Le dessus d'une region extreme est sa matiere, pas de l'herbe
+                // reteintee. La couleur, elle, reste celle du degrade climatique
+                // melangee a la teinte du biome (D43) : la matiere est franche,
+                // la couleur reste continue.
+                match biome {
+                    BiomeKind::Volcanic => Block::new(BlockKind::Ash, col),
+                    BiomeKind::Arcane => Block::new(BlockKind::Fulgurite, col),
+                    // Un desert etait du gazon couleur de sable — la couleur
+                    // juste, la matiere qui ment, et le grain qui y posait des
+                    // touffes d'herbe.
+                    BiomeKind::Desert => Block::new(BlockKind::Sand, col),
+                    // **Plus jamais d'herbe a 700 blocs.** `get_biome` exige
+                    // deja `tree_density < 0.6` pour la montagne : le biome est
+                    // tout entier au-dessus de la vegetation dense, et le
+                    // rendre nu de bout en bout est ce qu'il decrit.
+                    BiomeKind::Mountain if snow_cover => {
+                        Block::new(BlockKind::Snow, col)
+                    },
+                    BiomeKind::Mountain => Block::new(BlockKind::Scree, col),
+                    // Le marais ordinaire avait du gazon quand son jumeau
+                    // miasmique avait tourbe et bois pourri. Il prend la tourbe,
+                    // sans la pourriture.
+                    BiomeKind::Swamp => Block::new(BlockKind::Peat, col),
+                    // Un marais, c'est un tapis qui pourrit sur de la tourbe.
+                    BiomeKind::Miasma if grass_factor >= 0.7 => {
+                        Block::new(BlockKind::Blight, col)
+                    },
+                    BiomeKind::Miasma => Block::new(BlockKind::Peat, col),
+                    _ if grass_factor < 0.7 => Block::new(BlockKind::Earth, col),
+                    _ if snow_cover => Block::new(BlockKind::Snow, col),
+                    _ => Block::new(BlockKind::Grass, col),
                 }
             })
         } else {
@@ -160,9 +224,21 @@ impl<'a> BlockGen<'a> {
         }
         .or_else(|| {
             let over_water = alt < water_level;
+            // **Les deux calottes sont une couche posee sur l'ocean** (D42).
+            // Elles ne reposent sur aucun continent : c'est ce qui les rend bon
+            // marche — ni soulevement ni erosion ne bougent. Leur epaisseur a
+            // un plancher, sans quoi la calotte serait trouee la ou le bruit de
+            // glace passe sous son seuil, et une banquise trouee n'est plus une
+            // calotte mais un archipel.
+            let (glace, teinte, epaisseur) = match biome {
+                BiomeKind::PackIce => (BlockKind::PackIce, TEINTE_BANQUISE, EPAISSEUR_CALOTTE),
+                BiomeKind::IceShelf => (BlockKind::ShelfIce, TEINTE_BARRIERE, EPAISSEUR_BARRIERE),
+                _ => (BlockKind::Ice, CONFIG.ice_color, 0.0),
+            };
+            let ice_depth = ice_depth.max(epaisseur);
             // Water
             if over_water && (wposf.z as f32 - water_level).abs() < ice_depth {
-                Some(Block::new(BlockKind::Ice, CONFIG.ice_color))
+                Some(Block::new(glace, teinte))
             } else if (wposf.z as f32) < water_level {
                 // Ocean
                 Some(water)

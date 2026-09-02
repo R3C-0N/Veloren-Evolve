@@ -4114,6 +4114,46 @@
         "voxel.item.block.obsidian",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
     ),
+    Simple("common.items.block.basalt"): VoxTrans(
+        "voxel.item.block.basalt",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.crystal"): VoxTrans(
+        "voxel.item.block.crystal",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.ash"): VoxTrans(
+        "voxel.item.block.ash",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.peat"): VoxTrans(
+        "voxel.item.block.peat",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.fulgurite"): VoxTrans(
+        "voxel.item.block.fulgurite",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.pack_ice"): VoxTrans(
+        "voxel.item.block.pack_ice",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.shelf_ice"): VoxTrans(
+        "voxel.item.block.shelf_ice",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.blight"): VoxTrans(
+        "voxel.item.block.blight",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.sandstone"): VoxTrans(
+        "voxel.item.block.sandstone",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
+    Simple("common.items.block.scree"): VoxTrans(
+        "voxel.item.block.scree",
+        (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.8,
+    ),
     Simple("common.items.crafting_ing.cactus"): VoxTrans(
         "voxel.sprite.cacti.flat_cactus_med",
         (0.0, 0.0, 0.0), (-50.0, 40.0, 20.0), 0.9,

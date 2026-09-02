@@ -69,6 +69,17 @@
 #define BLOCK_WOOD 0x40
 #define BLOCK_LEAVES 0x41
 #define BLOCK_ICE 0x43
+// Les huit matieres des regions extremes (D43).
+#define BLOCK_BASALT 0x17
+#define BLOCK_CRYSTAL 0x18
+#define BLOCK_ASH 0x32
+#define BLOCK_PEAT 0x33
+#define BLOCK_FULGURITE 0x34
+#define BLOCK_PACK_ICE 0x45
+#define BLOCK_SHELF_ICE 0x46
+#define BLOCK_BLIGHT 0x47
+#define BLOCK_SANDSTONE 0x19
+#define BLOCK_SCREE 0x35
 
 // An arbitrary value that represents a very far distance (at least as far as the player should be able to see) without
 // being too far that we end up with precision issues (used in clouds and elsewhere).

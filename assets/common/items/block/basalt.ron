@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Basalt",
+    legacy_description: "Columnar rock from the lava seas, cooled into prisms. A stone pick or better frees it whole.",
+    kind: Ingredient(
+        descriptor: "Basalt",
+    ),
+    quality: Common,
+    tags: [],
+)

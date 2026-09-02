@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Sandstone",
+    legacy_description: "Bedded stone from the desert floor, laid down grain by grain. A pick brings it up whole.",
+    kind: Ingredient(
+        descriptor: "Sandstone",
+    ),
+    quality: Common,
+    tags: [],
+)

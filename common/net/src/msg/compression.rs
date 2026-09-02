@@ -661,6 +661,56 @@ impl<const AVERAGE_PALETTE: bool> VoxelImageDecoding for TriPngEncoding<AVERAGE_
                             g: 28,
                             b: 44,
                         },
+                        Sandstone => Rgb {
+                            r: 204,
+                            g: 166,
+                            b: 110,
+                        },
+                        Scree => Rgb {
+                            r: 122,
+                            g: 118,
+                            b: 112,
+                        },
+                        Basalt => Rgb {
+                            r: 56,
+                            g: 52,
+                            b: 58,
+                        },
+                        Crystal => Rgb {
+                            r: 150,
+                            g: 116,
+                            b: 214,
+                        },
+                        Ash => Rgb {
+                            r: 92,
+                            g: 86,
+                            b: 84,
+                        },
+                        Peat => Rgb {
+                            r: 66,
+                            g: 54,
+                            b: 40,
+                        },
+                        Fulgurite => Rgb {
+                            r: 196,
+                            g: 186,
+                            b: 214,
+                        },
+                        PackIce => Rgb {
+                            r: 176,
+                            g: 206,
+                            b: 220,
+                        },
+                        ShelfIce => Rgb {
+                            r: 222,
+                            g: 234,
+                            b: 246,
+                        },
+                        Blight => Rgb {
+                            r: 72,
+                            g: 66,
+                            b: 48,
+                        },
                         Grass => Rgb {
                             r: 51,
                             g: 160,

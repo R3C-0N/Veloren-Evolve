@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Scree",
+    legacy_description: "Loose broken rock from a mountainside. It shifts underfoot, and a shovel is enough to gather it.",
+    kind: Ingredient(
+        descriptor: "Scree",
+    ),
+    quality: Common,
+    tags: [],
+)

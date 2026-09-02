@@ -117,6 +117,8 @@ widget_ids! {
         particles_chance_value,
         weapon_trails_button,
         weapon_trails_label,
+        material_grain_button,
+        material_grain_label,
         flashing_lights_button,
         flashing_lights_label,
         flashing_lights_info_label,
@@ -1506,6 +1508,47 @@ impl Widget for Video<'_> {
             ));
         }
 
+        // Grain par materiau
+        Text::new(
+            &self
+                .localized_strings
+                .get_msg("hud-settings-material_grain"),
+        )
+        .font_size(self.fonts.cyri.scale(14))
+        .font_id(self.fonts.cyri.conrod_id)
+        .down_from(state.ids.weapon_trails_label, 8.0)
+        .color(TEXT_COLOR)
+        .set(state.ids.material_grain_label, ui);
+
+        let material_grain = ToggleButton::new(
+            self.global_state
+                .settings
+                .graphics
+                .render_mode
+                .material_grain,
+            self.imgs.checkbox,
+            self.imgs.checkbox_checked,
+        )
+        .w_h(18.0, 18.0)
+        .right_from(state.ids.material_grain_label, 10.0)
+        .hover_images(self.imgs.checkbox_mo, self.imgs.checkbox_checked_mo)
+        .press_images(self.imgs.checkbox_press, self.imgs.checkbox_checked)
+        .set(state.ids.material_grain_button, ui);
+
+        if self
+            .global_state
+            .settings
+            .graphics
+            .render_mode
+            .material_grain
+            != material_grain
+        {
+            events.push(GraphicsChange::ChangeRenderMode(Box::new(RenderMode {
+                material_grain,
+                ..render_mode.clone()
+            })));
+        }
+
         // Disable flashing lights
         Text::new(
             &self
@@ -1514,7 +1557,7 @@ impl Widget for Video<'_> {
         )
         .font_size(self.fonts.cyri.scale(14))
         .font_id(self.fonts.cyri.conrod_id)
-        .down_from(state.ids.weapon_trails_label, 25.0)
+        .down_from(state.ids.material_grain_label, 25.0)
         .color(TEXT_COLOR)
         .set(state.ids.flashing_lights_label, ui);
 

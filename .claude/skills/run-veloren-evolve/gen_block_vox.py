@@ -189,11 +189,132 @@ def main() -> None:
                          ebrecher=0.04),
     )
 
+    # --- basalte : gris tres sombre, colonnade verticale -------------------
+    # La disjonction en refroidissant fait des prismes : une colonne sur deux
+    # plus foncee, et des aretes franches. C'est ce qui le distingue de la
+    # pierre dure, qui est du meme gris mais mouchetee.
+    pal = [(56, 52, 58), (40, 37, 44), (72, 68, 76), (30, 28, 34)]
+
+    def basalte(x, y, z, top, r):
+        if top:
+            return melange(2, [0], r, 0.4)
+        return 1 if x % 2 == 0 else melange(0, [2, 3], r, 0.24)
+
+    modeles["basalt"] = (pal, lambda rng: cube(rng, pal, basalte, ebrecher=0.05))
+
+    # --- cristal : violet lumineux, facettes ------------------------------
+    # De larges plans d'une meme valeur, separes par des aretes claires : un
+    # mouchetis en ferait une pierre violette, pas un cristal.
+    pal = [(150, 116, 214), (124, 92, 186), (186, 156, 240), (214, 196, 255)]
+
+    def cristal(x, y, z, top, r):
+        if (x + y + z) % 4 == 0:
+            return 3  # arete de facette
+        return melange(0, [1, 2], r, 0.35)
+
+    modeles["crystal"] = (pal, lambda rng: cube(rng, pal, cristal, ebrecher=0.02))
+
+    # --- cendre : gris chaud, tres uni, silhouette molle -------------------
+    # Presque sans contraste : une poudre. Elle s'ebreche beaucoup, parce
+    # qu'un tas de cendre n'a pas d'arete.
+    pal = [(92, 86, 84), (80, 74, 72), (104, 98, 96)]
+    modeles["ash"] = (
+        pal,
+        lambda rng: cube(rng, pal, lambda x, y, z, top, r: melange(0, [1, 2], r, 0.40),
+                         ebrecher=0.50),
+    )
+
+    # --- tourbe : brun sombre gorge d'eau, fibreuse ------------------------
+    pal = [(66, 54, 40), (52, 42, 30), (84, 70, 50), (40, 34, 24)]
+
+    def tourbe(x, y, z, top, r):
+        return 1 if z % 2 == 0 else melange(0, [2, 3], r, 0.34)
+
+    modeles["peat"] = (
+        pal,
+        lambda rng: cube(rng, pal, tourbe,
+                         creuser=lambda x, y, z, r: r.random() < 0.08,
+                         ebrecher=0.26),
+    )
+
+    # --- fulgurite : sable vitrifie, veines claires ------------------------
+    # Le fond est un sable pale ; ce qui se voit, ce sont les traces de foudre
+    # figees dedans.
+    pal = [(196, 186, 214), (176, 166, 196), (232, 226, 248), (150, 142, 172)]
+
+    def fulgurite(x, y, z, top, r):
+        if (x * 3 + z * 5) % 7 == 0:
+            return 2  # veine
+        return melange(0, [1, 3], r, 0.30)
+
+    modeles["fulgurite"] = (pal, lambda rng: cube(rng, pal, fulgurite, ebrecher=0.28))
+
+    # --- banquise : glace broyee, fractures franches -----------------------
+    # Meme famille que `ice`, mais cassee : plus opaque, plus bleue, et des
+    # aretes tres emoussees — ce sont des plaques qui se sont heurtees.
+    pal = [(176, 206, 220), (152, 186, 204), (206, 228, 238), (130, 164, 186)]
+
+    def banquise(x, y, z, top, r):
+        if x == 0 or y == 0 or z == 0:
+            return melange(3, [1], r, 0.4)  # fracture sombre
+        return melange(0, [1, 2], r, 0.34)
+
+    modeles["pack_ice"] = (pal, lambda rng: cube(rng, pal, banquise, ebrecher=0.34))
+
+    # --- barriere : neve tasse, strates horizontales -----------------------
+    # Presque blanche et tres reguliere : une dalle, pas des plaques. Ses
+    # aretes tiennent, la ou celles de la banquise s'emoussent.
+    pal = [(222, 234, 246), (206, 220, 236), (240, 248, 255)]
+
+    def barriere(x, y, z, top, r):
+        return 1 if z % 2 == 0 else melange(0, [2], r, 0.26)
+
+    modeles["shelf_ice"] = (pal, lambda rng: cube(rng, pal, barriere, ebrecher=0.06))
+
+    # --- bois pourri : le fil du bois, rompu et troue ----------------------
+    pal = [(72, 66, 48), (56, 50, 36), (92, 84, 62), (44, 40, 28)]
+
+    def pourri(x, y, z, top, r):
+        return 1 if x % 3 == 0 else melange(0, [2, 3], r, 0.36)
+
+    modeles["blight"] = (
+        pal,
+        lambda rng: cube(rng, pal, pourri,
+                         creuser=lambda x, y, z, r: r.random() < 0.20,
+                         ebrecher=0.40),
+    )
+
+    # --- gres : sable pale, lits horizontaux ------------------------------
+    # Une roche sedimentaire : ce qui la distingue de la pierre, c'est qu'elle
+    # est *litee*. Une assise sur deux plus foncee, aretes peu ebrechees.
+    pal = [(204, 166, 110), (186, 148, 94), (222, 190, 140), (168, 132, 82)]
+
+    def gres(x, y, z, top, r):
+        return 1 if z % 2 == 0 else melange(0, [2, 3], r, 0.28)
+
+    modeles["sandstone"] = (pal, lambda rng: cube(rng, pal, gres, ebrecher=0.14))
+
+    # --- pierraille : eclats anguleux, silhouette rongee -------------------
+    # De la roche deliee : pas d'assise, pas de joint, et un cube qui s'ebreche
+    # beaucoup — un tas d'eclats n'a pas d'arete franche.
+    pal = [(122, 118, 112), (102, 98, 94), (144, 140, 134), (86, 84, 80)]
+    modeles["scree"] = (
+        pal,
+        lambda rng: cube(rng, pal, lambda x, y, z, top, r: melange(0, [1, 2, 3], r, 0.48),
+                         creuser=lambda x, y, z, r: r.random() < 0.10,
+                         ebrecher=0.52),
+    )
+
     # La graine tient a cote du nom, pas au rang : voir l'en-tete du fichier.
     graines = {
         "earth": 1000, "grass": 1001, "ice": 1002, "leaves": 1003,
         "sand": 1004, "snow": 1005, "stone": 1006, "wood": 1007,
         "hard_rock": 1008, "obsidian": 1009,
+        # Les huit matieres des regions extremes (D43), aux graines libres
+        # suivantes : les dix modeles ci-dessus ne bougent pas d'un octet.
+        "basalt": 1010, "crystal": 1011, "ash": 1012, "peat": 1013,
+        "fulgurite": 1014, "pack_ice": 1015, "shelf_ice": 1016, "blight": 1017,
+        "sandstone": 1018, "scree": 1019,
     }
 
     for nom, (pal, faire) in sorted(modeles.items()):

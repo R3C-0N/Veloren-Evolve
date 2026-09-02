@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Shelf Ice",
+    legacy_description: "Packed firn from the southern barrier, layered season on season into a single slab.",
+    kind: Ingredient(
+        descriptor: "Shelf Ice",
+    ),
+    quality: Common,
+    tags: [],
+)

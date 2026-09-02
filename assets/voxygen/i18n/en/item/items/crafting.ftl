@@ -412,3 +412,33 @@ item-block-hard_rock = Block of Hard Rock
 
 item-block-obsidian = Block of Obsidian
     .desc = Volcanic glass, black and keen-edged. Only a metal pick brings it up intact.
+
+item-block-basalt = Block of Basalt
+    .desc = Columnar rock from the lava seas, cooled into prisms. A stone pick or better frees it whole.
+
+item-block-crystal = Arcane Crystal
+    .desc = Faceted stone from the storm lands. It keeps a light of its own, and takes a stone pick to lift.
+
+item-block-ash = Volcanic Ash
+    .desc = Fine grey powder, still warm underfoot. It holds no shape of its own.
+
+item-block-peat = Block of Peat
+    .desc = Waterlogged fibre from the bogs, dark and heavy with what rotted into it.
+
+item-block-fulgurite = Fulgurite
+    .desc = Sand the lightning fused where it struck, veined with the shape of the bolt.
+
+item-block-pack_ice = Block of Pack Ice
+    .desc = Sea ice from the northern floes, crushed and refrozen along a hundred fractures.
+
+item-block-shelf_ice = Block of Shelf Ice
+    .desc = Packed firn from the southern barrier, layered season on season into a single slab.
+
+item-block-blight = Blighted Wood
+    .desc = Wood the bog took back. It comes apart in the hand as readily as it came out of the ground.
+
+item-block-sandstone = Block of Sandstone
+    .desc = Bedded stone from the desert floor, laid down grain by grain. A pick brings it up whole.
+
+item-block-scree = Scree
+    .desc = Loose broken rock from a mountainside. It shifts underfoot, and a shovel is enough to gather it.

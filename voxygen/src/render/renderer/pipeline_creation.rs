@@ -243,6 +243,10 @@ impl ShaderModules {
             constants += "#define RAIN_ENABLED\n";
         }
 
+        if pipeline_modes.material_grain {
+            constants += "#define MATERIAL_GRAIN\n";
+        }
+
         for shader in pipeline_modes.experimental_shaders.iter() {
             constants += &format!(
                 "#define EXPERIMENTAL_{}\n",

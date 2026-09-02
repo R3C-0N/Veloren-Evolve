@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Blighted Wood",
+    legacy_description: "Wood the bog took back. It comes apart in the hand as readily as it came out of the ground.",
+    kind: Ingredient(
+        descriptor: "Blighted Wood",
+    ),
+    quality: Common,
+    tags: [],
+)

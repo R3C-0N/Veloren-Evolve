@@ -53,7 +53,7 @@ float vmin(vec2 v) {
     return min(v.x, v.y);
 }
 
-#ifdef EXPERIMENTAL_MATERIALGRAIN
+#ifdef MATERIAL_GRAIN
 // Coordonnees locales au bloc, sur le plan de la face. On prend la partie
 // fractionnaire des deux axes perpendiculaires a la normale : le motif ne
 // depend donc plus de la taille apparente du bloc, seulement de sa face. C'est
@@ -133,6 +133,75 @@ float grain_materiau(vec3 pos, vec3 nrm, uint kind) {
         float amas = grain_texel(t / 2, graine, 1.9);
         float trou = grain_texel(t, graine, 4.4);
         return (grain_palier(amas) - 0.5) * 0.34 - (trou < 0.12 ? 0.26 : 0.0);
+    } else if (kind == BLOCK_BASALT) {
+        // Colonnade : prismes verticaux de 2 texels, joints horizontaux rares.
+        // C'est la disjonction en refroidissant, et c'est ce qui distingue le
+        // basalte de la roche ordinaire d'un coup d'oeil.
+        int col = t.x / 2;
+        float prisme = grain_texel(ivec2(col, 0), graine, 2.7);
+        bool joint = (t.x % 2 == 0);
+        bool assise = (t.y == int(prisme * float(GRAIN_TEXELS))) ;
+        return (joint ? -0.30 : 0.0) + (assise ? -0.18 : 0.0)
+             + (grain_palier(prisme) - 0.5) * 0.16;
+    } else if (kind == BLOCK_CRYSTAL) {
+        // Facettes : de larges plans de 4x4 texels, valeur tranchee, et une
+        // arete claire la ou deux facettes se rencontrent.
+        ivec2 facette = t / 4;
+        float f = grain_texel(facette, graine, 3.9);
+        bool arete = (t.x % 4 == 0) || (t.y % 4 == 0);
+        return arete ? 0.30 : (grain_palier(f) - 0.5) * 0.44;
+    } else if (kind == BLOCK_ASH) {
+        // Cendre : poudre tres fine, presque unie. Le contraste est faible
+        // exprès — c'est ce qui la distingue de la terre.
+        float poudre = grain_texel(t, graine, 6.6);
+        return (poudre - 0.5) * 0.10;
+    } else if (kind == BLOCK_PEAT) {
+        // Tourbe : fibres horizontales gorgees d'eau, quelques trous sombres.
+        float fibre = grain_texel(ivec2(0, t.y), graine, 5.1);
+        float trou = grain_texel(t, graine, 8.3);
+        return (grain_palier(fibre) - 0.5) * 0.28 - (trou < 0.14 ? 0.30 : 0.0);
+    } else if (kind == BLOCK_FULGURITE) {
+        // Sable vitrifie : des veines ramifiees, claires, sur un fond lisse.
+        // La foudre a fondu le sable, et la trace en reste.
+        float veine = grain_texel(ivec2(t.x, t.y / 2), graine, 7.7);
+        float branche = grain_texel(ivec2(t.y, t.x), graine, 2.2);
+        bool trace = veine > 0.80 || branche > 0.86;
+        return trace ? 0.34 : (grain_texel(t, graine, 4.1) - 0.5) * 0.12;
+    } else if (kind == BLOCK_PACK_ICE) {
+        // Banquise : plaques broyees. Des fractures franches decoupent la face,
+        // et le reste est presque uni — de la glace, pas de la pierre.
+        float f = grain_texel(ivec2(t.x / 3, t.y / 3), graine, 9.1);
+        bool fracture = (t.x % 3 == 0 && f > 0.45) || (t.y % 3 == 0 && f < 0.55);
+        return fracture ? -0.26 : (grain_palier(f) - 0.5) * 0.14;
+    } else if (kind == BLOCK_SHELF_ICE) {
+        // Barriere : du neve tasse, donc des strates horizontales serrees. Un
+        // texel sur deux, sans decalage : c'est une dalle, pas un appareillage.
+        float strate = grain_texel(ivec2(0, t.y), graine, 1.4);
+        return (t.y % 2 == 0 ? -0.10 : 0.06) + (grain_palier(strate) - 0.5) * 0.10;
+    } else if (kind == BLOCK_SANDSTONE) {
+        // Lits horizontaux serres : le gres est une roche sedimentaire, et
+        // c'est sa stratification qui le separe d'un coup d'oeil de la roche
+        // ordinaire, dont l'appareillage est vertical.
+        float lit = grain_texel(ivec2(0, t.y), graine, 2.4);
+        float grain = grain_texel(t, graine, 8.1);
+        return (t.y % 2 == 0 ? -0.08 : 0.05) + (grain_palier(lit) - 0.5) * 0.22
+             + (grain > 0.90 ? 0.14 : 0.0);
+    } else if (kind == BLOCK_SCREE) {
+        // Eclats anguleux, sans trame : de la roche deliee n'a ni assise ni
+        // joint. Des amas de tailles inegales, une arete claire par eclat.
+        ivec2 a = ivec2(t.x / 2, t.y / 3);
+        float eclat = grain_texel(a, graine, 5.7);
+        bool arete = (t.x % 2 == 0) != (t.y % 3 == 0);
+        float poussiere = grain_texel(t, graine, 9.9);
+        return (arete ? 0.20 : 0.0) + (grain_palier(eclat) - 0.5) * 0.34
+             - (poussiere < 0.15 ? 0.22 : 0.0);
+    } else if (kind == BLOCK_BLIGHT) {
+        // Bois pourri : le fil du bois, mais rompu, et troue par endroits.
+        int col = t.x / 2;
+        float veine = grain_texel(ivec2(col, 0), graine, 3.1);
+        float pourri = grain_texel(t, graine, 6.9);
+        return (grain_palier(veine) - 0.5) * 0.20 - (pourri < 0.22 ? 0.34 : 0.0)
+             + (pourri > 0.90 ? 0.14 : 0.0);
     }
     return 0.0;
 }
@@ -383,7 +452,7 @@ void main() {
     const float NOISE_FACTOR = 0.015;
     vec3 noise_delta = (sqrt(f_col) * W_INV + noise * NOISE_FACTOR);
     vec3 col = noise_delta * noise_delta * W_2;
-    #ifdef EXPERIMENTAL_MATERIALGRAIN
+    #ifdef MATERIAL_GRAIN
         // Modulation de la valeur seule, et attenuee avec la distance : au-dela
         // d'une trentaine de blocs une face fait moins de quelques pixels, et le
         // motif ne ferait plus que scintiller.

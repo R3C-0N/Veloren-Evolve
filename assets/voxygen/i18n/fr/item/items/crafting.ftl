@@ -298,3 +298,33 @@ item-block-hard_rock = Bloc de pierre dure
 
 item-block-obsidian = Bloc d'obsidienne
     .desc = Verre volcanique, noir et coupant. Seule une pioche de métal le remonte intact.
+
+item-block-basalt = Bloc de basalte
+    .desc = Roche en colonnes des mers de lave, refroidie en prismes. Une pioche de pierre la remonte entière.
+
+item-block-crystal = Cristal arcanique
+    .desc = Pierre à facettes des terres de foudre. Elle garde une lueur propre, et demande une pioche de pierre.
+
+item-block-ash = Cendre volcanique
+    .desc = Poudre grise et fine, encore tiède sous le pied. Elle ne tient aucune forme.
+
+item-block-peat = Bloc de tourbe
+    .desc = Fibre gorgée d'eau des marais, sombre et lourde de ce qui s'y est décomposé.
+
+item-block-fulgurite = Fulgurite
+    .desc = Sable que la foudre a vitrifié là où elle a frappé, veiné de la forme de l'éclair.
+
+item-block-pack_ice = Bloc de banquise
+    .desc = Glace de mer des floes du nord, broyée et reprise le long de cent fractures.
+
+item-block-shelf_ice = Bloc de barrière
+    .desc = Névé tassé de la barrière du sud, empilé saison après saison en une seule dalle.
+
+item-block-blight = Bois pourri
+    .desc = Du bois que le marais a repris. Il se défait dans la main aussi facilement qu'il en est sorti.
+
+item-block-sandstone = Bloc de grès
+    .desc = Pierre litée du sol des déserts, déposée grain par grain. Une pioche la remonte entière.
+
+item-block-scree = Pierraille
+    .desc = Roche brisée et déliée d'un versant. Elle glisse sous le pied, et une pelle suffit à la ramasser.

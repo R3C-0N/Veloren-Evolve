@@ -71,6 +71,37 @@
             (0.2, 0.15, 0.1),
             (0.7, 0.6, 0.3),
         ],
+        // La teinte propre a chaque biome (D43), melee au degrade climatique
+        // et non a sa place. `force` est le bouton : a 0 on retrouve le monde
+        // d'avant, a 1 le climat ne se voit plus. Ce fichier se recharge a
+        // chaud — c'est ici que le reglage se fait, en jouant.
+        teintes: (
+            force: 0.35,
+            force_extreme: 0.85,
+
+            void:      (0.50, 0.50, 0.50),
+            lake:      (0.25, 0.40, 0.45),
+            grassland: (0.35, 0.55, 0.25),
+            ocean:     (0.15, 0.30, 0.40),
+            mountain:  (0.45, 0.45, 0.48),
+            snowland:  (0.85, 0.90, 0.95),
+            desert:    (0.80, 0.68, 0.42),
+            swamp:     (0.28, 0.35, 0.22),
+            jungle:    (0.18, 0.45, 0.18),
+            forest:    (0.25, 0.42, 0.22),
+            savannah:  (0.65, 0.60, 0.28),
+            taiga:     (0.30, 0.40, 0.32),
+
+            // Les cinq extremes. Ce sont les seules teintes qu'on remarque de
+            // loin, et c'est voulu : une region qu'un palier ouvre doit se voir
+            // depuis celle d'a cote.
+            abyss:     (0.06, 0.12, 0.20),
+            pack_ice:  (0.70, 0.82, 0.88),
+            ice_shelf: (0.88, 0.93, 0.98),
+            volcanic:  (0.22, 0.18, 0.18),
+            miasma:    (0.30, 0.36, 0.16),
+            arcane:    (0.45, 0.32, 0.62),
+        ),
     ),
     // NOTE: I think (but am not sure) that this is the color of stuff below the bottom-most
     // ground.  I'm not sure how easy it is to see.

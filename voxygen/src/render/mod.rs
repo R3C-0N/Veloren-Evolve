@@ -393,6 +393,12 @@ pub struct RenderMode {
     pub lighting: LightingMode,
     pub shadow: ShadowMode,
     pub rain_enabled: bool,
+    /// Le grain procedural par materiau.
+    ///
+    /// Il etait un shader experimental, donc eteint chez tout le monde. Depuis
+    /// que l'identite d'un biome passe par la matiere autant que par la couleur
+    /// (D43), le laisser derriere une commande revenait a ne pas la montrer.
+    pub material_grain: bool,
     pub rain_occlusion: ShadowMapMode,
     pub bloom: BloomMode,
     /// 0.0..1.0
@@ -419,6 +425,7 @@ impl Default for RenderMode {
             lighting: LightingMode::default(),
             shadow: ShadowMode::default(),
             rain_enabled: true,
+            material_grain: true,
             rain_occlusion: ShadowMapMode::default(),
             bloom: BloomMode::default(),
             point_glow: 0.35,
@@ -443,6 +450,7 @@ impl RenderMode {
                 lighting: self.lighting,
                 shadow: self.shadow,
                 rain_enabled: self.rain_enabled,
+                material_grain: self.material_grain,
                 rain_occlusion: self.rain_occlusion,
                 bloom: self.bloom,
                 point_glow: self.point_glow,
@@ -470,6 +478,7 @@ pub struct PipelineModes {
     lighting: LightingMode,
     pub shadow: ShadowMode,
     pub rain_enabled: bool,
+    pub material_grain: bool,
     pub rain_occlusion: ShadowMapMode,
     bloom: BloomMode,
     point_glow: f32,
@@ -522,10 +531,6 @@ struct OtherModes {
 pub enum ExperimentalShader {
     /// Add brick-like normal mapping to the world.
     Brickloren,
-    /// Give each terrain material a procedural grain, computed in block-local
-    /// coordinates so it stays invariant to apparent block size. Modulates
-    /// value only, never hue: colour still carries material and biome.
-    MaterialGrain,
     /// Remove the default procedural noise from terrain.
     NoNoise,
     /// Add a sobel filter that draws lines in post-process by detecting edges

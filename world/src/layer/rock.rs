@@ -269,7 +269,11 @@ impl RockKind {
                         {
                             let mut i = 0;
                             Block::new(
-                                BlockKind::WeakRock,
+                                // Le gres est une matiere depuis D43 : le
+                                // laisser en `WeakRock` teinte en faisait un
+                                // second gres, qui lachait de la pierre et
+                                // portait le grain de maconnerie de la roche.
+                                BlockKind::Sandstone,
                                 Rgb::new(220, 160, 100).map(|c| {
                                     i += 1;
                                     c + RandomField::new(seed + i).get(Vec2::zero().with_z(rpos.z))

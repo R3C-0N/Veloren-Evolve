@@ -8,8 +8,8 @@ use crate::{
 use common::{
     calendar::{Calendar, CalendarEvent},
     terrain::{
-        CoordinateConversions, TerrainChunkSize, quadratic_nearest_point, river_spline_coeffs,
-        vec2_as_uniform_idx,
+        BiomeKind, CoordinateConversions, TerrainChunkSize, quadratic_nearest_point,
+        river_spline_coeffs, vec2_as_uniform_idx,
     },
     vol::RectVolSize,
 };
@@ -49,6 +49,98 @@ pub struct Colors {
     pub grass_high: (f32, f32, f32),
     pub tropical_high: (f32, f32, f32),
     pub mesa_layers: Vec<(f32, f32, f32)>,
+
+    pub teintes: Teintes,
+}
+
+/// **La teinte propre a chaque biome** (D43).
+///
+/// Elle ne remplace pas le degrade climatique : elle s'y mele, a hauteur de
+/// `force`. Le degrade est ce qui rend le monde continu ; une table qui le
+/// remplacerait poserait une frontiere franche au bord de chaque tache de
+/// biome, y compris la ou le nommage en fait des taches minuscules.
+///
+/// Le fondu aux frontieres ne demande aucune machinerie : la teinte passe par
+/// `get_interpolated`, deja generique sur tout ce qui s'ajoute et se multiplie
+/// par un scalaire.
+#[derive(Deserialize)]
+pub struct Teintes {
+    /// Part de la teinte du biome dans la couleur finale, entre 0 et 1.
+    ///
+    /// Basse pour les biomes ordinaires : c'est le degrade climatique qui doit
+    /// porter le lieu, et une teinte forte y ferait des taches.
+    pub force: f32,
+
+    /// La meme part, pour les cinq regions extremes de D19.
+    ///
+    /// **Beaucoup plus haute, et c'est le point.** Une region qu'un palier
+    /// ouvre doit se voir depuis celle d'a cote ; a la force ordinaire, une
+    /// mer de lave posee dans une zone temperee reste verte — la cendre est
+    /// bien la, mais elle a la couleur de l'herbe. C'est ce que la premiere
+    /// visite a montre, et rien d'autre ne l'aurait montre.
+    pub force_extreme: f32,
+
+    pub void: (f32, f32, f32),
+    pub lake: (f32, f32, f32),
+    pub grassland: (f32, f32, f32),
+    pub ocean: (f32, f32, f32),
+    pub mountain: (f32, f32, f32),
+    pub snowland: (f32, f32, f32),
+    pub desert: (f32, f32, f32),
+    pub swamp: (f32, f32, f32),
+    pub jungle: (f32, f32, f32),
+    pub forest: (f32, f32, f32),
+    pub savannah: (f32, f32, f32),
+    pub taiga: (f32, f32, f32),
+    pub abyss: (f32, f32, f32),
+    pub pack_ice: (f32, f32, f32),
+    pub ice_shelf: (f32, f32, f32),
+    pub volcanic: (f32, f32, f32),
+    pub miasma: (f32, f32, f32),
+    pub arcane: (f32, f32, f32),
+}
+
+impl Teintes {
+    /// Quelle part de la teinte prendre, selon que le biome est extreme.
+    pub fn force_de(&self, biome: BiomeKind) -> f32 {
+        if biome.palier_requis().is_some() {
+            self.force_extreme
+        } else {
+            self.force
+        }
+    }
+
+    pub fn de(&self, biome: BiomeKind) -> Rgb<f32> {
+        let t = match biome {
+            BiomeKind::Void => self.void,
+            BiomeKind::Lake => self.lake,
+            BiomeKind::Grassland => self.grassland,
+            BiomeKind::Ocean => self.ocean,
+            BiomeKind::Mountain => self.mountain,
+            BiomeKind::Snowland => self.snowland,
+            BiomeKind::Desert => self.desert,
+            BiomeKind::Swamp => self.swamp,
+            BiomeKind::Jungle => self.jungle,
+            BiomeKind::Forest => self.forest,
+            BiomeKind::Savannah => self.savannah,
+            BiomeKind::Taiga => self.taiga,
+            BiomeKind::Abyss => self.abyss,
+            BiomeKind::PackIce => self.pack_ice,
+            BiomeKind::IceShelf => self.ice_shelf,
+            BiomeKind::Volcanic => self.volcanic,
+            BiomeKind::Miasma => self.miasma,
+            BiomeKind::Arcane => self.arcane,
+        };
+        Rgb::new(t.0, t.1, t.2)
+    }
+}
+
+/// Mele une teinte de biome a une couleur, sans jamais la delaver.
+///
+/// C'est un `lerp` borne : la couleur du climat porte la lumiere du lieu, la
+/// teinte porte son identite, et `force` dit lequel des deux on croit.
+fn melanger(couleur: Rgb<f32>, teinte: Rgb<f32>, force: f32) -> Rgb<f32> {
+    Rgb::lerp(couleur, teinte, force.clamp(0.0, 1.0)).map(|e| e.clamp(0.0, 1.0))
 }
 
 /// Generalised power function, pushes values in the range 0-1 to extremes.
@@ -948,7 +1040,29 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
             grass_high,
             tropical_high,
             mesa_layers,
+            teintes,
         } = &index.colors.column;
+
+        // **La teinte du biome, fondue aux frontieres.** `get_interpolated` est
+        // generique sur tout ce qui s'ajoute et se multiplie par un scalaire :
+        // un `Rgb<f32>` y passe tel quel, et le Catmull-Rom fait le fondu d'une
+        // tache de biome a la suivante sans qu'on ecrive un melange.
+        //
+        // Il depasse, en revanche — c'est le propre d'une spline —, d'ou le
+        // bornage : une composante negative virerait la couleur au lieu de la
+        // foncer.
+        let teinte = sim
+            .get_interpolated(wpos, |chunk| teintes.de(chunk.get_biome()))
+            .unwrap_or_else(|| teintes.de(BiomeKind::Void))
+            .map(|e| e.clamp(0.0, 1.0));
+        // **La force s'interpole aussi.** Prise sur la seule case du joueur,
+        // elle sauterait de 0,35 a 0,85 au bord d'une region extreme et
+        // dessinerait la frontiere en dur — exactement ce que le melange
+        // continu de D43 cherche a eviter.
+        let force = sim
+            .get_interpolated(wpos, |chunk| teintes.force_de(chunk.get_biome()))
+            .unwrap_or(teintes.force)
+            .clamp(0.0, 1.0);
 
         let cold_grass = (*cold_grass).into();
         let warm_grass = (*warm_grass).into();
@@ -1244,18 +1358,22 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
             chaos,
             water_level,
             warp_factor,
-            surface_color: Rgb::lerp(
-                sub_surface_color,
+            surface_color: melanger(
                 Rgb::lerp(
-                    // Beach
-                    Rgb::lerp(cliff, sand, alt.sub(basement).mul(0.25)),
-                    // Land
-                    ground,
-                    ((alt - base_sea_level) / 12.0).clamped(0.0, 1.0),
+                    sub_surface_color,
+                    Rgb::lerp(
+                        // Beach
+                        Rgb::lerp(cliff, sand, alt.sub(basement).mul(0.25)),
+                        // Land
+                        ground,
+                        ((alt - base_sea_level) / 12.0).clamped(0.0, 1.0),
+                    ),
+                    surface_veg,
                 ),
-                surface_veg,
+                teinte,
+                force,
             ),
-            sub_surface_color,
+            sub_surface_color: melanger(sub_surface_color, teinte, force * 0.5),
             // No growing directly on bedrock.
             // And, no growing on sites that don't want them TODO: More precise than this when we
             // apply trees as a post-processing layer

@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Arcane Crystal",
+    legacy_description: "Faceted stone from the storm lands. It keeps a light of its own, and a stone pick to lift it.",
+    kind: Ingredient(
+        descriptor: "Arcane Crystal",
+    ),
+    quality: Moderate,
+    tags: [],
+)

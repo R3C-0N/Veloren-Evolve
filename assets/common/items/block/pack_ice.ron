@@ -1,0 +1,9 @@
+ItemDef(
+    legacy_name: "Block of Pack Ice",
+    legacy_description: "Sea ice from the northern floes, crushed and refrozen along a hundred fractures.",
+    kind: Ingredient(
+        descriptor: "Pack Ice",
+    ),
+    quality: Common,
+    tags: [],
+)

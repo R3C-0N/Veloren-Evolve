@@ -95,6 +95,7 @@ hud-settings-gpu_profiler = Synchronisation du processeur graphique (non support
 hud-settings-particles = Particules
 hud-settings-lossy_terrain_compression = Compression terrain avec pertes
 hud-settings-weapon_trails = Trainées d'armes
+hud-settings-material_grain = Grain des matériaux
 hud-settings-flashing_lights = Flash lumineux
 hud-settings-flashing_lights_info = Active tous les types de flashs lumineux, par exemple le scintillement ou les éclairs
 hud-settings-resolution = Résolution
