@@ -67,6 +67,33 @@ impl Endroit {
     #[inline]
     pub fn wposf(&self) -> Vec2<f64> { self.wposf }
 
+    /// La latitude du lieu, **signée**, de -1 au pôle sud à +1 au pôle nord.
+    ///
+    /// C'est `sin(latitude)`, jamais la latitude elle-même : la fraction
+    /// d'aire au-delà d'un parallèle vaut `1 - sin(phi)`, si bien que le sinus
+    /// est la seule forme **uniforme sur la sphère** — et `cdf_irwin_hall`,
+    /// où cette valeur finit, n'accepte que des quantités uniformes.
+    ///
+    /// Le signe compte : les deux calottes ne sont pas symétriques (D42). Ce
+    /// qui s'en moque prend `.abs()`.
+    ///
+    /// Sur une carte plate il n'y a pas de pôle, mais D24 n'exigeait pas la
+    /// sphère — les bandes se lisent aussi bien sur un plan. On rend alors la
+    /// position en Y ramenée dans `[-1, 1]`. Ce n'est pas un second
+    /// branchement de topologie : `Endroit` est déjà l'endroit où cette
+    /// différence s'écrit.
+    #[inline]
+    pub fn latitude(&self) -> f64 {
+        match self.sphere {
+            None => {
+                let hauteur =
+                    (self.map.chunks().y as f64) * (TerrainChunkSize::RECT_SIZE.y as f64);
+                (self.wposf.y / hauteur * 2.0 - 1.0).clamp(-1.0, 1.0)
+            },
+            Some((_, p)) => p.z.clamp(-1.0, 1.0),
+        }
+    }
+
     /// Le point de lecture, à l'échelle donnée en blocs.
     ///
     /// L'échelle est celle du site d'appel, celle que la carte plate écrivait

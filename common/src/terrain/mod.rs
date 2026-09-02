@@ -12,7 +12,7 @@ use std::ops::{Add, Mul};
 
 // Reexports
 pub use self::{
-    biome::BiomeKind,
+    biome::{BiomeKind, Palier},
     block::{Block, BlockKind},
     map::{MapSizeLg, Topologie},
     site::SiteKindMeta,

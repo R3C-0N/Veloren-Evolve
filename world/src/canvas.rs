@@ -117,6 +117,10 @@ impl<'a> CanvasInfo<'a> {
             poi: None,
             path: Default::default(),
             cliff_height: 0.0,
+            masque_volcan: 0.0,
+            masque_arcane: 0.0,
+            masque_miasme: 0.0,
+            latitude: 0.0,
             contains_waypoint: false,
             spot: None,
         };

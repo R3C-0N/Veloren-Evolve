@@ -94,6 +94,57 @@ use vek::*;
 /// émergent : le relief, lui, vient du bruit comme avant.
 const FRACTION_OCEAN: f64 = 0.65;
 
+/// De combien le bruit fait onduler la frontiere d'une bande de latitude.
+///
+/// Sur l'echelle de `sin(latitude)`, donc en part de demi-hemisphere. A zero,
+/// les bandes de D24 sont des paralleles traces a la regle et le monde se lit
+/// d'un coup d'oeil ; trop haut, elles cessent de se lire du tout.
+const ONDE_DE_BANDE: f64 = 0.10;
+
+/// Le gradient thermique : de combien la temperature tombe en montant.
+///
+/// En unites de temperature par bloc d'altitude au-dessus du niveau de la mer.
+/// **C'est lui qui met la neige au sommet des montagnes equatoriales** — la
+/// latitude seule les laisserait chaudes de bas en haut. Il ne passe pas par
+/// le quantile : l'altitude y entre deja comme un *rang* sur la carte, et
+/// « etre dans les dix pour cent les plus hauts » ne veut pas dire « etre a
+/// 1 500 blocs ».
+///
+/// 1,2 unite pour mille blocs place la ligne de neige vers 1 400 blocs a
+/// l'equateur, 750 sous la latitude de la prairie, et au niveau de la mer aux
+/// calottes. Le monter la fait descendre partout a la fois.
+pub const GRADIENT_THERMIQUE: f32 = 1.2 / 1000.0;
+
+/// De combien un volcan rechauffe son voisinage.
+///
+/// Trois effets pour un terme : la neige ne tient pas sur le cone, le test
+/// `Volcanic` passe avant tout test de temperature, et la transition depuis
+/// une chaine enneigee est douce au lieu d'etre une ligne franche.
+pub const HALO_GEOTHERMIQUE: f32 = 1.2;
+
+/// A partir d'ou commence la banquise, en `sin(latitude)`.
+///
+/// Petite et fracturee : 0,93 lui donne 3,5 % de la sphere, soit un cinquieme
+/// de la face polaire.
+pub const SEUIL_BANQUISE: f32 = 0.93;
+
+/// A partir d'ou commence la barriere de glace, en `sin(latitude)`.
+///
+/// **Ce seuil ne peut pas descendre sous 0,707.** Une face polaire couvre
+/// `|z|` de 0,577 a ses coins et 0,707 au milieu de ses aretes : en dessous,
+/// l'anneau du front de falaise enjambe les quatre coutures de la face. 0,72
+/// est donc la plus grande calotte qui tienne dans sa face — 14 % de la
+/// sphere, quatre fois le nord.
+pub const SEUIL_BARRIERE: f32 = 0.72;
+
+/// A partir de quelle hauteur d'eau l'ocean devient l'abysse, en blocs.
+///
+/// Le fond ne descend pas si bas qu'on le croit : le niveau de la mer est a
+/// 140 et le point le plus bas du monde vers 14, soit 126 blocs de fond. Un
+/// seuil a 250 n'ouvrait sur rien — et un seuil qui n'ouvre sur rien est une
+/// panne muette, pas un reglage.
+pub const PROFONDEUR_ABYSSE: f32 = 100.0;
+
 const DEFAULT_WORLD_CHUNKS_LG: MapSizeLg =
     if let Ok(map_size_lg) = MapSizeLg::new(Vec2 { x: 10, y: 10 }) {
         map_size_lg
@@ -127,6 +178,11 @@ pub(crate) struct GenCtx {
     pub alt_nz: util::HybridMulti<Perlin>,
     pub hill_nz: SuperSimplex,
     pub temp_nz: Fbm<Perlin>,
+    // Les trois masques des regions extremes (D40). Basse frequence : ce sont
+    // des taches a l'echelle d'une region, pas un grain.
+    pub volcan_nz: Fbm<Perlin>,
+    pub arcane_nz: Fbm<Perlin>,
+    pub miasme_nz: Fbm<Perlin>,
     // Humidity noise
     pub humid_nz: Billow<Perlin>,
     // Small amounts of noise for simulating rough terrain.
@@ -783,6 +839,9 @@ impl WorldSim {
             hill_nz: SuperSimplex::new(0),
             alt_nz: util::HybridMulti::new(0),
             temp_nz: Fbm::new(0),
+            volcan_nz: Fbm::new(0),
+            arcane_nz: Fbm::new(0),
+            miasme_nz: Fbm::new(0),
 
             small_nz: BasicMulti::new(0),
             rock_nz: HybridMulti::new(0),
@@ -828,6 +887,10 @@ impl WorldSim {
                 path: Default::default(),
                 cliff_height: 0.0,
                 spot: None,
+                masque_volcan: 0.0,
+                masque_arcane: 0.0,
+                masque_miasme: 0.0,
+                latitude: 0.0,
                 contains_waypoint: false,
             }],
             _locations: Vec::new(),
@@ -919,6 +982,16 @@ impl WorldSim {
             uplift_nz: util::Worley::new(rng.random())
                 .set_frequency(1.0 / (TerrainChunkSize::RECT_SIZE.x as f64 * uplift_scale))
                 .set_distance_function(distance_functions::euclidean),
+
+            // **En dernier, et pas par gout de l'ordre.** Les graines sortent
+            // d'un flux : un bruit insere au milieu decale toutes celles qui
+            // le suivent, et le monde change entierement pour un ajout qui ne
+            // devait rien changer. C'est ce que dit le « NOTE: Changing order
+            // will significantly change WorldGen » d'amont, et c'est ce qui
+            // avait fait bouger le relief de l'oracle du monde plat.
+            volcan_nz: Fbm::new(rng.random()).set_octaves(3).set_persistence(0.45),
+            arcane_nz: Fbm::new(rng.random()).set_octaves(3).set_persistence(0.45),
+            miasme_nz: Fbm::new(rng.random()).set_octaves(4).set_persistence(0.5),
         };
 
         let river_seed = &gen_ctx.river_seed;
@@ -1741,12 +1814,20 @@ impl WorldSim {
                                 if pure_water(posi) {
                                     None
                                 } else {
-                                    // -1 to 1.
-                                    // La température vient encore du bruit. Les
-                                    // bandes de latitude de D24 la prendront de
-                                    // `ou.latitude()`, mais c'est un changement
-                                    // de dessin, pas de continuité.
-                                    Some(ou.lire(&gen_ctx.temp_nz, 1.0) as f32)
+                                    // **La latitude fait les bandes** (D24, D39).
+                                    // On prend `sin(latitude)`, jamais la
+                                    // latitude : c'est la seule forme uniforme
+                                    // sur l'aire d'une sphere, et c'est ce que
+                                    // `cdf_irwin_hall` attend plus bas. 1 a
+                                    // l'equateur, 0 aux poles.
+                                    //
+                                    // Le bruit ne fait plus que **onduler la
+                                    // frontiere** : sans lui, un parallele
+                                    // trace a la regle. Sa periode vaut environ
+                                    // 4096 blocs, soit la largeur d'une bande.
+                                    let bande = 1.0 - ou.latitude().abs();
+                                    let onde = ou.lire(&gen_ctx.temp_nz, 1.0) * ONDE_DE_BANDE;
+                                    Some((bande + onde) as f32)
                                 }
                             })
                         },
@@ -2669,6 +2750,22 @@ pub struct SimChunk {
     pub cliff_height: f32,
     pub spot: Option<Spot>,
 
+    /// Les trois masques des regions extremes de D19 (D40), entre 0 et 1.
+    ///
+    /// Ils vivent sur la case parce que `get_biome` n'a qu'elle : un biome se
+    /// decide sur ce que le chunk sait de lui-meme, jamais sur un bruit relu
+    /// ailleurs avec une autre echelle.
+    pub masque_volcan: f32,
+    pub masque_arcane: f32,
+    pub masque_miasme: f32,
+
+    /// `sin(latitude)`, signe : -1 au pole sud, +1 au pole nord.
+    ///
+    /// Sur la case, parce que `get_biome` n'a qu'elle — et parce que la
+    /// redeviner d'une coordonnee la perdrait sur un patron de cube, ou une
+    /// ligne de grille n'est pas un parallele.
+    pub latitude: f32,
+
     pub contains_waypoint: bool,
 }
 
@@ -2695,6 +2792,18 @@ impl SimChunk {
         let wposf = (pos * TerrainChunkSize::RECT_SIZE.map(|e| e as i32)).map(|e| e as f64);
         let ou = Endroit::nouveau(map_size_lg, wposf);
 
+        // Les trois masques de region extreme (D40). Ce sont des bruits lus
+        // par `Endroit`, donc **continus aux coutures** : une tache de lave ne
+        // se coupe pas en deux au bord d'une face. Le seuil est adouci, jamais
+        // franc — un masque tout ou rien donnerait un halo a bord net.
+        let palier = |bas: f64, haut: f64, x: f64| {
+            let t = ((x - bas) / (haut - bas)).clamp(0.0, 1.0);
+            (t * t * (3.0 - 2.0 * t)) as f32
+        };
+        let masque_volcan = palier(0.05, 0.25, ou.lire(&gen_ctx.volcan_nz, 1_500.0));
+        let masque_arcane = palier(0.30, 0.50, ou.lire(&gen_ctx.arcane_nz, 2_200.0));
+        let masque_miasme = palier(0.05, 0.22, ou.lire(&gen_ctx.miasme_nz, 2_600.0));
+
         let (_, chaos) = gen_cdf.chaos[posi];
         let alt_pre = gen_cdf.alt[posi] as f32;
         let basement_pre = gen_cdf.basement[posi] as f32;
@@ -2720,9 +2829,12 @@ impl SimChunk {
         // Even less granular--if this matters we can make the sign affect the quantity slightly.
         let abs_lat_uniform = latitude_uniform.abs(); */
 
-        // We also correlate temperature negatively with altitude and absolute latitude,
-        // using different weighting than we use for humidity.
-        const TEMP_WEIGHTS: [f32; 3] = [/* 1.5, */ 1.0, 2.0, 1.0];
+        // La temperature se compose de trois quantiles : la bande de latitude,
+        // l'altitude, et un bruit de fond. **La latitude domine** — c'est ce
+        // qui fait exister les bandes de D24, que la version d'amont n'avait
+        // pas : elle donnait le poids double a l'altitude, si bien que le monde
+        // etait chaud la ou il etait bas, pas pres de l'equateur.
+        const TEMP_WEIGHTS: [f32; 3] = [3.0, 1.5, 0.75];
         let temp = cdf_irwin_hall(
             &TEMP_WEIGHTS,
             [
@@ -2734,6 +2846,17 @@ impl SimChunk {
         // Convert to [-1, 1]
         .sub(0.5)
         .mul(2.0);
+
+        // **Le gradient thermique**, hors du quantile (D39). L'altitude entre
+        // deja plus haut comme un *rang* sur la carte ; ici elle entre comme
+        // une hauteur, en blocs. C'est ce terme, et lui seul, qui met la neige
+        // au sommet d'une montagne equatoriale.
+        let temp = temp - GRADIENT_THERMIQUE * (alt_pre - 0.0).max(0.0);
+
+        // **Le halo geothermique.** Le masque etant un bruit lisse, la chaleur
+        // se retire progressivement en s'eloignant de la caldeira : pas de
+        // ligne franche entre le cone nu et la chaine enneigee qui l'entoure.
+        let temp = temp + HALO_GEOTHERMIQUE * masque_volcan;
 
         // Take the weighted average of our randomly generated base humidity, and the
         // calculated water flux over this point in order to compute humidity.
@@ -2925,6 +3048,11 @@ impl SimChunk {
             cliff_height: 0.0,
             spot: None,
 
+            masque_volcan,
+            masque_arcane,
+            masque_miasme,
+            latitude: ou.latitude() as f32,
+
             contains_waypoint: false,
         }
     }
@@ -2935,17 +3063,65 @@ impl SimChunk {
 
     pub fn get_base_z(&self) -> f32 { self.alt - self.chaos * 50.0 - 16.0 }
 
+    /// Le biome de la case. **Premier test gagnant**, et l'ordre porte du sens.
+    ///
+    /// Trois choses qu'il ne faut pas intervertir :
+    ///
+    /// - **les deux calottes passent avant l'eau.** Elles sont une couche
+    ///   posee *sur* l'ocean, et le biome couvre toute la calotte, eau libre
+    ///   entre les plaques comprise. Testees apres l'ocean, elles ne se
+    ///   declencheraient jamais ; testees par case, elles decouperaient le
+    ///   nord en taches trop petites pour que `name_biomes` en nomme une seule ;
+    /// - **`Volcanic` passe avant `Mountain`**, sinon la montagne l'absorbe ;
+    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre
+    ///   d'amont : avec le gradient thermique de D39, tout sommet est enneige,
+    ///   et la montagne se reduirait a une ceinture entre le seuil d'altitude
+    ///   et la ligne de neige.
     pub fn get_biome(&self) -> BiomeKind {
         let savannah_hum_temp = [0.05..0.55, 0.3..1.6];
         let taiga_hum_temp = [0.2..1.4, -0.7..-0.3];
-        if self.river.is_ocean() {
+        // Plat, bas et gorge d'eau : ce que demande un marais ordinaire.
+        let fond_humide =
+            self.humidity > 0.45 && self.chaos < 0.3 && self.alt < CONFIG.sea_level + 80.0;
+        // **Le miasme demande beaucoup moins.** Il a d'abord partage le
+        // predicat du marais, et il n'en restait rien : 0,1 % du monde, des
+        // taches d'une ou deux cases. Un predicat eparpille intersecte avec un
+        // masque lisse ne donne pas une region, il donne des miettes — et une
+        // tache plus etroite que le pochoir du fondu n'a meme pas sa couleur,
+        // ses voisins la moyennent jusqu'a l'effacer.
+        //
+        // Ce n'est pas un renoncement au dessin : un marais miasmique n'est pas
+        // un marais ordinaire empoisonne. C'est une region que le masque
+        // designe, et l'eau n'y est qu'une condition de decor. On garde donc
+        // une humidite et une platitude, mais desserrees, et surtout on laisse
+        // monter : une tourbiere tient sur un plateau.
+        let fond_miasmique =
+            self.humidity > 0.30 && self.chaos < 0.55 && self.alt < CONFIG.sea_level + 400.0;
+        // La magie instable se tient a l'ecart de la bande d'apparition : le
+        // present est paisible (D7), et la prairie du debut plus que tout.
+        let loin_de_la_prairie = !(0.32..0.58).contains(&self.latitude.abs());
+        if self.latitude > SEUIL_BANQUISE {
+            BiomeKind::PackIce
+        } else if self.latitude < -SEUIL_BARRIERE {
+            BiomeKind::IceShelf
+        } else if self.river.is_ocean() && self.water_alt - self.alt > PROFONDEUR_ABYSSE {
+            BiomeKind::Abyss
+        } else if self.river.is_ocean() {
             BiomeKind::Ocean
         } else if self.river.is_lake() {
             BiomeKind::Lake
-        } else if self.temp < CONFIG.snow_temp {
-            BiomeKind::Snowland
+        } else if self.alt > 500.0 && self.chaos > 0.3 && self.masque_volcan > 0.5 {
+            BiomeKind::Volcanic
+        } else if self.masque_arcane > 0.5 && loin_de_la_prairie {
+            BiomeKind::Arcane
+        } else if fond_miasmique && self.masque_miasme > 0.5 {
+            BiomeKind::Miasma
+        } else if fond_humide {
+            BiomeKind::Swamp
         } else if self.alt > 500.0 && self.chaos > 0.3 && self.tree_density < 0.6 {
             BiomeKind::Mountain
+        } else if self.temp < CONFIG.snow_temp {
+            BiomeKind::Snowland
         } else if self.temp > CONFIG.desert_temp && self.humidity < CONFIG.desert_hum {
             BiomeKind::Desert
         } else if self.tree_density > 0.65 && self.humidity > 0.65 && self.temp > 0.45 {
@@ -2960,9 +3136,6 @@ impl SimChunk {
             BiomeKind::Taiga
         } else if self.tree_density > 0.4 {
             BiomeKind::Forest
-        // } else if self.humidity > 0.8 {
-        //    BiomeKind::Swamp
-        //      Swamps don't really exist yet.
         } else {
             BiomeKind::Grassland
         }
