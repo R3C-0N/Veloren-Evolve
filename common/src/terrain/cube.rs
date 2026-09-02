@@ -987,7 +987,7 @@ mod tests {
     fn marcher_a_travers_les_bords() {
         // Une face plus grande : le plancher géométrique vaut `1 / rayon`, donc
         // une mesure prise sur un monde minuscule ne distingue rien.
-        let map = MapSizeLg::nouvelle_cubique(Vec2::new(9, 9)).expect("carte cubique");
+        let map = MapSizeLg::nouvelle_cubique(Vec2::new(10, 10)).expect("carte cubique");
         let f = face_blocs(map);
         let r = rayon(map);
         let plancher = (1.0f64 / r).to_degrees();
