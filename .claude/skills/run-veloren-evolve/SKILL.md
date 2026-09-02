@@ -72,6 +72,8 @@ Puis surveiller `build.err` : `Finished` = succès, `^error` = échec.
 $d = ".\.claude\skills\run-veloren-evolve\driver.ps1"
 
 pwsh -File $d -Action launch          # démarre, attend la fin des shaders, place la fenêtre
+pwsh -File $d -Action rapide          # démarre **et entre en jeu**, sans toucher aux menus
+pwsh -File $d -Action rapide -Monde "Cube 42"   # le même, sur un monde nommé
 pwsh -File $d -Action state           # PID, géométrie, RAM, chemin du journal
 pwsh -File $d -Action shot -Out shot.png
 pwsh -File $d -Action stop            # WM_CLOSE, puis force après 10 s
@@ -79,6 +81,23 @@ pwsh -File $d -Action stop            # WM_CLOSE, puis force après 10 s
 
 `launch` compte 40 à 60 s : voxygen compile ~45 pipelines GLSL au démarrage.
 Il attend la ligne `egui_wgpu` du journal, qui suit la dernière compilation.
+
+**`rapide` est le chemin normal pour un essai.** Il passe `--partie-rapide` au
+client, qui reprend le **dernier** monde solo et le **premier** personnage, et
+en crée au besoin — six écrans de menu en moins, et surtout aucune coordonnée
+de clic à relire. Il attend la ligne `partie rapide : on entre avec`, pas un
+délai : une génération de monde neuf prend une à deux minutes, et un délai fixe
+mentirait dans les deux sens. Compter jusqu'à 5 min sur un monde à générer,
+~1 min sur un monde déjà là.
+
+`-Monde <nom>` choisit le monde par son nom. **Un nom inconnu arrête au menu**
+plutôt que d'en ouvrir un autre : entrer dans le mauvais monde est pire que ne
+pas entrer, parce qu'on mesure alors le mauvais terrain sans le savoir.
+
+Le personnage créé d'office s'appelle `Cobaye`, corps humanoïde tiré au sort,
+épée de départ. Le monde créé d'office est un monde carré ordinaire : **pour un
+monde cubique, il faut encore passer par `Create Custom` une fois**, puis
+`rapide` le retrouve.
 
 **Les coordonnées de `click` sont exactement celles lues sur l'image de
 `shot`** — la capture est limitée à l'aire client, sans barre de titre. La

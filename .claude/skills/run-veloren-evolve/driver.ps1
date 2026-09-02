@@ -6,11 +6,11 @@
   capturer le rectangle de fenetre au lieu de l'aire client decale tout de
   la hauteur de la barre de titre, et les clics ratent leur cible.
 
-  pwsh -File driver.ps1 -Action <launch|fit|shot|click|key|text|look|zoom|walk|state|stop>
+  pwsh -File driver.ps1 -Action <launch|rapide|fit|shot|click|key|text|look|zoom|walk|state|stop>
 #>
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('launch','fit','shot','click','drag','press','key','text','look','zoom','walk','state','stop')]
+  [ValidateSet('launch','rapide','fit','shot','click','drag','press','key','text','look','zoom','walk','state','stop')]
   [string]$Action,
   [ValidateSet('left','right','middle')]
   [string]$Button = 'left',
@@ -20,6 +20,7 @@ param(
   [int]$Ticks = 0,
   [double]$Seconds = 2,
   [string]$Value = '',
+  [string]$Monde = '',
   [string]$Out = '',
   [string]$OutDir = '',
   [int]$Width = 1500, [int]$Height = 930
@@ -159,7 +160,7 @@ function Save-Shot($h, $path) {
 
 switch ($Action) {
 
-  'launch' {
+  { $_ -in 'launch','rapide' } {
     if (-not (Test-Path $Exe)) {
       throw "binaire absent : $Exe`n  cargo build --profile no_overflow --bin veloren-voxygen"
     }
@@ -181,9 +182,27 @@ switch ($Action) {
     }
     $env:VELOREN_ASSETS = Join-Path $Repo 'assets'
     $env:VOXYGEN_SCREENSHOT = $OutDir
-    $p = Start-Process -FilePath $Exe -WorkingDirectory $Repo `
-      -RedirectStandardOutput (Join-Path $OutDir 'game.out') `
-      -RedirectStandardError  (Join-Path $OutDir 'game.err') -PassThru
+    # `rapide` saute les six ecrans du menu : le client reprend le dernier
+    # monde solo et le premier personnage, et en cree au besoin.
+    # **Une seule chaine, citee a la main.** `Start-Process -ArgumentList`
+    # accepte un tableau mais le recolle avec des espaces sans rien citer :
+    # « Cube 42 » arrivait au client en deux arguments, dont un sous-commande
+    # inconnue. Passe en tableau *avec* des guillemets, les guillemets
+    # entraient dans la valeur. Une chaine unique est le seul chemin sur.
+    $ligne = ''
+    if ($Action -eq 'rapide') {
+      $ligne = '--partie-rapide'
+      if ($Monde) { $ligne += ' --monde "' + $Monde + '"' }
+    }
+    $commun = @{
+      FilePath               = $Exe
+      WorkingDirectory       = $Repo
+      RedirectStandardOutput = (Join-Path $OutDir 'game.out')
+      RedirectStandardError  = (Join-Path $OutDir 'game.err')
+      PassThru               = $true
+    }
+    $p = if ($ligne) { Start-Process @commun -ArgumentList $ligne }
+         else        { Start-Process @commun }
     "PID $($p.Id) ; journal $OutDir\game.out"
     # Le demarrage compile ~45 pipelines de shaders : compter 40 a 60 s.
     # On attend la ligne egui_wgpu, qui suit la derniere compilation.
@@ -202,6 +221,20 @@ switch ($Action) {
     [void][Vx]::SetWindowPos($h, [IntPtr]0, 0, 0, $Width, $Height, 0x0040)
     Start-Sleep -Seconds 2
     $c = Get-Client $h
+    if ($Action -eq 'rapide') {
+      # La generation d'un monde neuf prend une a deux minutes ; on attend le
+      # premier chunk plutot qu'un delai fixe, qui mentirait dans les deux sens.
+      $entre = $false
+      foreach ($i in 1..150) {
+        Start-Sleep -Seconds 2
+        if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) {
+          throw "process mort avant l'entree en jeu ; voir $OutDir\game.err"
+        }
+        if (Select-String -Path $log -Pattern 'partie rapide : on entre avec' -Quiet) { $entre = $true; break }
+      }
+      if (-not $entre) { throw "pas entre en jeu apres 300 s ; voir $log" }
+      Start-Sleep -Seconds 8
+    }
     "pret. client $($c.W)x$($c.H) a l'ecran $($c.SX),$($c.SY)"
   }
 

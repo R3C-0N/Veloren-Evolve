@@ -30,6 +30,22 @@ pub struct Args {
     #[clap(short, long, env = "VELOREN_CLIENT_TYPE", default_value_t = VoxygenClientType(ClientType::Game))]
     pub client_type: VoxygenClientType,
 
+    /// Entrer directement en jeu, sans passer par les menus.
+    ///
+    /// Reprend le dernier monde solo et le premier personnage ; en cree un
+    /// au besoin. C'est un raccourci d'essai : ce qu'on veut verifier est
+    /// presque toujours *dans* le monde, pas dans les six ecrans qui y menent.
+    #[clap(long)]
+    pub partie_rapide: bool,
+
+    /// Le monde solo a ouvrir en partie rapide, par son nom.
+    ///
+    /// Sans lui, le dernier de la liste. Avec un nom qui ne correspond a
+    /// aucun monde, on s'arrete au menu plutot que d'en ouvrir un autre :
+    /// entrer dans le mauvais monde est pire que ne pas entrer.
+    #[clap(long)]
+    pub monde: Option<String>,
+
     #[clap(subcommand)]
     pub command: Option<Commands>,
 }

@@ -30,7 +30,7 @@ use server::ServerInitStage;
 use specs::WorldExt;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
 use tokio::runtime;
-use tracing::error;
+use tracing::{error, info, warn};
 use ui::{Event as MainMenuEvent, MainMenuUi};
 
 pub use ui::rand_bg_image_spec;
@@ -68,6 +68,11 @@ pub struct MainMenuState {
     main_menu_ui: MainMenuUi,
     init: InitState,
     scene: Scene,
+    /// La partie rapide n'a lieu qu'une fois.
+    ///
+    /// Sans ce loquet, revenir au menu apres une deconnexion relancerait le
+    /// monde en boucle, et il n'y aurait plus de menu du tout.
+    partie_rapide_faite: bool,
 }
 
 impl MainMenuState {
@@ -77,7 +82,52 @@ impl MainMenuState {
             main_menu_ui: MainMenuUi::new(global_state),
             init: InitState::None,
             scene: Scene::new(global_state.window.renderer_mut()),
+            partie_rapide_faite: false,
         }
+    }
+
+    /// **Entrer en jeu sans traverser les menus** (`--partie-rapide`).
+    ///
+    /// On refait ici, en trois lignes, ce que six ecrans font a la main :
+    /// charger la liste des mondes, en designer un, lancer le serveur. Le
+    /// personnage suit dans `char_selection`.
+    #[cfg(feature = "singleplayer")]
+    fn partie_rapide(&mut self, global_state: &mut GlobalState) {
+        use crate::singleplayer::SingleplayerState;
+
+        self.partie_rapide_faite = true;
+        global_state.singleplayer = SingleplayerState::init();
+        let SingleplayerState::Init(ref mut mondes) = global_state.singleplayer else {
+            return;
+        };
+
+        // Un monde nomme, ou le dernier, ou un neuf. Le dernier et non le
+        // premier : c'est celui qu'on vient de faire qu'on veut revoir.
+        let vise = match &global_state.args.monde {
+            Some(nom) => {
+                let Some(i) = mondes.worlds.iter().position(|m| &m.name == nom) else {
+                    warn!("partie rapide : aucun monde nomme « {nom} », on reste au menu");
+                    global_state.singleplayer = SingleplayerState::None;
+                    return;
+                };
+                i
+            },
+            None => {
+                if mondes.worlds.is_empty() {
+                    mondes.new_world();
+                }
+                mondes.worlds.len().saturating_sub(1)
+            },
+        };
+        mondes.current = Some(vise);
+        let nom = mondes.worlds[vise].name.clone();
+        info!("partie rapide : on ouvre « {nom} »");
+
+        global_state.singleplayer.run(
+            &global_state.tokio_runtime,
+            &global_state.settings.language.selected_language,
+            &global_state.i18n,
+        );
     }
 }
 
@@ -107,6 +157,11 @@ impl PlayState for MainMenuState {
 
     fn tick(&mut self, global_state: &mut GlobalState, events: Vec<Event>) -> PlayStateResult {
         span!(_guard, "tick", "<MainMenuState as PlayState>::tick");
+
+        #[cfg(feature = "singleplayer")]
+        if global_state.args.partie_rapide && !self.partie_rapide_faite {
+            self.partie_rapide(global_state);
+        }
 
         // Pull in localizations
         let localized_strings = &global_state.i18n.read();

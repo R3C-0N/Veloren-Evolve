@@ -19,7 +19,7 @@ use common_base::span;
 use common_state::plugin::PluginMgr;
 use specs::WorldExt;
 use std::{cell::RefCell, rc::Rc};
-use tracing::error;
+use tracing::{error, info};
 use ui::CharSelectionUi;
 
 pub struct CharSelectionState {
@@ -27,6 +27,24 @@ pub struct CharSelectionState {
     client: Rc<RefCell<Client>>,
     persisted_state: Rc<RefCell<hud::PersistedHudState>>,
     scene: Scene,
+    /// Ou en est la partie rapide, s'il y en a une.
+    partie_rapide: PartieRapide,
+}
+
+/// L'etat du raccourci `--partie-rapide` dans la selection de personnage.
+///
+/// Il y a un etat parce qu'il y a une attente : creer un personnage est un
+/// aller-retour avec le serveur, et jouer avant sa reponse ne joue rien. Sans
+/// le cran `Attend`, on renvoie la demande de creation a chaque image et on se
+/// retrouve avec une file de personnages identiques.
+#[derive(PartialEq)]
+enum PartieRapide {
+    /// Pas de raccourci, ou deja servi.
+    Inactive,
+    /// On attend que la liste des personnages arrive.
+    Attend,
+    /// On a demande la creation d'un personnage, on attend qu'il paraisse.
+    Cree,
 }
 
 impl CharSelectionState {
@@ -50,6 +68,11 @@ impl CharSelectionState {
             client,
             persisted_state,
             scene,
+            partie_rapide: if global_state.args.partie_rapide {
+                PartieRapide::Attend
+            } else {
+                PartieRapide::Inactive
+            },
         }
     }
 
@@ -77,6 +100,53 @@ impl CharSelectionState {
     pub fn client(&self) -> &RefCell<Client> { &self.client }
 }
 
+impl CharSelectionState {
+    /// **Prendre le premier personnage, ou en faire un** (`--partie-rapide`).
+    ///
+    /// On ne touche a rien tant que la liste n'est pas arrivee : `loading` est
+    /// vrai pendant l'aller-retour, et une liste vide pendant ce temps-la n'est
+    /// pas une absence de personnage.
+    fn partie_rapide(&mut self, global_state: &mut GlobalState) {
+        if self.partie_rapide == PartieRapide::Inactive {
+            return;
+        }
+        let mut client = self.client.borrow_mut();
+        if client.character_list().loading {
+            return;
+        }
+
+        if let Some(id) = client
+            .character_list()
+            .characters
+            .first()
+            .and_then(|c| c.character.id)
+        {
+            let nom = client.character_list().characters[0]
+                .character
+                .alias
+                .clone();
+            info!("partie rapide : on entre avec « {nom} »");
+            let graphics = &global_state.settings.graphics;
+            client.request_character(id, common::ViewDistances {
+                terrain: graphics.terrain_view_distance,
+                entity: graphics.entity_view_distance,
+            });
+            self.partie_rapide = PartieRapide::Inactive;
+        } else if self.partie_rapide == PartieRapide::Attend {
+            info!("partie rapide : aucun personnage, on en fait un");
+            client.create_character(
+                "Cobaye".to_string(),
+                Some("common.items.weapons.sword.starter".to_string()),
+                None,
+                comp::Body::Humanoid(comp::humanoid::Body::random()),
+                false,
+                None,
+            );
+            self.partie_rapide = PartieRapide::Cree;
+        }
+    }
+}
+
 impl PlayState for CharSelectionState {
     fn enter(&mut self, global_state: &mut GlobalState, _: Direction) {
         // Load the player's character list
@@ -99,6 +169,7 @@ impl PlayState for CharSelectionState {
 
     fn tick(&mut self, global_state: &mut GlobalState, events: Vec<WinEvent>) -> PlayStateResult {
         span!(_guard, "tick", "<CharSelectionState as PlayState>::tick");
+        self.partie_rapide(global_state);
         let client_registered = {
             let client = self.client.borrow();
             client.registered()
