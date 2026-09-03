@@ -2,6 +2,7 @@ mod diffusion;
 mod erosion;
 mod location;
 mod map;
+mod reglages;
 mod util;
 mod way;
 
@@ -11,6 +12,11 @@ pub use self::{
     diffusion::{diffusion, diffusion_cubique},
     location::Location,
     map::{sample_pos, sample_wpos},
+    // Les reglages du climat, en donnees : c'est ce que la fenetre de
+    // `examples/reglages.rs` fait varier, et ce que le jeu emploie par defaut.
+    reglages::{
+        Bandes, Calottes, Etagement, Evaporation, Masque, Reglages, Seuils, DEFAUT as REGLAGES,
+    },
     // `Endroit` est publique parce que la mesure de continuité aux coutures
     // l'interroge du dehors : c'est elle que l'étape a changée.
     util::{Bruit, Endroit, get_horizon_map},
@@ -94,56 +100,7 @@ use vek::*;
 /// émergent : le relief, lui, vient du bruit comme avant.
 const FRACTION_OCEAN: f64 = 0.65;
 
-/// De combien le bruit fait onduler la frontiere d'une bande de latitude.
-///
-/// Sur l'echelle de `sin(latitude)`, donc en part de demi-hemisphere. A zero,
-/// les bandes de D24 sont des paralleles traces a la regle et le monde se lit
-/// d'un coup d'oeil ; trop haut, elles cessent de se lire du tout.
-const ONDE_DE_BANDE: f64 = 0.10;
 
-/// Le gradient thermique : de combien la temperature tombe en montant.
-///
-/// En unites de temperature par bloc d'altitude au-dessus du niveau de la mer.
-/// **C'est lui qui met la neige au sommet des montagnes equatoriales** — la
-/// latitude seule les laisserait chaudes de bas en haut. Il ne passe pas par
-/// le quantile : l'altitude y entre deja comme un *rang* sur la carte, et
-/// « etre dans les dix pour cent les plus hauts » ne veut pas dire « etre a
-/// 1 500 blocs ».
-///
-/// 1,2 unite pour mille blocs place la ligne de neige vers 1 400 blocs a
-/// l'equateur, 750 sous la latitude de la prairie, et au niveau de la mer aux
-/// calottes. Le monter la fait descendre partout a la fois.
-pub const GRADIENT_THERMIQUE: f32 = 1.2 / 1000.0;
-
-/// De combien un volcan rechauffe son voisinage.
-///
-/// Trois effets pour un terme : la neige ne tient pas sur le cone, le test
-/// `Volcanic` passe avant tout test de temperature, et la transition depuis
-/// une chaine enneigee est douce au lieu d'etre une ligne franche.
-pub const HALO_GEOTHERMIQUE: f32 = 1.2;
-
-/// A partir d'ou commence la banquise, en `sin(latitude)`.
-///
-/// Petite et fracturee : 0,93 lui donne 3,5 % de la sphere, soit un cinquieme
-/// de la face polaire.
-pub const SEUIL_BANQUISE: f32 = 0.93;
-
-/// A partir d'ou commence la barriere de glace, en `sin(latitude)`.
-///
-/// **Ce seuil ne peut pas descendre sous 0,707.** Une face polaire couvre
-/// `|z|` de 0,577 a ses coins et 0,707 au milieu de ses aretes : en dessous,
-/// l'anneau du front de falaise enjambe les quatre coutures de la face. 0,72
-/// est donc la plus grande calotte qui tienne dans sa face — 14 % de la
-/// sphere, quatre fois le nord.
-pub const SEUIL_BARRIERE: f32 = 0.72;
-
-/// A partir de quelle hauteur d'eau l'ocean devient l'abysse, en blocs.
-///
-/// Le fond ne descend pas si bas qu'on le croit : le niveau de la mer est a
-/// 140 et le point le plus bas du monde vers 14, soit 126 blocs de fond. Un
-/// seuil a 250 n'ouvrait sur rien — et un seuil qui n'ouvre sur rien est une
-/// panne muette, pas un reglage.
-pub const PROFONDEUR_ABYSSE: f32 = 100.0;
 
 const DEFAULT_WORLD_CHUNKS_LG: MapSizeLg =
     if let Ok(map_size_lg) = MapSizeLg::new(Vec2 { x: 10, y: 10 }) {
@@ -900,15 +857,20 @@ impl WorldSim {
         }
     }
 
-    pub fn generate(
+    /// Tout ce qui precede la fabrication des cases : le bruit, l'ocean,
+    /// l'erosion, les rivieres.
+    ///
+    /// Il est separe parce qu'**aucun reglage du climat ne peut le deplacer** :
+    /// `erosion.rs` ne lit jamais `temp`, c'est mesure et ecrit en D39. On peut
+    /// donc le faire une fois et refaire les biomes autant qu'on veut par
+    /// dessus — c'est ce dont vit [`Etude`].
+    fn preparer(
         seed: u32,
-        opts: WorldOpts,
+        world_file: FileOpts,
         threadpool: &rayon::ThreadPool,
         stage_report: &dyn Fn(WorldSimStage),
-    ) -> Self {
-        prof_span!("WorldSim::generate");
-        let calendar = opts.calendar; // separate lifetime of elements
-        let world_file = opts.world_file;
+    ) -> (MapSizeLg, GenCtx, GenCdf, f64, ChaChaRng) {
+        prof_span!("WorldSim::preparer");
 
         // Parse out the contents of various map formats into the values we need.
         let (parsed_world_file, map_size_lg, gen_opts) = world_file.load_content();
@@ -1826,7 +1788,7 @@ impl WorldSim {
                                     // trace a la regle. Sa periode vaut environ
                                     // 4096 blocs, soit la largeur d'une bande.
                                     let bande = 1.0 - ou.latitude().abs();
-                                    let onde = ou.lire(&gen_ctx.temp_nz, 1.0) * ONDE_DE_BANDE;
+                                    let onde = ou.lire(&gen_ctx.temp_nz, 1.0) * REGLAGES.bandes.onde;
                                     Some((bande + onde) as f32)
                                 }
                             })
@@ -1864,9 +1826,140 @@ impl WorldSim {
             rivers,
         };
 
+        (map_size_lg, gen_ctx, gen_cdf, maxh, rng)
+    }
+
+}
+
+/// Un monde tenu ouvert, pour regler les biomes sans le refaire.
+///
+/// Le prix de la generation est presque entierement dans l'erosion, et
+/// l'erosion ne lit jamais `temp` : on peut donc la payer une fois et refaire
+/// la carte des biomes autant qu'on veut par-dessus. C'est ce qui rend un
+/// curseur possible la ou la boucle etait « recompiler, regenerer, compter ».
+///
+/// **Elle n'a pas de site.** Les sites remettent `tree_density` et
+/// `spawn_rate` a zero autour d'eux, et ces deux champs entrent dans la loi
+/// (montagne, foret) : les garder rendrait le recalcul circulaire — les biomes
+/// decident des sites qui decident des biomes. `cube_monde --sans-sites`
+/// existe pour que les deux instruments soient comparables.
+///
+/// **Et elle garde `GenCdf`**, une dizaine de tableaux sur toute la grille :
+/// une vingtaine de megaoctets a `--x-lg 9`, quatre-vingts a 10. Le serveur
+/// n'a aucune raison de les garder, l'etude si — d'ou une entree separee
+/// plutot qu'un drapeau sur `generate`.
+pub struct Etude {
+    /// **Un vrai monde, pas une reduction.** L'etude a d'abord tenu ses cases
+    /// a part, et elle donnait des chiffres qui ne collaient pas a ceux de
+    /// `cube_monde` sur cinq biomes : `generate_cliffs` multiplie
+    /// `tree_density` autour des falaises, et `tree_density` entre dans la loi.
+    /// Une mesure qui saute une etape du pipeline mesure autre chose que ce
+    /// qu'elle annonce.
+    sim: WorldSim,
+    gen_cdf: GenCdf,
+    onde: f64,
+}
+
+impl Etude {
+    pub fn nouvelle(seed: u32, world_file: FileOpts, threadpool: &rayon::ThreadPool) -> Self {
+        let (map_size_lg, gen_ctx, gen_cdf, maxh, rng) =
+            WorldSim::preparer(seed, world_file, threadpool, &|_| {});
+        let sim = WorldSim {
+            seed,
+            map_size_lg,
+            max_height: maxh as f32,
+            chunks: Vec::new(),
+            _locations: Vec::new(),
+            gen_ctx,
+            rng,
+            calendar: None,
+        };
+        let mut etude = Self {
+            sim,
+            gen_cdf,
+            onde: REGLAGES.bandes.onde,
+        };
+        etude.refaire(&REGLAGES);
+        etude
+    }
+
+    pub const fn map_size_lg(&self) -> MapSizeLg { self.sim.map_size_lg }
+
+    /// Refait toutes les cases, puis les falaises — dans cet ordre, et sans en
+    /// sauter.
+    fn refaire(&mut self, reglages: &Reglages) {
+        let map = self.sim.map_size_lg;
+        let (gen_ctx, gen_cdf) = (&self.sim.gen_ctx, &self.gen_cdf);
+        self.sim.chunks = (0..map.chunks_len())
+            .into_par_iter()
+            .map(|i| SimChunk::generate(map, i, gen_ctx, gen_cdf, reglages))
+            .collect();
+        // `generate_cliffs` est cumulatif : il ne se rejoue que sur des cases
+        // fraiches, jamais sur celles qu'il a deja rabotees.
+        self.sim.generate_cliffs();
+    }
+
+    /// Les parts de chaque biome, sous ces reglages.
+    ///
+    /// Tout est refait a chaque appel plutot que d'inventer une invalidation
+    /// fine : sur cent mille cases, la loi entiere coute quelques dizaines de
+    /// millisecondes, et une invalidation partielle qui se trompe couterait
+    /// bien plus cher a debusquer.
+    pub fn parts(&mut self, reglages: &Reglages) -> Vec<(BiomeKind, u32)> {
+        // L'ondulation de bande est la seule qui change le *champ* classe en
+        // quantile, donc la seule qui demande un reclassement.
+        if reglages.bandes.onde != self.onde {
+            let ancien = &self.gen_cdf.temp_base;
+            let (temp_base, _) = uniform_noise(self.sim.map_size_lg, |posi, ou| {
+                // On reprend l'exclusion d'origine — les cases toutes en eau
+                // sont marquees NaN — plutot que de refaire le predicat : deux
+                // definitions de « toute en eau » finiraient par diverger.
+                if ancien[posi].1.is_nan() {
+                    None
+                } else {
+                    let bande = 1.0 - ou.latitude().abs();
+                    let onde =
+                        ou.lire(&self.sim.gen_ctx.temp_nz, 1.0) * reglages.bandes.onde;
+                    Some((bande + onde) as f32)
+                }
+            });
+            self.gen_cdf.temp_base = temp_base;
+            self.onde = reglages.bandes.onde;
+        }
+
+        self.refaire(reglages);
+
+        let map = self.sim.map_size_lg;
+        let mut compte = std::collections::HashMap::new();
+        let biomes = (0..map.chunks_len())
+            .into_par_iter()
+            .filter(|&i| cube::chunk_vivant(map, uniform_idx_as_vec2(map, i)))
+            .map(|i| self.sim.chunks[i].get_biome_avec(reglages))
+            .collect::<Vec<_>>();
+        for b in biomes {
+            *compte.entry(b).or_insert(0u32) += 1;
+        }
+        let mut parts: Vec<_> = compte.into_iter().collect();
+        parts.sort_by_key(|&(b, n)| (std::cmp::Reverse(n), format!("{b:?}")));
+        parts
+    }
+}
+
+impl WorldSim {
+    pub fn generate(
+        seed: u32,
+        opts: WorldOpts,
+        threadpool: &rayon::ThreadPool,
+        stage_report: &dyn Fn(WorldSimStage),
+    ) -> Self {
+        prof_span!("WorldSim::generate");
+        let calendar = opts.calendar; // separate lifetime of elements
+        let (map_size_lg, gen_ctx, gen_cdf, maxh, rng) =
+            Self::preparer(seed, opts.world_file, threadpool, stage_report);
+
         let chunks = (0..map_size_lg.chunks_len())
             .into_par_iter()
-            .map(|i| SimChunk::generate(map_size_lg, i, &gen_ctx, &gen_cdf))
+            .map(|i| SimChunk::generate(map_size_lg, i, &gen_ctx, &gen_cdf, &REGLAGES))
             .collect::<Vec<_>>();
 
         let mut this = Self {
@@ -2787,7 +2880,13 @@ pub struct NearestWaysData<M, F: FnOnce() -> Vec2<f32>> {
 }
 
 impl SimChunk {
-    fn generate(map_size_lg: MapSizeLg, posi: usize, gen_ctx: &GenCtx, gen_cdf: &GenCdf) -> Self {
+    fn generate(
+        map_size_lg: MapSizeLg,
+        posi: usize,
+        gen_ctx: &GenCtx,
+        gen_cdf: &GenCdf,
+        reglages: &Reglages,
+    ) -> Self {
         let pos = uniform_idx_as_vec2(map_size_lg, posi);
         let wposf = (pos * TerrainChunkSize::RECT_SIZE.map(|e| e as i32)).map(|e| e as f64);
         let ou = Endroit::nouveau(map_size_lg, wposf);
@@ -2796,13 +2895,12 @@ impl SimChunk {
         // par `Endroit`, donc **continus aux coutures** : une tache de lave ne
         // se coupe pas en deux au bord d'une face. Le seuil est adouci, jamais
         // franc — un masque tout ou rien donnerait un halo a bord net.
-        let palier = |bas: f64, haut: f64, x: f64| {
-            let t = ((x - bas) / (haut - bas)).clamp(0.0, 1.0);
-            (t * t * (3.0 - 2.0 * t)) as f32
-        };
-        let masque_volcan = palier(0.05, 0.25, ou.lire(&gen_ctx.volcan_nz, 1_500.0));
-        let masque_arcane = palier(0.30, 0.50, ou.lire(&gen_ctx.arcane_nz, 2_200.0));
-        let masque_miasme = palier(0.05, 0.22, ou.lire(&gen_ctx.miasme_nz, 2_600.0));
+        let m = &reglages.volcan;
+        let masque_volcan = m.palier(ou.lire(&gen_ctx.volcan_nz, m.echelle));
+        let m = &reglages.arcane;
+        let masque_arcane = m.palier(ou.lire(&gen_ctx.arcane_nz, m.echelle));
+        let m = &reglages.miasme;
+        let masque_miasme = m.palier(ou.lire(&gen_ctx.miasme_nz, m.echelle));
 
         let (_, chaos) = gen_cdf.chaos[posi];
         let alt_pre = gen_cdf.alt[posi] as f32;
@@ -2834,9 +2932,8 @@ impl SimChunk {
         // qui fait exister les bandes de D24, que la version d'amont n'avait
         // pas : elle donnait le poids double a l'altitude, si bien que le monde
         // etait chaud la ou il etait bas, pas pres de l'equateur.
-        const TEMP_WEIGHTS: [f32; 3] = [3.0, 1.5, 0.75];
         let temp = cdf_irwin_hall(
-            &TEMP_WEIGHTS,
+            &reglages.bandes.poids,
             [
                 temp_uniform,
                 1.0 - alt_uniform, /* 1.0 - abs_lat_uniform*/
@@ -2851,24 +2948,24 @@ impl SimChunk {
         // deja plus haut comme un *rang* sur la carte ; ici elle entre comme
         // une hauteur, en blocs. C'est ce terme, et lui seul, qui met la neige
         // au sommet d'une montagne equatoriale.
-        let temp = temp - GRADIENT_THERMIQUE * (alt_pre - 0.0).max(0.0);
+        let temp = temp - reglages.etagement.gradient * alt_pre.max(0.0);
 
         // **Le halo geothermique.** Le masque etant un bruit lisse, la chaleur
         // se retire progressivement en s'eloignant de la caldeira : pas de
         // ligne franche entre le cone nu et la chaine enneigee qui l'entoure.
-        let temp = temp + HALO_GEOTHERMIQUE * masque_volcan;
+        let temp = temp + reglages.etagement.halo * masque_volcan;
 
         // Take the weighted average of our randomly generated base humidity, and the
         // calculated water flux over this point in order to compute humidity.
         const HUMID_WEIGHTS: [f32; 3] = [1.0, 1.0, 0.75];
         let humidity = cdf_irwin_hall(&HUMID_WEIGHTS, [humid_uniform, flux_uniform, 1.0]);
-        // Moisture evaporates more in hot places
-        let humidity = humidity
-            * (1.0
-                - (temp - CONFIG.tropical_temp)
-                    .max(0.0)
-                    .div(1.0 - CONFIG.tropical_temp))
-            .max(0.0);
+        // **La chaleur asseche, mais elle ne peut plus tout prendre.** Le terme
+        // d'amont descendait jusqu'a zero ; regle pour un monde ou la
+        // temperature venait du bruit, il ne saturait jamais. Branche derriere
+        // la latitude il saturait tout le temps, et aucune humidite brute — qui
+        // ne depasse jamais 1 — ne pouvait plus satisfaire une jungle. Voir le
+        // plancher de `Evaporation`.
+        let humidity = humidity * reglages.evaporation.facteur(temp);
 
         let mut alt = CONFIG.sea_level.add(alt_pre);
         let basement = CONFIG.sea_level.add(basement_pre);
@@ -3077,40 +3174,58 @@ impl SimChunk {
     ///   d'amont : avec le gradient thermique de D39, tout sommet est enneige,
     ///   et la montagne se reduirait a une ceinture entre le seuil d'altitude
     ///   et la ligne de neige.
-    pub fn get_biome(&self) -> BiomeKind {
+    pub fn get_biome(&self) -> BiomeKind { self.get_biome_avec(&REGLAGES) }
+
+    /// Le biome de la case, sous des reglages donnes.
+    ///
+    /// **Premier test gagnant, et l'ordre porte du sens.** Trois choses qu'il
+    /// ne faut pas intervertir :
+    ///
+    /// - **les deux calottes passent avant l'eau.** Elles sont une couche
+    ///   posee *sur* l'ocean, et le biome couvre toute la calotte, eau libre
+    ///   entre les plaques comprise. Testees apres l'ocean, elles ne se
+    ///   declencheraient jamais ; testees par case, elles decouperaient le
+    ///   nord en taches trop petites pour que `name_biomes` en nomme une
+    ///   seule ;
+    /// - **`Volcanic` passe avant `Mountain`**, sinon la montagne l'absorbe ;
+    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre
+    ///   d'amont : avec le gradient thermique de D39, tout sommet est enneige,
+    ///   et la montagne se reduirait a une ceinture entre le seuil d'altitude
+    ///   et la ligne de neige.
+    ///
+    /// C'est **le seul exemplaire de la loi** : la fenetre de reglages
+    /// l'appelle plutot que d'en refaire une copie, sans quoi on reglerait un
+    /// monde et on en jouerait un autre.
+    pub fn get_biome_avec(&self, reglages: &Reglages) -> BiomeKind {
+        let s = &reglages.seuils;
         let savannah_hum_temp = [0.05..0.55, 0.3..1.6];
         let taiga_hum_temp = [0.2..1.4, -0.7..-0.3];
         // Plat, bas et gorge d'eau : ce que demande un marais ordinaire.
-        let fond_humide =
-            self.humidity > 0.45 && self.chaos < 0.3 && self.alt < CONFIG.sea_level + 80.0;
-        // **Le miasme demande beaucoup moins.** Il a d'abord partage le
-        // predicat du marais, et il n'en restait rien : 0,1 % du monde, des
-        // taches d'une ou deux cases. Un predicat eparpille intersecte avec un
-        // masque lisse ne donne pas une region, il donne des miettes — et une
-        // tache plus etroite que le pochoir du fondu n'a meme pas sa couleur,
-        // ses voisins la moyennent jusqu'a l'effacer.
-        //
-        // Ce n'est pas un renoncement au dessin : un marais miasmique n'est pas
-        // un marais ordinaire empoisonne. C'est une region que le masque
-        // designe, et l'eau n'y est qu'une condition de decor. On garde donc
-        // une humidite et une platitude, mais desserrees, et surtout on laisse
-        // monter : une tourbiere tient sur un plateau.
-        let fond_miasmique =
-            self.humidity > 0.30 && self.chaos < 0.55 && self.alt < CONFIG.sea_level + 400.0;
+        let fond_humide = self.humidity > s.fond_humidite
+            && self.chaos < s.fond_chaos
+            && self.alt < CONFIG.sea_level + s.fond_hauteur;
+        // Le miasme demande beaucoup moins : un predicat eparpille intersecte
+        // avec un masque lisse ne donne pas une region, il donne des miettes.
+        let fond_miasmique = self.humidity > s.miasme_humidite
+            && self.chaos < s.miasme_chaos
+            && self.alt < CONFIG.sea_level + s.miasme_hauteur;
         // La magie instable se tient a l'ecart de la bande d'apparition : le
         // present est paisible (D7), et la prairie du debut plus que tout.
         let loin_de_la_prairie = !(0.32..0.58).contains(&self.latitude.abs());
-        if self.latitude > SEUIL_BANQUISE {
+        let haut = self.alt > s.montagne_alt && self.chaos > s.montagne_chaos;
+        if self.latitude > reglages.calottes.banquise {
             BiomeKind::PackIce
-        } else if self.latitude < -SEUIL_BARRIERE {
+        } else if self.latitude < -reglages.calottes.barriere {
             BiomeKind::IceShelf
-        } else if self.river.is_ocean() && self.water_alt - self.alt > PROFONDEUR_ABYSSE {
+        } else if self.river.is_ocean()
+            && self.water_alt - self.alt > reglages.calottes.abysse
+        {
             BiomeKind::Abyss
         } else if self.river.is_ocean() {
             BiomeKind::Ocean
         } else if self.river.is_lake() {
             BiomeKind::Lake
-        } else if self.alt > 500.0 && self.chaos > 0.3 && self.masque_volcan > 0.5 {
+        } else if haut && self.masque_volcan > 0.5 {
             BiomeKind::Volcanic
         } else if self.masque_arcane > 0.5 && loin_de_la_prairie {
             BiomeKind::Arcane
@@ -3118,13 +3233,16 @@ impl SimChunk {
             BiomeKind::Miasma
         } else if fond_humide {
             BiomeKind::Swamp
-        } else if self.alt > 500.0 && self.chaos > 0.3 && self.tree_density < 0.6 {
+        } else if haut && self.tree_density < s.montagne_arbres {
             BiomeKind::Mountain
         } else if self.temp < CONFIG.snow_temp {
             BiomeKind::Snowland
-        } else if self.temp > CONFIG.desert_temp && self.humidity < CONFIG.desert_hum {
+        } else if self.temp > s.desert_temp && self.humidity < s.desert_humidite {
             BiomeKind::Desert
-        } else if self.tree_density > 0.65 && self.humidity > 0.65 && self.temp > 0.45 {
+        } else if self.tree_density > s.jungle_arbres
+            && self.humidity > s.jungle_humidite
+            && self.temp > s.jungle_temp
+        {
             BiomeKind::Jungle
         } else if savannah_hum_temp[0].contains(&self.humidity)
             && savannah_hum_temp[1].contains(&self.temp)
@@ -3134,7 +3252,7 @@ impl SimChunk {
             && taiga_hum_temp[1].contains(&self.temp)
         {
             BiomeKind::Taiga
-        } else if self.tree_density > 0.4 {
+        } else if self.tree_density > s.foret_arbres {
             BiomeKind::Forest
         } else {
             BiomeKind::Grassland

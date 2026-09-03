@@ -118,6 +118,29 @@ fn main() {
         sim.map_size_lg().chunks().x,
         sim.map_size_lg().chunks().y
     );
+    // Combien de lacs un monde *plat* porte-t-il ? Sur un patron de cube, le
+    // biome `Lake` tombe a trois cases sur cent mille : il faut savoir si
+    // c'est la topologie qui les a tues ou si le monde d'amont n'en a pas
+    // davantage. La question ne se tranche que par comparaison.
+    {
+        use common::terrain::BiomeKind;
+        let (mut lacs, mut ocean, mut vivantes) = (0u32, 0u32, 0u32);
+        for posi in 0..sim.map_size_lg().chunks_len() {
+            let c = sim.get(uniform_idx_as_vec2(sim.map_size_lg(), posi)).unwrap();
+            vivantes += 1;
+            match c.get_biome() {
+                BiomeKind::Lake => lacs += 1,
+                BiomeKind::Ocean | BiomeKind::Abyss => ocean += 1,
+                _ => {},
+            }
+        }
+        println!(
+            "monde plat — lacs : {lacs} cases ({:.3} %) · mer : {:.1} %",
+            100.0 * lacs as f64 / vivantes as f64,
+            100.0 * ocean as f64 / vivantes as f64
+        );
+    }
+
     println!("altitude maximale : {sommet:.3}");
     // L'étoile marque les deux champs que le climat a le droit de déplacer.
     for (nom, h) in RELIEF.iter().zip(hr) {
