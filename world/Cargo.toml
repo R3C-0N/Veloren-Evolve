@@ -85,6 +85,7 @@ tracing-subscriber =  { workspace = true }
 minifb = "0.28"
 rusqlite = { workspace = true }
 svg_fmt = "0.4"
+eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts"] }
 
 [[bench]]
 harness = false

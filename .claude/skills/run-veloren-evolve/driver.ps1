@@ -21,6 +21,7 @@ param(
   [double]$Seconds = 2,
   [string]$Value = '',
   [string]$Monde = '',
+  [string]$Processus = 'veloren-voxygen',
   [string]$Out = '',
   [string]$OutDir = '',
   [int]$Width = 1500, [int]$Height = 930
@@ -67,8 +68,11 @@ public class Vx {
 [void][Vx]::SetProcessDPIAware()
 
 function Get-Game {
-  $p = Get-Process -Name veloren-voxygen -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $p) { throw "veloren-voxygen ne tourne pas (lancer -Action launch)" }
+  # `-Processus` vise une autre fenetre que le jeu : la fenetre de reglages des
+  # biomes se pilote exactement pareil, et un second pilote pour elle aurait ete
+  # un second endroit ou corriger les memes pieges de capture.
+  $p = Get-Process -Name $Processus -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $p) { throw "$Processus ne tourne pas (lancer -Action launch)" }
   if ($p.MainWindowHandle -eq [IntPtr]::Zero) { throw "fenetre pas encore creee" }
   return $p
 }

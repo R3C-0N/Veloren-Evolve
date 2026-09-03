@@ -34,7 +34,49 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1.0);
 
+    // Les sites remettent `tree_density` et `spawn_rate` a zero autour d'eux, et
+    // ces deux champs entrent dans la loi des biomes. Les couper rend ce compte
+    // comparable a celui de la fenetre de reglages, qui ne peut pas les avoir :
+    // les biomes decideraient des sites qui decideraient des biomes.
+    //
+    // **Il faut s'arreter a `WorldSim` pour cela.** `World::generate` appelle
+    // `Civs::generate` sans condition — `seed_elements` ne gouverne pas les
+    // sites —, si bien qu'un simple drapeau sur les options n'en enlevait
+    // aucun. La premiere version de ce mode annoncait « sans sites » et en
+    // gardait : c'est la comparaison avec la fenetre qui l'a dit, et rien
+    // d'autre ne l'aurait dit.
+    let sites = !std::env::args().any(|a| a == "--sans-sites");
+
     let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
+
+    if !sites {
+        // Le mode de comparaison ne fait que compter : ni sites a placer, ni
+        // colonne a sonder, donc pas de `World` du tout.
+        let sim = veloren_world::sim::WorldSim::generate(
+            42,
+            WorldOpts {
+                seed_elements: false,
+                world_file: FileOpts::Generate(GenOpts {
+                    x_lg,
+                    y_lg: x_lg,
+                    map_kind: MapKind::Cube,
+                    erosion_quality: erosion,
+                    ..GenOpts::default()
+                }),
+                calendar: None,
+            },
+            &pool,
+            &|_| {},
+        );
+        let map = sim.map_size_lg();
+        println!(
+            "Monde cubique : 6 faces de {} chunks · sans sites",
+            cube::face_chunks(map)
+        );
+        println!();
+        std::process::exit(les_biomes(&sim, None) as i32);
+    }
+
     let (monde, index) = World::generate(
         42,
         WorldOpts {
@@ -67,7 +109,7 @@ fn main() {
     echecs += tout_s_ecoule_vers_la_mer(sim);
     echecs += le_relief_aux_coutures(sim);
     echecs += les_sites(sim);
-    echecs += les_biomes(&monde, index.as_index_ref());
+    echecs += les_biomes(sim, Some((&monde, index.as_index_ref())));
 
     println!();
     if echecs == 0 {
@@ -87,8 +129,10 @@ fn main() {
 ///
 /// On rend en echec un biome extreme qui n'existe nulle part : un seuil qui
 /// n'ouvre sur rien n'est pas un reglage, c'est une panne muette.
-fn les_biomes(monde: &World, index: veloren_world::index::IndexRef<'_>) -> u32 {
-    let sim = monde.sim();
+fn les_biomes(
+    sim: &veloren_world::sim::WorldSim,
+    sonde: Option<(&World, veloren_world::index::IndexRef<'_>)>,
+) -> u32 {
     use common::terrain::BiomeKind;
     use std::collections::HashMap;
 
@@ -142,13 +186,16 @@ fn les_biomes(monde: &World, index: veloren_world::index::IndexRef<'_>) -> u32 {
             // fond, cent blocs sous la surface. On se pose sur ce qui porte,
             // pas sur ce qui est en dessous.
             let sol = c.alt.max(c.water_alt);
-            format!(
-                "  ·  /goto {} {} {:.0}  ·  {}",
-                w.x,
-                w.y,
-                sol + 12.0,
-                dessus(monde, index, w)
-            )
+            match sonde {
+                Some((monde, index)) => format!(
+                    "  ·  /goto {} {} {:.0}  ·  {}",
+                    w.x,
+                    w.y,
+                    sol + 12.0,
+                    dessus(monde, index, w)
+                ),
+                None => String::new(),
+            }
         });
         println!("  {biome:?} : {n} cases ({part:.1} %){repere}");
     }
