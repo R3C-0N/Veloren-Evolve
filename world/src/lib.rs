@@ -33,7 +33,7 @@ pub use crate::{
 };
 pub use block::BlockGen;
 use civ::WorldCivStage;
-pub use column::ColumnSample;
+pub use column::{Calotte, ColumnSample};
 pub use common::terrain::site::{DungeonKindMeta, SettlementKindMeta};
 pub use index::{IndexOwned, IndexRef};
 use sim::WorldSimStage;

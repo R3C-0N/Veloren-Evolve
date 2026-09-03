@@ -1,7 +1,7 @@
 use crate::{
     CONFIG, IndexRef, Land,
     all::ForestKind,
-    sim::{Endroit, Path, RiverKind, SimChunk, WorldSim, local_cells},
+    sim::{Endroit, Path, REGLAGES, RiverKind, SimChunk, WorldSim, lissage, local_cells},
     site::SpawnRules,
     util::{RandomField, RandomPerm, Sampler},
 };
@@ -1351,6 +1351,8 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
             0.0
         };
 
+        let calotte = calotte_de(&ou, sim, water_level, alt);
+
         Some(ColumnSample {
             alt,
             riverless_alt,
@@ -1399,8 +1401,137 @@ impl<'a> Sampler<'a> for ColumnGen<'a> {
             cliff_height,
             water_vel,
             ice_depth,
+            calotte,
 
             chunk: sim_chunk,
+        })
+    }
+}
+
+/// Le relief d'une calotte polaire sur une colonne (D42).
+///
+/// C'est un **champ de hauteurs**, pas une altitude de simulation : `alt` et
+/// `basement` n'en savent rien, l'érosion non plus, et la carte du monde
+/// continue de montrer les deux calottes lisses. C'est le prix de « ni le
+/// soulèvement ni l'érosion ne bougent », et c'est ce qui rend l'asymétrie des
+/// deux calottes bon marché.
+#[derive(Clone, Copy, Debug)]
+pub struct Calotte {
+    /// Le dessus de la glace, en blocs.
+    pub sommet: f32,
+    /// Le dessous de la dalle. Sous lui, l'eau libre : la barrière **flotte**,
+    /// et c'est sous elle que passe le sous-marin de D19.
+    pub fond: f32,
+    /// La banquise du nord, ou la barrière du sud.
+    pub banquise: bool,
+
+    /// Les deux lectures brutes du semis, gardées pour la sonde.
+    ///
+    /// **Elles ne servent qu'à régler.** Les deux seuils de crête et de
+    /// crevasse se lisent dans l'échelle du bruit, et cette échelle n'est ni
+    /// écrite nulle part ni la même à plat que sur un cube — la lecture y est
+    /// 2D d'un côté, 3D de l'autre. Les deviner, c'est ce qui a donné une
+    /// banquise sans une seule crevasse : `cube_monde --calottes` imprime leur
+    /// distribution, et c'est elle qui décide des seuils.
+    pub devers: f32,
+    pub jointure: f32,
+}
+
+/// Le relief de calotte sur cette colonne, s'il y en a une.
+///
+/// **Le front se décide sur la latitude continue de la colonne, jamais sur le
+/// biome de la case.** Le biome est décidé par case de 32 blocs ; un front qui
+/// le suivrait serait un escalier de 32 blocs — exactement la panne que D39 a
+/// corrigée pour la ligne de neige, en appliquant son gradient à deux
+/// résolutions. Le biome garde tout son rôle — teinte, nommage, faune,
+/// `palier_requis()` — il cesse seulement d'être ce qui décide de la présence
+/// de glace.
+fn calotte_de(ou: &Endroit, sim: &WorldSim, water_level: f32, alt: f32) -> Option<Calotte> {
+    let r = &REGLAGES.relief;
+    let c = &REGLAGES.calottes;
+
+    // Une calotte est posée sur l'océan, jamais sur un continent. Et le test
+    // de latitude passe **avant** les lectures de bruit : les deux tiers du
+    // monde ne paient ainsi pas un seul échantillon.
+    if alt >= water_level {
+        return None;
+    }
+    let lat = ou.latitude() as f32;
+    let onde = r.onde(c);
+    if lat.abs() <= c.banquise.min(c.barriere) - onde {
+        return None;
+    }
+
+    // Le dévers de la plaque, et la distance à sa jointure — deux lectures
+    // d'un seul semis, de même graine (D42), par `Endroit` pour rester
+    // continues aux quatre coutures de la face polaire.
+    let devers = ou.lire(&sim.gen_ctx.floes.valeur, r.floe_taille) as f32;
+    let jointure = ou.lire(&sim.gen_ctx.floes.distance, r.floe_taille) as f32;
+    // Le front ondule sur la même lecture, à huit fois l'échelle : un front
+    // parfaitement circulaire laisse voir la règle, et un bruit de plus pour
+    // cela seul serait un tirage de trop dans `GenCtx`.
+    let frange = ou.lire(&sim.gen_ctx.floes.valeur, r.floe_taille * 8.0) as f32 * onde;
+
+    let banquise = lat > 0.0;
+    let seuil = if banquise { c.banquise } else { c.barriere } + frange;
+    if lat.abs() <= seuil {
+        return None;
+    }
+
+    if banquise {
+        // **La couverture se referme à mesure qu'on monte** (D42) : au seuil la
+        // fente est large et profonde, au pôle la banquise est soudée. Les
+        // crêtes, elles, ne se referment pas — sans elles le pôle redeviendrait
+        // une table.
+        let ouverture = 1.0 - r.crevasse_fermeture * lissage(seuil, 1.0, lat.abs());
+
+        let fond = water_level - r.banquise_tirant;
+        let assise = water_level + r.banquise_francbord + devers * r.floe_devers;
+
+        // Une seule lecture décide des deux : la crête bourrelette les flancs
+        // de la jointure et **retombe en son cœur**, là où la fente la coupe.
+        // C'est la silhouette d'une vraie banquise — deux plaques qui se
+        // poussent se soulèvent au contact et se fendent à la ligne de rupture.
+        let flanc = lissage(r.crete_seuil, r.crevasse_seuil, jointure);
+        let fente = lissage(
+            r.crevasse_seuil,
+            r.crevasse_seuil + r.crevasse_largeur,
+            jointure,
+        );
+
+        // **L'ouverture module la profondeur, pas la forme.** Multipliée dans
+        // la forme, elle laissait la crête vivre au cœur de la fente : à un
+        // quart d'ouverture, cinq blocs de bourrelet compensaient trois de
+        // creux et la fente n'existait plus du tout, sauf sur le liseré du
+        // front. La crête se retire sur toute la fente ; c'est le fond qui
+        // remonte en s'approchant du pôle.
+        let sommet = assise + r.crete_hauteur * flanc * (1.0 - fente)
+            - r.crevasse_profondeur * fente * ouverture;
+
+        Some(Calotte {
+            // **La crevasse ne perce jamais.** C'est ce qui la garde sèche : une
+            // fente qui atteint le dessous de la dalle ouvre sur l'océan, et ce
+            // n'est plus une crevasse mais un chenal.
+            sommet: sommet.max(fond + r.crevasse_plancher),
+            fond,
+            banquise: true,
+            devers,
+            jointure,
+        })
+    } else {
+        // « Falaise sur les bords puis pratiquement plat » est la définition
+        // d'un front de barrière. La dalle est donc deux plans, et sa falaise
+        // ne se dessine nulle part : elle sort du seul fait que le front est un
+        // seuil, au bloc près puisque la latitude est celle de la colonne.
+        // La houle se prend sur la **distance**, pas sur la valeur : celle-ci
+        // est constante par cellule, et donnerait une marche tous les deux
+        // cents blocs là où on veut une respiration.
+        Some(Calotte {
+            sommet: water_level + r.barriere_francbord + jointure * r.barriere_houle,
+            fond: water_level - r.barriere_tirant,
+            banquise: false,
+            devers,
+            jointure,
         })
     }
 }
@@ -1433,6 +1564,8 @@ pub struct ColumnSample<'a> {
     pub cliff_height: f32,
     pub water_vel: Vec3<f32>,
     pub ice_depth: f32,
+    /// Le relief de calotte, hors des deux calottes `None` (D42).
+    pub calotte: Option<Calotte>,
 
     pub chunk: &'a SimChunk,
 }

@@ -96,6 +96,101 @@ pub struct Calottes {
     pub abysse: f32,
 }
 
+/// Le plus petit `|sin(latitude)|` qui tienne dans une face polaire.
+///
+/// Une face polaire couvre `|z|` de 0,577 à ses coins et **0,707 au milieu de
+/// ses arêtes**. Tout anneau tracé sous cette valeur enjambe les quatre
+/// coutures de la face — c'est la contrainte de D42, et elle vaut aussi bien
+/// pour le seuil d'une calotte que pour l'ondulation de son front.
+pub const PLANCHER_FACE: f32 = 0.707;
+
+/// Le relief des deux calottes : ce qui les distingue d'une table.
+///
+/// Rien de tout cela ne touche à l'altitude de simulation. Les calottes
+/// restent un traitement de surface posé sur une colonne océanique (D42) :
+/// ni le soulèvement ni l'érosion ne bougent, et la carte du monde continue
+/// de les montrer lisses.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Relief {
+    /// Largeur d'une plaque de banquise, en blocs.
+    pub floe_taille: f64,
+
+    /// De combien deux plaques voisines se décalent, en blocs.
+    ///
+    /// C'est la lecture `Value` du Worley : une constante par cellule, donc
+    /// un niveau propre à chaque plaque. Sans elle, les plaques ne se
+    /// distinguent que par leurs bords et la banquise redevient une table
+    /// gravée.
+    pub floe_devers: f32,
+
+    /// Où commence la jointure entre deux plaques, sur la sortie brute du
+    /// Worley en `Distance`.
+    ///
+    /// **Ces deux seuils se lisent dans l'échelle du bruit, pas en blocs**, et
+    /// cette échelle n'est pas la même à plat que sur un cube : la lecture y
+    /// est 2D d'un côté, 3D de l'autre. `cube_monde --calottes` imprime la
+    /// distribution observée — c'est elle qui les règle, pas le jugement.
+    pub crete_seuil: f32,
+
+    /// Hauteur d'une crête de compression, en blocs.
+    ///
+    /// Deux plaques qui se poussent bourrelettent au contact. La crête retombe
+    /// au cœur de la jointure, là où la crevasse la fend.
+    pub crete_hauteur: f32,
+
+    /// Où la jointure se fend, sur la même échelle que `crete_seuil`.
+    pub crevasse_seuil: f32,
+
+    /// Sur combien la fente atteint sa pleine profondeur, même échelle.
+    pub crevasse_largeur: f32,
+
+    /// Profondeur d'une crevasse au bord de la calotte, en blocs.
+    ///
+    /// Au bord seulement : elle est multipliée par l'ouverture, qui se referme
+    /// en montant vers le pôle.
+    pub crevasse_profondeur: f32,
+
+    /// Ce qui doit rester de glace sous une crevasse, en blocs.
+    ///
+    /// **C'est lui qui la garde sèche.** Une crevasse qui perce la dalle
+    /// ouvre sur l'océan, et ce n'est plus une crevasse : c'est un chenal.
+    pub crevasse_plancher: f32,
+
+    /// De combien la banquise se referme au pôle, entre 0 et 1.
+    ///
+    /// « Une couverture qui se referme à mesure qu'on monte » (D42) : les
+    /// crevasses sont pleines au seuil et se resserrent en montant. **Se
+    /// refermer n'est pas disparaître** — à 1, la moitié de la calotte
+    /// redevient une table, et c'est ce qui est arrivé au premier jet.
+    pub crevasse_fermeture: f32,
+
+    /// Ce que la banquise porte au-dessus de l'eau, et ce qu'elle y plonge.
+    ///
+    /// Leur somme est son épaisseur, et elle doit loger une crevasse : sous
+    /// une quinzaine de blocs, la fente n'a pas la place d'exister.
+    pub banquise_francbord: f32,
+    pub banquise_tirant: f32,
+
+    /// Les mêmes pour la barrière du sud. **Le franc-bord *est* la hauteur de
+    /// la falaise du front**, et le tirant ce sous quoi passe le sous-marin.
+    pub barriere_francbord: f32,
+    pub barriere_tirant: f32,
+
+    /// De combien la surface de la barrière respire, en blocs.
+    ///
+    /// « Falaise sur les bords puis pratiquement plat » est la définition d'un
+    /// front de barrière : ce nombre reste petit, sans quoi le sud cesse de se
+    /// distinguer du nord.
+    pub barriere_houle: f32,
+
+    /// De combien le front des deux calottes ondule, en `sin(latitude)`.
+    ///
+    /// Un front parfaitement circulaire laisse voir la règle. Celui-ci se lit
+    /// sur le Worley déjà échantillonné, à grande échelle — aucun bruit de
+    /// plus. Voir [`Relief::onde`], qui l'écrête.
+    pub front_onde: f32,
+}
+
 /// Un masque de région : son échelle en blocs, et où il bascule.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Masque {
@@ -151,6 +246,7 @@ pub struct Reglages {
     pub etagement: Etagement,
     pub evaporation: Evaporation,
     pub calottes: Calottes,
+    pub relief: Relief,
     pub volcan: Masque,
     pub arcane: Masque,
     pub miasme: Masque,
@@ -190,6 +286,29 @@ pub const DEFAUT: Reglages = Reglages {
         banquise: 0.93,
         barriere: 0.72,
         abysse: 100.0,
+    },
+    // **Les deux seuils sortent des quantiles mesurés, pas du jugement.** Sur
+    // un monde cubique de 128 chunks par face, la jointure va de -0,67 à 0,49,
+    // médiane -0,15, q75 0,06, q95 0,36. Posés a priori a -0,30 et 0,00, ils
+    // faisaient des trois quarts de la calotte une crete et d'aucune part une
+    // crevasse. Ils sont maintenant lus sur la distribution : la crete occupe
+    // le dernier quart, la fente le dernier vingtieme.
+    relief: Relief {
+        floe_taille: 220.0,
+        floe_devers: 3.0,
+        crete_seuil: 0.06,
+        crete_hauteur: 5.0,
+        crevasse_seuil: 0.30,
+        crevasse_largeur: 0.10,
+        crevasse_profondeur: 12.0,
+        crevasse_plancher: 3.0,
+        crevasse_fermeture: 0.75,
+        banquise_francbord: 3.0,
+        banquise_tirant: 13.0,
+        barriere_francbord: 22.0,
+        barriere_tirant: 40.0,
+        barriere_houle: 2.0,
+        front_onde: 0.008,
     },
     volcan: Masque {
         echelle: 1_500.0,
@@ -243,4 +362,33 @@ impl Evaporation {
     pub fn facteur(&self, temp: f32) -> f32 {
         (1.0 - (temp - self.seuil).max(0.0) / self.pente).max(self.plancher)
     }
+}
+
+/// Un palier adouci de `bas` à `haut`, entre 0 et 1.
+///
+/// Le même que celui de [`Masque::palier`], sorti pour que le relief s'en
+/// serve : un seuil franc y donnerait une marche là où on veut une pente.
+#[inline]
+pub fn lissage(bas: f32, haut: f32, x: f32) -> f32 {
+    let t = ((x - bas) / (haut - bas)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+impl Relief {
+    /// L'ondulation du front, **écrêtée pour tenir dans la face polaire**.
+    ///
+    /// Un réglage qu'on peut bouger doit refuser de casser : le front de la
+    /// barrière commence à 0,72 et le plancher dur est à 0,707, ce qui ne
+    /// laisse que treize millièmes. Un curseur poussé plus loin ferait
+    /// enjamber les quatre coutures de la face à l'anneau du front, et le
+    /// défaut n'y suffit pas — c'est ici que ça se refuse, pas dans `DEFAUT`.
+    #[inline]
+    pub fn onde(&self, calottes: &Calottes) -> f32 {
+        let marge = (calottes.banquise.min(calottes.barriere) - PLANCHER_FACE).max(0.0);
+        self.front_onde.clamp(0.0, marge)
+    }
+
+    /// L'épaisseur totale de la banquise, en blocs.
+    #[inline]
+    pub fn banquise_epaisseur(&self) -> f32 { self.banquise_francbord + self.banquise_tirant }
 }

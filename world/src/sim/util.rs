@@ -86,8 +86,7 @@ impl Endroit {
     pub fn latitude(&self) -> f64 {
         match self.sphere {
             None => {
-                let hauteur =
-                    (self.map.chunks().y as f64) * (TerrainChunkSize::RECT_SIZE.y as f64);
+                let hauteur = (self.map.chunks().y as f64) * (TerrainChunkSize::RECT_SIZE.y as f64);
                 (self.wposf.y / hauteur * 2.0 - 1.0).clamp(-1.0, 1.0)
             },
             Some((_, p)) => p.z.clamp(-1.0, 1.0),
@@ -1042,6 +1041,34 @@ impl<'a, F: NoiseFn<T> + 'a, T> NoiseFn<T> for ScaleBias<'a, F> {
 }
  */
 
+/// Le semis de plaques de la banquise, lu de deux façons.
+///
+/// **Les deux `Worley` partagent leur graine, et c'est ce que D42 demande.**
+/// Sans cela la constante d'une cellule et la distance à son germe ne
+/// parleraient pas de la même plaque : le dévers d'un floe tomberait à côté de
+/// sa propre jointure, et la banquise perdrait toute lisibilité.
+///
+/// Un seul tirage les construit toutes les deux — il se fait **dans**
+/// l'initialiseur du dernier champ de `GenCtx`, jamais avant le littéral, sans
+/// quoi il déplacerait toutes les graines qui le suivent.
+#[derive(Clone)]
+pub struct Floes {
+    /// Une constante par plaque : son dévers.
+    pub valeur: Worley,
+    /// La distance au germe : faible au cœur d'une plaque, forte à la jointure
+    /// entre deux. C'est là que crêtes et crevasses se posent.
+    pub distance: Worley,
+}
+
+impl Floes {
+    pub fn nouveau(graine: u32) -> Self {
+        Self {
+            valeur: Worley::new(graine).set_return_type(ReturnType::Value),
+            distance: Worley::new(graine).set_return_type(ReturnType::Distance),
+        }
+    }
+}
+
 /// Noise function that outputs Worley noise.
 ///
 /// Copied from noise crate to make thread-safe.
@@ -1091,7 +1118,6 @@ impl Worley {
 
     /// Enables or disables applying the distance from the nearest seed point
     /// to the output value.
-    #[expect(dead_code)]
     pub fn set_return_type(self, return_type: ReturnType) -> Self {
         Self {
             return_type,

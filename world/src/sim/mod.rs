@@ -15,7 +15,8 @@ pub use self::{
     // Les reglages du climat, en donnees : c'est ce que la fenetre de
     // `examples/reglages.rs` fait varier, et ce que le jeu emploie par defaut.
     reglages::{
-        Bandes, Calottes, Etagement, Evaporation, Masque, Reglages, Seuils, DEFAUT as REGLAGES,
+        Bandes, Calottes, DEFAUT as REGLAGES, Etagement, Evaporation, Masque, PLANCHER_FACE,
+        Reglages, Relief, Seuils, lissage,
     },
     // `Endroit` est publique parce que la mesure de continuité aux coutures
     // l'interroge du dehors : c'est elle que l'étape a changée.
@@ -100,8 +101,6 @@ use vek::*;
 /// émergent : le relief, lui, vient du bruit comme avant.
 const FRACTION_OCEAN: f64 = 0.65;
 
-
-
 const DEFAULT_WORLD_CHUNKS_LG: MapSizeLg =
     if let Ok(map_size_lg) = MapSizeLg::new(Vec2 { x: 10, y: 10 }) {
         map_size_lg
@@ -162,6 +161,9 @@ pub(crate) struct GenCtx {
     pub river_seed: RandomField,
     pub rock_strength_nz: Fbm<Perlin>,
     pub uplift_nz: util::Worley,
+    /// Le semis de plaques de la banquise (D42), en deux lectures d'une seule
+    /// graine.
+    pub floes: util::Floes,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -818,6 +820,7 @@ impl WorldSim {
             river_seed: RandomField::new(0),
             rock_strength_nz: Fbm::new(0),
             uplift_nz: util::Worley::new(0),
+            floes: util::Floes::nouveau(0),
         };
         Self {
             seed: 0,
@@ -954,6 +957,20 @@ impl WorldSim {
             volcan_nz: Fbm::new(rng.random()).set_octaves(3).set_persistence(0.45),
             arcane_nz: Fbm::new(rng.random()).set_octaves(3).set_persistence(0.45),
             miasme_nz: Fbm::new(rng.random()).set_octaves(4).set_persistence(0.5),
+            // **Etre en dernier dans le litteral ne suffit pas.** Le flux ne
+            // s'arrete pas au `GenCtx` : `preparer` rend ce meme `rng` a
+            // `WorldSim`, qui continue d'y puiser pour les falaises et les
+            // lieux. Un `rng.random()` de plus ici, pourtant apres tous les
+            // autres, decalait donc `cliff_height` et `tree_density` — et
+            // c'est l'oracle qui l'a dit, pas la relecture.
+            //
+            // Les floes prennent leur propre flux, derive de la graine du
+            // monde. Une seule graine pour les deux lectures : elles doivent
+            // la partager (D42), sans quoi le devers d'une plaque tomberait a
+            // cote de sa jointure.
+            floes: util::Floes::nouveau(
+                ChaChaRng::from_seed(seed_expan::rng_state(seed ^ 0xF10E_5EED)).random(),
+            ),
         };
 
         let river_seed = &gen_ctx.river_seed;
@@ -1788,7 +1805,8 @@ impl WorldSim {
                                     // trace a la regle. Sa periode vaut environ
                                     // 4096 blocs, soit la largeur d'une bande.
                                     let bande = 1.0 - ou.latitude().abs();
-                                    let onde = ou.lire(&gen_ctx.temp_nz, 1.0) * REGLAGES.bandes.onde;
+                                    let onde =
+                                        ou.lire(&gen_ctx.temp_nz, 1.0) * REGLAGES.bandes.onde;
                                     Some((bande + onde) as f32)
                                 }
                             })
@@ -1828,7 +1846,6 @@ impl WorldSim {
 
         (map_size_lg, gen_ctx, gen_cdf, maxh, rng)
     }
-
 }
 
 /// Un monde tenu ouvert, pour regler les biomes sans le refaire.
@@ -1918,8 +1935,7 @@ impl Etude {
                     None
                 } else {
                     let bande = 1.0 - ou.latitude().abs();
-                    let onde =
-                        ou.lire(&self.sim.gen_ctx.temp_nz, 1.0) * reglages.bandes.onde;
+                    let onde = ou.lire(&self.sim.gen_ctx.temp_nz, 1.0) * reglages.bandes.onde;
                     Some((bande + onde) as f32)
                 }
             });
@@ -3164,16 +3180,17 @@ impl SimChunk {
     ///
     /// Trois choses qu'il ne faut pas intervertir :
     ///
-    /// - **les deux calottes passent avant l'eau.** Elles sont une couche
-    ///   posee *sur* l'ocean, et le biome couvre toute la calotte, eau libre
-    ///   entre les plaques comprise. Testees apres l'ocean, elles ne se
-    ///   declencheraient jamais ; testees par case, elles decouperaient le
-    ///   nord en taches trop petites pour que `name_biomes` en nomme une seule ;
+    /// - **les deux calottes passent avant l'eau.** Elles sont une couche posee
+    ///   *sur* l'ocean, et le biome couvre toute la calotte, eau libre et terre
+    ///   emergee comprises — ce qui separe deux plaques n'est pas de l'eau mais
+    ///   une crevasse seche (D42). Testees apres l'ocean, elles ne se
+    ///   declencheraient jamais ; testees par case, elles decouperaient le nord
+    ///   en taches trop petites pour que `name_biomes` en nomme une seule ;
     /// - **`Volcanic` passe avant `Mountain`**, sinon la montagne l'absorbe ;
-    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre
-    ///   d'amont : avec le gradient thermique de D39, tout sommet est enneige,
-    ///   et la montagne se reduirait a une ceinture entre le seuil d'altitude
-    ///   et la ligne de neige.
+    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre d'amont
+    ///   : avec le gradient thermique de D39, tout sommet est enneige, et la
+    ///   montagne se reduirait a une ceinture entre le seuil d'altitude et la
+    ///   ligne de neige.
     pub fn get_biome(&self) -> BiomeKind { self.get_biome_avec(&REGLAGES) }
 
     /// Le biome de la case, sous des reglages donnes.
@@ -3181,17 +3198,17 @@ impl SimChunk {
     /// **Premier test gagnant, et l'ordre porte du sens.** Trois choses qu'il
     /// ne faut pas intervertir :
     ///
-    /// - **les deux calottes passent avant l'eau.** Elles sont une couche
-    ///   posee *sur* l'ocean, et le biome couvre toute la calotte, eau libre
-    ///   entre les plaques comprise. Testees apres l'ocean, elles ne se
-    ///   declencheraient jamais ; testees par case, elles decouperaient le
-    ///   nord en taches trop petites pour que `name_biomes` en nomme une
-    ///   seule ;
+    /// - **les deux calottes passent avant l'eau.** Elles sont une couche posee
+    ///   *sur* l'ocean, et le biome couvre toute la calotte, eau libre et terre
+    ///   emergee comprises — ce qui separe deux plaques n'est pas de l'eau mais
+    ///   une crevasse seche (D42). Testees apres l'ocean, elles ne se
+    ///   declencheraient jamais ; testees par case, elles decouperaient le nord
+    ///   en taches trop petites pour que `name_biomes` en nomme une seule ;
     /// - **`Volcanic` passe avant `Mountain`**, sinon la montagne l'absorbe ;
-    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre
-    ///   d'amont : avec le gradient thermique de D39, tout sommet est enneige,
-    ///   et la montagne se reduirait a une ceinture entre le seuil d'altitude
-    ///   et la ligne de neige.
+    /// - **`Mountain` passe avant `Snowland`**, ce qui renverse l'ordre d'amont
+    ///   : avec le gradient thermique de D39, tout sommet est enneige, et la
+    ///   montagne se reduirait a une ceinture entre le seuil d'altitude et la
+    ///   ligne de neige.
     ///
     /// C'est **le seul exemplaire de la loi** : la fenetre de reglages
     /// l'appelle plutot que d'en refaire une copie, sans quoi on reglerait un
@@ -3217,9 +3234,7 @@ impl SimChunk {
             BiomeKind::PackIce
         } else if self.latitude < -reglages.calottes.barriere {
             BiomeKind::IceShelf
-        } else if self.river.is_ocean()
-            && self.water_alt - self.alt > reglages.calottes.abysse
-        {
+        } else if self.river.is_ocean() && self.water_alt - self.alt > reglages.calottes.abysse {
             BiomeKind::Abyss
         } else if self.river.is_ocean() {
             BiomeKind::Ocean

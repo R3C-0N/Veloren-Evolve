@@ -28,14 +28,6 @@ const TEINTE_CRISTAL: Rgb<u8> = Rgb::new(150, 116, 214);
 const TEINTE_BANQUISE: Rgb<u8> = Rgb::new(176, 206, 220);
 const TEINTE_BARRIERE: Rgb<u8> = Rgb::new(222, 234, 246);
 
-/// Epaisseur minimale des deux calottes, en blocs.
-///
-/// La barriere est plus epaisse que la banquise : c'est du neve tasse contre
-/// des plaques flottantes. C'est aussi ce qui donnera son front de falaise,
-/// quand le relief des calottes viendra.
-const EPAISSEUR_CALOTTE: f32 = 4.0;
-const EPAISSEUR_BARRIERE: f32 = 7.0;
-
 #[derive(Deserialize)]
 pub struct Colors {
     // TODO(@Sharp): After the merge, construct enough infrastructure to make it convenient to
@@ -201,18 +193,14 @@ impl<'a> BlockGen<'a> {
                     // deja `tree_density < 0.6` pour la montagne : le biome est
                     // tout entier au-dessus de la vegetation dense, et le
                     // rendre nu de bout en bout est ce qu'il decrit.
-                    BiomeKind::Mountain if snow_cover => {
-                        Block::new(BlockKind::Snow, col)
-                    },
+                    BiomeKind::Mountain if snow_cover => Block::new(BlockKind::Snow, col),
                     BiomeKind::Mountain => Block::new(BlockKind::Scree, col),
                     // Le marais ordinaire avait du gazon quand son jumeau
                     // miasmique avait tourbe et bois pourri. Il prend la tourbe,
                     // sans la pourriture.
                     BiomeKind::Swamp => Block::new(BlockKind::Peat, col),
                     // Un marais, c'est un tapis qui pourrit sur de la tourbe.
-                    BiomeKind::Miasma if grass_factor >= 0.7 => {
-                        Block::new(BlockKind::Blight, col)
-                    },
+                    BiomeKind::Miasma if grass_factor >= 0.7 => Block::new(BlockKind::Blight, col),
                     BiomeKind::Miasma => Block::new(BlockKind::Peat, col),
                     _ if grass_factor < 0.7 => Block::new(BlockKind::Earth, col),
                     _ if snow_cover => Block::new(BlockKind::Snow, col),
@@ -223,23 +211,47 @@ impl<'a> BlockGen<'a> {
             None
         }
         .or_else(|| {
-            let over_water = alt < water_level;
+            let z = wposf.z as f32;
+
             // **Les deux calottes sont une couche posee sur l'ocean** (D42).
             // Elles ne reposent sur aucun continent : c'est ce qui les rend bon
-            // marche — ni soulevement ni erosion ne bougent. Leur epaisseur a
-            // un plancher, sans quoi la calotte serait trouee la ou le bruit de
-            // glace passe sous son seuil, et une banquise trouee n'est plus une
-            // calotte mais un archipel.
-            let (glace, teinte, epaisseur) = match biome {
-                BiomeKind::PackIce => (BlockKind::PackIce, TEINTE_BANQUISE, EPAISSEUR_CALOTTE),
-                BiomeKind::IceShelf => (BlockKind::ShelfIce, TEINTE_BARRIERE, EPAISSEUR_BARRIERE),
-                _ => (BlockKind::Ice, CONFIG.ice_color, 0.0),
-            };
-            let ice_depth = ice_depth.max(epaisseur);
+            // marche — ni soulevement ni erosion ne bougent.
+            //
+            // Leur relief est un champ de hauteurs porte par la colonne, et il
+            // ne se lit pas sur le biome : la colonne connait sa latitude
+            // vraie, le biome celle de sa case de 32 blocs. C'est ce qui donne
+            // au front de la barriere une falaise au bloc pres au lieu d'un
+            // escalier.
+            if let Some(calotte) = sample.calotte {
+                let (glace, teinte) = if calotte.banquise {
+                    (BlockKind::PackIce, TEINTE_BANQUISE)
+                } else {
+                    (BlockKind::ShelfIce, TEINTE_BARRIERE)
+                };
+                return if z >= calotte.fond && z < calotte.sommet {
+                    Some(Block::new(glace, teinte))
+                } else if z < calotte.fond {
+                    // Sous la dalle, l'eau libre : la barriere **flotte**, et
+                    // c'est sous elle que passe le sous-marin de D19. La ou le
+                    // fond marin remonte au-dessus du tirant, la dalle s'echoue
+                    // toute seule — la branche du sol a deja repondu.
+                    Some(water)
+                } else {
+                    // Au-dessus de la glace, **de l'air, jamais de l'eau**,
+                    // meme bien au-dessous du niveau de la mer. C'est ici que
+                    // se joue la difference entre une crevasse et un chenal :
+                    // laisser la branche de l'ocean repondre remplissait la
+                    // fente de neuf blocs d'eau, et on y nageait au lieu d'y
+                    // tomber.
+                    None
+                };
+            }
+
+            let over_water = alt < water_level;
             // Water
-            if over_water && (wposf.z as f32 - water_level).abs() < ice_depth {
-                Some(Block::new(glace, teinte))
-            } else if (wposf.z as f32) < water_level {
+            if over_water && (z - water_level).abs() < ice_depth {
+                Some(Block::new(BlockKind::Ice, CONFIG.ice_color))
+            } else if z < water_level {
                 // Ocean
                 Some(water)
             } else {
@@ -266,6 +278,16 @@ impl ZCache<'_> {
         let ground_max = self.sample.alt + warp + 2.0;
 
         let max = ground_max.max(self.sample.water_level + 2.0 + self.sample.ice_depth);
+
+        // **Le relief d'une calotte doit faire remonter ce plafond avec lui.**
+        // Au-dessus de `max`, aucun bloc n'est interrogé (`lib.rs`, la boucle
+        // `min_z..max_z`) : un franc-bord de vingt-deux blocs et des cretes de
+        // cinq disparaitraient en silence, et la calotte resterait plate sans
+        // qu'une seule erreur le dise. C'est le premier symptome a soupconner.
+        let max = match self.sample.calotte {
+            Some(calotte) => max.max(calotte.sommet + 2.0),
+            None => max,
+        };
 
         (min, max)
     }

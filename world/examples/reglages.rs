@@ -22,9 +22,7 @@ use common::{resources::MapKind, terrain::BiomeKind};
 use eframe::egui;
 use veloren_world::sim::{Etude, FileOpts, GenOpts, Masque, REGLAGES, Reglages};
 
-fn arg(nom: &str) -> Option<String> {
-    std::env::args().skip_while(|a| a != nom).nth(1)
-}
+fn arg(nom: &str) -> Option<String> { std::env::args().skip_while(|a| a != nom).nth(1) }
 
 struct App {
     etude: Etude,
@@ -112,8 +110,8 @@ impl eframe::App for App {
                         v |= curseur(ui, &mut e.pente, 0.1, 2.0, "pente");
                         v |= curseur(ui, &mut e.plancher, 0.0, 1.0, "plancher");
                         ui.small(
-                            "Sans plancher, le facteur atteint zéro et aucune humidité brute \
-                             ne peut plus satisfaire une jungle.",
+                            "Sans plancher, le facteur atteint zéro et aucune humidité brute ne \
+                             peut plus satisfaire une jungle.",
                         );
                         v
                     });
@@ -125,6 +123,49 @@ impl eframe::App for App {
                         ui.small("Sous 0,707, le front enjambe les coutures de la face polaire.");
                         v |= curseur(ui, &mut c.abysse, 20.0, 300.0, "abysse, blocs d'eau");
                         v
+                    });
+
+                    // **Ce groupe ne bougera aucun chiffre de ce tableau, et
+                    // c'est voulu.** Le relief ne déplace aucune frontière de
+                    // biome : `Etude` s'arrête au `SimChunk`, la fenêtre compte
+                    // des parts, et ces nombres-là se jugent en marchant dedans
+                    // ou sous la sonde `cube_monde --calottes`. Ils sont ici
+                    // pour être au même endroit que le reste des réglages et
+                    // pour se sérialiser avec eux, pas pour se régler ici.
+                    groupe(ui, "Relief des calottes (hors comptage)", |ui| {
+                        let r = &mut self.reglages.relief;
+                        curseur64(ui, &mut r.floe_taille, 60.0, 600.0, "plaque, blocs");
+                        curseur(ui, &mut r.floe_devers, 0.0, 10.0, "dévers, blocs");
+                        curseur(ui, &mut r.crete_seuil, -1.0, 1.0, "crête, seuil");
+                        curseur(ui, &mut r.crete_hauteur, 0.0, 20.0, "crête, blocs");
+                        curseur(ui, &mut r.crevasse_seuil, -1.0, 1.0, "crevasse, seuil");
+                        curseur(ui, &mut r.crevasse_largeur, 0.01, 0.5, "crevasse, largeur");
+                        curseur(ui, &mut r.crevasse_profondeur, 0.0, 40.0, "crevasse, blocs");
+                        curseur(ui, &mut r.crevasse_plancher, 1.0, 20.0, "plancher, blocs");
+                        curseur(ui, &mut r.crevasse_fermeture, 0.0, 1.0, "fermeture au pôle");
+                        curseur(
+                            ui,
+                            &mut r.banquise_francbord,
+                            1.0,
+                            20.0,
+                            "banquise, franc-bord",
+                        );
+                        curseur(ui, &mut r.banquise_tirant, 2.0, 60.0, "banquise, tirant");
+                        curseur(
+                            ui,
+                            &mut r.barriere_francbord,
+                            4.0,
+                            60.0,
+                            "barrière, franc-bord",
+                        );
+                        curseur(ui, &mut r.barriere_tirant, 5.0, 120.0, "barrière, tirant");
+                        curseur(ui, &mut r.barriere_houle, 0.0, 10.0, "barrière, houle");
+                        curseur(ui, &mut r.front_onde, 0.0, 0.05, "front, ondulation");
+                        ui.small(
+                            "L'ondulation est écrêtée à ce que la face polaire tolère : au-delà, \
+                             le front enjambe ses coutures.",
+                        );
+                        false
                     });
 
                     bouge |= groupe(ui, "Masques de région", |ui| {
@@ -146,7 +187,13 @@ impl eframe::App for App {
                         v |= curseur(ui, &mut s.jungle_temp, 0.0, 1.0, "jungle : temp");
                         ui.separator();
                         v |= curseur(ui, &mut s.foret_arbres, 0.0, 1.0, "forêt : arbres");
-                        v |= curseur(ui, &mut s.montagne_alt, 200.0, 1200.0, "montagne : altitude");
+                        v |= curseur(
+                            ui,
+                            &mut s.montagne_alt,
+                            200.0,
+                            1200.0,
+                            "montagne : altitude",
+                        );
                         v |= curseur(ui, &mut s.montagne_chaos, 0.0, 1.0, "montagne : chaos");
                         v |= curseur(ui, &mut s.montagne_arbres, 0.0, 1.0, "montagne : arbres");
                         ui.separator();
