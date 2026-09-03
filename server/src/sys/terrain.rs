@@ -28,9 +28,8 @@ use common::{
     lottery::LootSpec,
     resources::{Time, TimeOfDay},
     slowjob::SlowJobPool,
-    terrain::{MapSizeLg, TerrainChunkSize, TerrainGrid, cube},
+    terrain::{MapSizeLg, TerrainGrid, cube},
     util::Dir,
-    vol::RectVolSize,
 };
 
 use common_ecs::{Job, Origin, Phase, System};
@@ -837,14 +836,10 @@ pub fn chunk_in_vd(
         // grille : mesurée en coordonnées, leur distance vaut la moitié de la
         // carte, et le joueur ne recevrait jamais le terrain qu'il a sous les
         // pieds. Les deux points de la sphère, eux, sont voisins.
-        let taille = TerrainChunkSize::RECT_SIZE.x as f64;
-        let centre =
-            |cle: Vec2<i32>| cube::direction(map_size_lg, (cle.map(|e| e as f64) + 0.5) * taille);
-        let (Some(a), Some(b)) = (centre(player_chunk_pos.as_::<i32>()), centre(chunk_pos)) else {
+        let Some(ecart) = cube::ecart_chunks(map_size_lg, player_chunk_pos.as_::<i32>(), chunk_pos)
+        else {
             return false;
         };
-        let rayon = cube::rayon(map_size_lg);
-        let ecart = (a - b).magnitude() * rayon / taille;
         return ecart * ecart <= player_vd_sqr as f64;
     }
     // NOTE: Guaranteed in bounds as long as prepare_player_presences prepared the

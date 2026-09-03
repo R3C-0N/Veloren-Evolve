@@ -518,6 +518,32 @@ pub fn direction_continue(map: MapSizeLg, ancre: Vec2<i32>, delta: Vec2<f64>) ->
     replier_continu(map, ancre, delta).map(|(l, _)| direction_de(map, l))
 }
 
+/// L'écart entre deux positions du patron, **mesuré dans le monde**, en blocs.
+///
+/// C'est la seule mesure de distance qui ait un sens sur un patron : une
+/// différence de coordonnées vaut la moitié de la carte dès que les deux
+/// positions sont de part et d'autre d'une couture coupée, alors que les deux
+/// points de la sphère sont voisins. Tout ce qui décide « est-ce loin ? »
+/// passe par ici — le serveur pour savoir ce qu'il envoie, le client pour
+/// savoir ce qu'il garde.
+///
+/// La corde et non l'arc : les deux ne diffèrent que de `d²/24R²`, soit deux
+/// dix-millièmes sur une portée de vue, et la corde ne coûte pas d'arc
+/// cosinus. `None` si l'une des deux positions tombe hors des six faces.
+#[inline]
+pub fn ecart(map: MapSizeLg, a: Vec2<f64>, b: Vec2<f64>) -> Option<f64> {
+    let (da, db) = (direction(map, a)?, direction(map, b)?);
+    Some((da - db).magnitude() * rayon(map))
+}
+
+/// L'écart entre deux chunks, pris de centre à centre et rendu **en chunks**.
+#[inline]
+pub fn ecart_chunks(map: MapSizeLg, a: Vec2<i32>, b: Vec2<i32>) -> Option<f64> {
+    let taille = (1 << TERRAIN_CHUNK_BLOCKS_LG) as f64;
+    let centre = |c: Vec2<i32>| (c.map(|e| e as f64) + 0.5) * taille;
+    ecart(map, centre(a), centre(b)).map(|e| e / taille)
+}
+
 /// L'inverse de [`direction`] : de quel endroit du monde vient une direction
 /// 3D.
 ///
@@ -1133,5 +1159,125 @@ mod tests {
             pire < 1e-3,
             "aller-retour du transport : {pire} pas de grille"
         );
+    }
+
+    /// **Une différence de coordonnées n'est pas une distance.**
+    ///
+    /// C'est la confusion qui vidait l'écran au bord d'une face : le client
+    /// retirait ses chunks sur `chunk_pos - key`, si bien qu'à travers une
+    /// couture *coupée* — celles que le patron en croix ne recolle pas — il
+    /// détruisait au tick suivant le terrain qu'il venait de recevoir.
+    ///
+    /// On prend donc les vingt-quatre arêtes, deux chunks voisins de part et
+    /// d'autre, et on confronte les deux mesures. Le test ne vaut que parce
+    /// qu'il vérifie aussi que le piège existe : sur au moins une arête,
+    /// l'écart de coordonnées vaut une face entière.
+    #[test]
+    fn ecart_a_travers_les_coutures() {
+        let map = carte();
+        let fc = face_chunks(map);
+
+        let bords: [(Vec2<i32>, fn(i32, i32) -> (i32, i32)); 4] = [
+            (Vec2::new(1, 0), |f, w| (f - 1, w)),
+            (Vec2::new(-1, 0), |_, w| (0, w)),
+            (Vec2::new(0, 1), |f, w| (w, f - 1)),
+            (Vec2::new(0, -1), |_, w| (w, 0)),
+        ];
+
+        let (mut pire_monde, mut pire_grille) = (0.0f64, 0i32);
+
+        for face in 0..6u8 {
+            for (sortie, place) in bords {
+                for travers in [1, fc / 2, fc - 2] {
+                    let (cu, cv) = place(fc, travers);
+                    let ici = cle_de_chunk(map, face, cu, cv);
+                    let la = voisin(map, ici, sortie).expect("un bord a toujours un voisin");
+
+                    let monde = ecart_chunks(map, ici, la).expect("deux chunks vivants");
+                    pire_monde = pire_monde.max(monde);
+                    pire_grille = pire_grille.max((la - ici).map(i32::abs).reduce_max());
+                }
+            }
+        }
+
+        // Un pas de grille ne dépasse jamais un chunk du monde — c'est ce qui
+        // fait s'accorder l'énumération du client et la décision du serveur.
+        assert!(
+            pire_monde < 1.1,
+            "un pas en travers d'une couture vaut {pire_monde} chunk"
+        );
+        // Et le piège est bien là : sans mesure dans le monde, ces voisins-là
+        // paraissent à l'autre bout de la carte.
+        assert!(
+            pire_grille >= fc,
+            "aucune couture coupée dans l'échantillon : le test ne prouve rien"
+        );
+    }
+
+    /// **Ce que le client énumère, il doit pouvoir le garder.**
+    ///
+    /// Le chargement a deux moitiés : un parcours en largeur qui énumère les
+    /// clés à demander, et un critère de distance qui décide de ce qu'on
+    /// retient. Leur désaccord est ce qui faisait la boucle sans fin —
+    /// demander, recevoir, détruire, redemander.
+    ///
+    /// On refait donc ici le parcours du client, depuis un chunk posé sur un
+    /// bord de face, et on vérifie qu'aucune clé produite ne dépasse le seuil
+    /// de rétention (`vd + 2`, celui du serveur).
+    #[test]
+    fn la_retention_couvre_l_enumeration() {
+        use std::collections::HashSet;
+
+        // La taille du monde de jeu — six faces de 256 chunks. Sur une carte
+        // d'épreuve, le rayon vaut treize chunks : une portée de vue en fait
+        // le tour, la corde sature bien avant l'arc, et la mesure ne dit plus
+        // rien de ce qu'on veut vérifier.
+        let map = MapSizeLg::nouvelle_cubique(Vec2::new(10, 10)).expect("carte cubique");
+        let fc = face_chunks(map);
+        let vd = 12i32;
+
+        for face in 0..6u8 {
+            for depart in [
+                cle_de_chunk(map, face, fc - 1, fc / 2),
+                cle_de_chunk(map, face, 0, 0),
+                cle_de_chunk(map, face, fc - 1, fc - 1),
+            ] {
+                let mut vus: HashSet<Vec2<i32>> = HashSet::from_iter([depart]);
+                let mut courante = vec![depart];
+                let mut pire = 0.0f64;
+
+                for _ in 0..vd + 1 {
+                    let mut suivante = Vec::new();
+                    for &cle in &courante {
+                        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                            if let Some(v) = voisin(map, cle, Vec2::new(dx, dy))
+                                && vus.insert(v)
+                            {
+                                let e = ecart_chunks(map, depart, v).expect("deux chunks vivants");
+                                pire = pire.max(e);
+                                suivante.push(v);
+                            }
+                        }
+                    }
+                    courante = suivante;
+                }
+
+                assert!(
+                    pire <= vd as f64 + 2.0,
+                    "une clé énumérée à {pire} chunks serait retirée aussitôt reçue"
+                );
+                // Le parcours atteint bien la portée : sans quoi la borne
+                // ci-dessus serait tenue par un ensemble vide.
+                //
+                // La marge est large, et ce n'est pas de la complaisance :
+                // depuis un **coin**, treize pas ne mènent qu'à 9,2 chunks du
+                // monde — 0,70 par pas, contre 0,931 au milieu d'une arête et
+                // 0,999 au centre d'une face. La case rétrécit vers le coin,
+                // c'est ce que coûte la conformité (D27), et l'horizon y est
+                // donc plus proche : même contrepartie que les 247 chunks
+                // chargés aux coins contre 313 ailleurs.
+                assert!(pire > vd as f64 / 2.0, "le parcours s'arrête à {pire}");
+            }
+        }
     }
 }

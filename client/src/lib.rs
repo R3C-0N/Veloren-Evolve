@@ -2594,18 +2594,33 @@ impl Client {
             // Remove chunks that are too far from the player.
             let mut chunks_to_remove = Vec::new();
             self.state.terrain().iter().for_each(|(key, _)| {
-                // Subtract 2 from the offset before computing squared magnitude
-                // 1 for the chunks needed bordering other chunks for meshing
-                // 1 as a buffer so that if the player moves back in that direction the chunks
-                //   don't need to be reloaded
-                // Take the minimum of the adjusted difference vs the view_distance + 1 to
-                //   prevent magnitude_squared from overflowing
-
-                if (chunk_pos - key)
-                    .map(|e: i32| (e.unsigned_abs()).saturating_sub(2).min(view_distance + 1))
-                    .magnitude_squared()
-                    > view_distance.pow(2)
-                {
+                // La rétention se prend dans le **monde**, comme l'envoi côté
+                // serveur : sur un patron, la différence des coordonnées ne
+                // mesure rien. À travers une couture coupée, le chunk d'à côté
+                // est à des centaines de cases dans la grille, et le client
+                // détruisait au tick suivant celui qu'il venait de recevoir —
+                // d'où une redemande sans fin, et une distance de vue, prise
+                // sur le premier chunk manquant, qui passait sous zéro.
+                //
+                // Le seuil est celui du serveur : `view_distance + 2`, soit
+                // l'`UNLOAD_THRESHOLD` de `convert_to_loaded_vd`. Le client
+                // jette donc exactement ce que le serveur cesse de lui garder.
+                let trop_loin = if map_size_lg.est_cubique() {
+                    common::terrain::cube::ecart_chunks(map_size_lg, chunk_pos, key)
+                        .is_none_or(|e| e > view_distance as f64 + 2.0)
+                } else {
+                    // Subtract 2 from the offset before computing squared magnitude
+                    // 1 for the chunks needed bordering other chunks for meshing
+                    // 1 as a buffer so that if the player moves back in that direction the chunks
+                    //   don't need to be reloaded
+                    // Take the minimum of the adjusted difference vs the view_distance + 1 to
+                    //   prevent magnitude_squared from overflowing
+                    (chunk_pos - key)
+                        .map(|e: i32| (e.unsigned_abs()).saturating_sub(2).min(view_distance + 1))
+                        .magnitude_squared()
+                        > view_distance.pow(2)
+                };
+                if trop_loin {
                     chunks_to_remove.push(key);
                 }
             });
@@ -2689,19 +2704,12 @@ impl Client {
                     let dist_to_player = if map_size_lg.est_cubique() {
                         let taille = TerrainChunkSize::RECT_SIZE.x as f64;
                         let centre = (key.map(|e| e as f64) + 0.5) * taille;
-                        match (
-                            common::terrain::cube::direction(map_size_lg, centre),
-                            common::terrain::cube::direction(
-                                map_size_lg,
-                                pos.0.xy().map(|e| e as f64),
-                            ),
-                        ) {
-                            (Some(a), Some(b)) => {
-                                let r = common::terrain::cube::rayon(map_size_lg);
-                                (((a - b).magnitude() * r) as f32).powi(2)
-                            },
-                            _ => f32::MAX,
-                        }
+                        common::terrain::cube::ecart(
+                            map_size_lg,
+                            centre,
+                            pos.0.xy().map(|e| e as f64),
+                        )
+                        .map_or(f32::MAX, |e| (e as f32).powi(2))
                     } else {
                         (TerrainGrid::key_chunk(*key).map(|x| x as f32)
                             + TerrainChunkSize::RECT_SIZE.map(|x| x as f32) / 2.0)
@@ -2740,10 +2748,22 @@ impl Client {
                     }
                 }
             }
-            self.loaded_distance = self.loaded_distance.sqrt()
+            // Un chunk manquant tout près retire ici plus que la distance qui
+            // l'en sépare, et le résultat devient négatif. Le rendu le pince
+            // alors à un centimètre et **le monde entier disparaît** pour un
+            // seul chunk absent. Le plancher est d'un chunk : celui sur lequel
+            // on se tient s'affiche toujours.
+            //
+            // C'est une garde, pas la correction : le défaut venait de ce que
+            // le client détruisait ce qu'il recevait au-delà d'une couture. Il
+            // reste des instants où elle sert — l'arrivée sur une couture
+            // demande quelques chunks, et le client n'en réclame que deux par
+            // tick.
+            self.loaded_distance = (self.loaded_distance.sqrt()
                 - ((TerrainChunkSize::RECT_SIZE.x as f32 / 2.0).powi(2)
                     + (TerrainChunkSize::RECT_SIZE.y as f32 / 2.0).powi(2))
-                .sqrt();
+                .sqrt())
+            .max(TerrainChunkSize::RECT_SIZE.x as f32);
 
             // If chunks are taking too long, assume they're no longer pending.
             let now = Instant::now();
