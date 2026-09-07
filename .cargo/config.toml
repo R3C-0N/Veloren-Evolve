@@ -1,16 +1,38 @@
+# `-Z threads=8` allume le front-end parallèle de rustc : un même crate est
+# analysé sur plusieurs threads au lieu d'un seul. C'est ce qui rattrape la fin
+# d'un build complet, quand il ne reste plus que voxygen, world et common et que
+# les autres cœurs tournent à vide. Nightly seulement, donc adossé au toolchain
+# épinglé dans `rust-toolchain`.
+#
+# Les clés `rustflags` d'une section `[target.*]` REMPLACENT celles de `[build]`,
+# elles ne s'y ajoutent pas : le drapeau doit donc être répété dans chaque cible.
+# En cas d'ICE du compilateur, c'est la première chose à retirer.
+
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-Z", "threads=8"]
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-Z", "threads=8"]
 
 [target.x86_64-pc-windows-gnu]
 rustflags = [
     # Required for mimalloc
     "-C",
     "link-arg=-lpsapi",
+    "-Z",
+    "threads=8",
 ]
+
+# Windows MSVC, la cible par défaut sur Windows. `link.exe` relie voxygen
+# (~600 crates, un exécutable de plusieurs centaines de Mo) en dizaines de
+# secondes ; `rust-lld`, livré avec le toolchain Rust et donc déjà installé,
+# fait le même travail plusieurs fois plus vite. L'édition de liens domine le
+# build incrémental : après une ligne changée dans voxygen, c'est presque tout
+# ce que fait `cargo build`.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+rustflags = ["-Z", "threads=8"]
 
 # Clever way to get workspace dir, from https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
 [env]
@@ -33,6 +55,17 @@ tracy-server-debuginfo = "run --bin veloren-server-cli --features tracy,simd --p
 tracy-server-releasedebuginfo = "run --bin veloren-server-cli --features tracy,simd --profile releasedebuginfo"
 tracy-test-server = "run --bin veloren-server-cli --no-default-features --features tracy,simd --profile no_overflow"
 # voxygen
+# Le build de développement conseillé : profil `no_overflow` et jeu de features
+# réduit à ce qu'il faut pour jouer en solo. Face aux features par défaut cela
+# retire les greffons (wasmtime + cranelift, 95 crates à eux seuls), Discord et
+# la boîte de dialogue native du gestionnaire de panique — 104 crates de moins,
+# pour un client qui se joue exactement pareil. `egui-ui` reste : il ne coûte
+# presque rien à compiler, et le pilote de la compétence `run-veloren-evolve`
+# lit sa ligne de journal pour savoir que le démarrage est fini.
+# Si le SDK Vulkan est installé, retirer `shaderc-from-source` de ces deux
+# alias fait tomber la compilation C++ de shaderc (voir COMPILATION.md).
+fast-voxygen = "build --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui"
+fast-run = "run --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui --"
 test-voxygen = "run --bin veloren-voxygen --no-default-features --features simd,egui-ui,shaderc-from-source,hot-reloading"
 tracy-voxygen = "run --bin veloren-voxygen --no-default-features --features tracy,simd,egui-ui,shaderc-from-source --profile no_overflow"
 dbg-voxygen = "run --bin veloren-voxygen --profile debuginfo"

@@ -166,7 +166,7 @@ switch ($Action) {
 
   { $_ -in 'launch','rapide' } {
     if (-not (Test-Path $Exe)) {
-      throw "binaire absent : $Exe`n  cargo build --profile no_overflow --bin veloren-voxygen"
+      throw "binaire absent : $Exe`n  cargo fast-voxygen"
     }
     $st = Join-Path $Repo 'userdata\voxygen\settings.ron'
     if (Test-Path $st) {
