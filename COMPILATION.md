@@ -141,6 +141,82 @@ Deux features existent déjà pour éviter un cycle complet :
 - `hot-reloading` recharge les assets sans redémarrer — elle est dans le jeu de
   features de `fast-voxygen`.
 
+## Et pour aller plus loin ?
+
+Une fois le build complet à dix minutes, c'est la boucle **incrémentale** qui
+gouverne les journées — et elle est déjà bonne. Mesures faites en modifiant
+vraiment le code, pas en faisant un `touch` (un `touch` ne change que la date :
+le cache incrémental de rustc reconnaît le contenu et ne refait presque rien,
+ce qui donne des chiffres flatteurs et faux) :
+
+| modification | crates | rebuild |
+|---|---|---|
+| corps d'une fonction dans `voxygen` | 1 | **9 s** |
+| API publique de `voxygen` | 1 | 57 s |
+| n'importe quoi dans `world` | 5 | **16 à 22 s** |
+| n'importe quoi dans `common` | 13 | **48 à 51 s** |
+| `cargo check -p veloren-world`, en régime établi | — | **1 s** |
+
+Trois choses à en tirer.
+
+**Le premier `cargo check` coûte 91 s, les suivants 1 s.** Il ne partage pas ses
+artefacts avec `cargo build` : il se construit son propre cache, une fois. La
+boucle « corriger les erreurs du compilateur » se fait donc à la seconde.
+
+**`veloren-common` est le goulot restant.** 154 s à froid, 48 s de rebuild, et
+treize crates derrière lui. C'est le seul endroit où un découpage en crates plus
+petits changerait vraiment quelque chose — mais c'est un chantier, pas un
+réglage.
+
+**Toucher à l'API publique coûte cinq fois le prix d'un corps de fonction.**
+Dans `voxygen`, 57 s contre 9 s. Quand on itère, garder les changements à
+l'intérieur des corps de fonction le temps de converger, et ne remonter dans les
+signatures qu'une fois qu'on sait ce qu'on veut, est gratuit et rapporte.
+
+### Le levier qui reste, et ce qu'on ne sait pas de lui
+
+`[profile.dev.package."*"]` compile les ~600 dépendances en `opt-level = 3`, et
+un `TODO` du dépôt dit depuis longtemps que 2 devrait suffire. Mesuré, build
+complet et génération de monde (`world_generate_time`, quatre passes) :
+
+| `opt-level` des deps | build complet | génération de monde |
+|---|---|---|
+| 3 (actuel) | 10 min 06 s | 9,9 / 10,0 / 10,4 / 10,2 s |
+| 2 | 9 min 51 s | 10,0 / 9,9 / 10,4 / 10,2 s |
+| 1 | **9 min 10 s** | 9,7 / 10,4 / 9,8 / 10,8 s |
+
+Le `TODO` a raison — le niveau 3 ne sert à rien ici — mais il ne rapporte que
+15 secondes. C'est **1** qui paie : 56 secondes, 9 % du build, sans régression
+mesurable sur la worldgen.
+
+Ce n'est pas un hasard, et c'est ce qui rend le résultat lisible : le code chaud
+de la génération de monde ne vit pas dans les dépendances. Il vit dans
+`veloren-world`, déjà en `opt-level = 3` par le profil, et dans `veloren-common`.
+Et les dépendances qui compteraient — `vek`, `hashbrown`, `num-traits` — sont
+génériques : leur code est monomorphisé **dans le crate appelant** et compilé au
+niveau de l'appelant, pas au leur. Baisser le leur ne touche presque rien de
+chaud.
+
+**Ce n'est pas adopté par défaut, et voici le trou :** ce banc mesure la
+génération de monde, pas le client. Le temps par image passe par `wgpu`,
+`image`, `conrod`, `specs` — que ce banc n'exerce pas. Avant d'adopter
+`opt-level = 1`, il faut une mesure de temps par image ; sans elle, on
+échangerait 56 secondes de build contre un risque non mesuré.
+
+### Deux pistes qui demandent du code, pas un réglage
+
+**`libsqlite3-sys`, 49,5 s** de compilation C à chaque build complet. Couper la
+feature `persistent_world` ne suffit pas : `rusqlite` est une dépendance *dure*
+de `veloren-server` (`server/Cargo.toml:78`), pas conditionnée. Il faudrait la
+rendre optionnelle et mettre le module de persistance derrière un `cfg`.
+
+**113 crates sont présents en plusieurs versions** dans le lockfile, dont
+`windows-sys` en **six** (0.45, 0.48, 0.52, 0.59, 0.60, 0.61) et
+`windows-targets` en quatre. Aucune ne se compile sous Linux — les mesures de ce
+fichier ne les voient donc pas, mais un build Windows les paie toutes. Elles
+sont sémantiquement incompatibles, cargo ne peut pas les unifier : cela se règle
+en faisant monter les dépendances qui retiennent les vieilles versions.
+
 ## Ce qui a été essayé et écarté
 
 **`-Z threads=8`, le front-end parallèle de rustc.** L'idée : rustc analyse un
@@ -151,12 +227,9 @@ sur quinze minutes, c'est du bruit. Le crate de queue lui-même ne bouge pas
 (95,4 s contre 96,2 s). Un drapeau `-Z` instable, qui invalide tout le cache le
 jour où on l'ajoute, ne mérite pas d'être dans le dépôt pour ça.
 
-**Baisser l'`opt-level` des dépendances.** `[profile.dev.package."*"]` compile
-les ~600 dépendances en `opt-level = 3`. Descendre à 1 ferait gagner du temps,
-mais la génération de monde passe son temps dans `vek`, `noise`, `hashbrown`,
-`rayon` et `image` : on paierait en secondes de jeu ce qu'on gagnerait en
-secondes de build. Le faire proprement demanderait de nommer crate par crate
-les chauds et les froids, mesures de jeu à l'appui — ce n'est pas fait ici.
+**Baisser l'`opt-level` des dépendances.** Mesuré, et détaillé plus haut : 56
+secondes à gagner, sans régression sur la génération de monde, mais sans mesure
+du côté du client. En attente d'un banc de temps par image.
 
 **sccache.** Utile pour repartir de zéro souvent (changement de branche,
 `cargo clean`), inutile en incrémental — sccache ne met pas en cache les
