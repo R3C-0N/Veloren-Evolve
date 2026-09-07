@@ -69,9 +69,9 @@ ligne de journal pour savoir que le démarrage est fini.
 **Ne pas alterner** entre `cargo fast-voxygen` et un `cargo build` aux
 features par défaut : chaque bascule refait compiler les crates concernés.
 
-Compter **~10 min de téléchargement**, puis une compilation nettement plus
-courte que les ~15 min du jeu de features par défaut. Ensuite c'est
-incrémental. `COMPILATION.md`, à la racine, détaille les
+Compter **~10 min de téléchargement**, puis la compilation. Mesuré sur une
+machine à 4 cœurs, `cargo clean` avant : **14 min 49 s**, contre 18 min 24 s
+avec les features par défaut. Ensuite c'est incrémental. `COMPILATION.md`, à la racine, détaille les
 autres leviers — `rust-lld`, le front-end parallèle, le SDK Vulkan, et
 surtout la boucle de travail sur `world` seul, qui ne demande que 206 crates
 au lieu de 586.

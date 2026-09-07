@@ -1,27 +1,15 @@
-# `-Z threads=8` allume le front-end parallèle de rustc : un même crate est
-# analysé sur plusieurs threads au lieu d'un seul. C'est ce qui rattrape la fin
-# d'un build complet, quand il ne reste plus que voxygen, world et common et que
-# les autres cœurs tournent à vide. Nightly seulement, donc adossé au toolchain
-# épinglé dans `rust-toolchain`.
-#
-# Les clés `rustflags` d'une section `[target.*]` REMPLACENT celles de `[build]`,
-# elles ne s'y ajoutent pas : le drapeau doit donc être répété dans chaque cible.
-# En cas d'ICE du compilateur, c'est la première chose à retirer.
-
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-Z", "threads=8"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
-rustflags = ["-C", "link-arg=-fuse-ld=mold", "-Z", "threads=8"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [target.x86_64-pc-windows-gnu]
 rustflags = [
     # Required for mimalloc
     "-C",
     "link-arg=-lpsapi",
-    "-Z",
-    "threads=8",
 ]
 
 # Windows MSVC, la cible par défaut sur Windows. `link.exe` relie voxygen
@@ -32,7 +20,6 @@ rustflags = [
 # ce que fait `cargo build`.
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
-rustflags = ["-Z", "threads=8"]
 
 # Clever way to get workspace dir, from https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
 [env]
