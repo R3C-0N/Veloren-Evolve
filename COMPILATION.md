@@ -217,6 +217,71 @@ fichier ne les voient donc pas, mais un build Windows les paie toutes. Elles
 sont sémantiquement incompatibles, cargo ne peut pas les unifier : cela se règle
 en faisant monter les dépendances qui retiennent les vieilles versions.
 
+### Le ThinLTO que personne n'a demandé
+
+Le profileur de rustc (`-Z time-passes`) sur `veloren-common`, 98,8 s au total :
+
+```
+ 32,9 s  finish_ongoing_codegen
+ 20,6 s  LLVM_thinlto          <-- alors que le profil dit `lto = false`
+ 20,5 s  LLVM_passes
+ 18,1 s  lint_checking
+ 15,0 s  MIR_borrow_checking
+ 10,0 s  type_check_crate
+```
+
+Ce n'est pas une contradiction, c'est un piège de cargo : **`lto = false`
+signifie « défaut », et le défaut fait un ThinLTO *local*** entre les unités de
+codegen d'un même crate. Seul `lto = "off"` l'éteint vraiment. Passer le profil
+`dev` à `lto = "off"` fait tomber le build complet de **10 min 06 s à 7 min
+59 s, soit −21 %** — le deuxième plus gros levier de tout ce fichier.
+
+**Et il est à rejeter.** La génération de monde passe de ~10 s à **15,7 à
+17,2 s, soit +60 %** :
+
+| | build complet | génération de monde |
+|---|---|---|
+| `lto = false` (actuel) | 10 min 06 s | 9,9 / 10,0 / 10,4 / 10,2 s |
+| `lto = "off"` | 7 min 59 s | 15,7 / 16,2 / 17,2 / 15,7 s |
+
+Deux minutes de build contre soixante pour cent du temps de génération : le
+marché est mauvais, et il n'y a pas à hésiter.
+
+Ce résultat explique rétrospectivement celui de l'`opt-level` plus haut. Ce qui
+rend ce code rapide, ce n'est pas le niveau d'optimisation appliqué à chaque
+unité de codegen — c'est **l'inlining entre unités**, que le ThinLTO local rend
+possible. D'où le fait que passer les dépendances de 3 à 1 ne coûte rien, et que
+couper le ThinLTO coûte énormément. Les deux mesures disent la même chose.
+
+### Trois pistes qui avaient l'air bonnes et ne rapportent rien
+
+Elles sont ici pour éviter qu'on les reprenne.
+
+**Le groupe de lints `rust_2024_compatibility`.** C'est bien de la configuration
+morte — un groupe de lints de *migration* vers l'édition 2024, sur un workspace
+déjà en `edition = "2024"` — et `lint_checking` pèse 18,1 s sur `veloren-common`.
+Mais en le désactivant, `module_lints` passe de **18,125 s à 18,228 s** : aucun
+gain. Les 18 secondes sont la machinerie de lints ordinaire (`unused`,
+`dead_code`…), qu'on ne coupera pas.
+
+**Les dépendances déclarées et jamais utilisées.** Il y en a cinq —
+`ordered-float` dans `common`, `strum` dans `server`, `sha2` dans `voxygen`,
+`num-traits` dans `rtsim`, `futures` dans `common/state` — vérifiées à zéro
+occurrence. Mais les quatre premières servent à *d'autres* crates du workspace :
+le crate est compilé une fois pour le graphe, retirer la déclaration ne l'enlève
+pas du build. La cinquième semblait valoir 8 s à elle seule, puisqu'elle est la
+seule à tirer `futures-macro` (6,9 s) — jusqu'à ce que `cargo tree -i` montre
+que `iced_futures` la tire aussi. Gain réel : zéro. C'est de l'hygiène de
+manifeste, pas de la vitesse.
+
+**`regex` en dépendance de build de `common`.** La pile `regex` est compilée
+deux fois (55 s cumulées), et `common/build.rs` la tirait pour un seul test de
+forme de tag. Le retrait est fait — le crate n'a plus aucune dépendance de build
+— mais il **ne gagne pas une seconde** : le doublon vient de `refinery`, dont la
+macro procédurale met `regex` dans le graphe hôte pendant que voxygen l'a dans
+le graphe cible. Les deux unités ont exactement les mêmes features avant et
+après. Diagnostic juste, cause fausse.
+
 ## Ce qui a été essayé et écarté
 
 **`-Z threads=8`, le front-end parallèle de rustc.** L'idée : rustc analyse un

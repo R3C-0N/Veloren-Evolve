@@ -1,4 +1,3 @@
-use regex::Regex;
 use std::process::Command;
 
 // Get the current githash+timestamp
@@ -52,14 +51,30 @@ fn get_git_tag() -> Option<String> {
 
     let tag = String::from_utf8(output.stdout).ok()?.trim().to_string();
 
-    if Regex::new(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
-        .unwrap()
-        .is_match(&tag)
-    {
-        Some(tag)
-    } else {
-        None
-    }
+    if is_release_tag(&tag) { Some(tag) } else { None }
+}
+
+// `v<majeur>.<mineur>.<correctif>`, la forme que prennent les tags de release.
+//
+// Ecrit a la main plutot qu'avec une expression reguliere, pour que ce crate
+// n'ait plus aucune dependance de build. A ne pas confondre avec un gain de
+// temps de compilation : `regex` reste compile deux fois, une fois pour le
+// graphe hote et une fois pour la cible, mais c'est `refinery` qui l'y met, par
+// sa macro procedurale. Mesure faite, le retrait ne change pas d'une seconde
+// -- voir COMPILATION.md.
+fn is_release_tag(tag: &str) -> bool {
+    let Some(rest) = tag.strip_prefix('v') else {
+        return false;
+    };
+    let mut parts = rest.split('.');
+    let (Some(major), Some(minor), Some(patch), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    [major, minor, patch]
+        .iter()
+        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn main() {
