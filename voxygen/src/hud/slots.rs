@@ -166,8 +166,11 @@ impl<'a> SlotKey<HotbarSource<'a>, HotbarImageSource<'a>> for HotbarSlot {
                 }
             },
             hotbar::SlotContents::Ability(i) => {
+                // Les abilites d'un objet se retrouvent par une recherche dans
+                // le manifeste, la ou l'objet en portait une copie.
+                let ability_map = &common::comp::item::tool::AbilityMap::load().read();
                 let ability_id = active_abilities.and_then(|a| {
-                    a.auxiliary_set(Some(inventory), Some(skillset))
+                    a.auxiliary_set(Some(inventory), Some(skillset), ability_map)
                         .get(i)
                         .and_then(|a| {
                             Ability::from(*a).ability_id(
@@ -177,6 +180,7 @@ impl<'a> SlotKey<HotbarSource<'a>, HotbarImageSource<'a>> for HotbarSlot {
                                 *stance,
                                 *combo,
                                 *buffs,
+                                ability_map,
                             )
                         })
                 });
@@ -196,6 +200,7 @@ impl<'a> SlotKey<HotbarSource<'a>, HotbarImageSource<'a>> for HotbarSlot {
                                     *combo,
                                     *stats,
                                     *buffs,
+                                    ability_map,
                                 )
                             })
                             .map(|(ability, _, _)| {
@@ -268,6 +273,7 @@ impl<'a> SlotKey<AbilitiesSource<'a>, img_ids::Imgs> for AbilitySlot {
             'a,
         >,
     ) -> Option<(Self::ImageKey, Option<Color>)> {
+        let ability_map = &common::comp::item::tool::AbilityMap::load().read();
         let ability_id = match self {
             Self::Slot(index) => active_abilities
                 .get_ability(
@@ -275,6 +281,7 @@ impl<'a> SlotKey<AbilitiesSource<'a>, img_ids::Imgs> for AbilitySlot {
                     Some(inventory),
                     Some(skillset),
                     *stats,
+                    ability_map,
                 )
                 .ability_id(
                     *char_state,
@@ -283,6 +290,7 @@ impl<'a> SlotKey<AbilitiesSource<'a>, img_ids::Imgs> for AbilitySlot {
                     *stance,
                     *combo,
                     *buffs,
+                    ability_map,
                 ),
             Self::Ability(ability) => Ability::from(*ability).ability_id(
                 *char_state,
@@ -291,6 +299,7 @@ impl<'a> SlotKey<AbilitiesSource<'a>, img_ids::Imgs> for AbilitySlot {
                 *stance,
                 *combo,
                 *buffs,
+                ability_map,
             ),
         };
 

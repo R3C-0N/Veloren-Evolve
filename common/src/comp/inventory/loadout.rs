@@ -494,12 +494,14 @@ impl Loadout {
     /// Used only when loading in persistence code.
     pub fn persistence_update_all_item_states(
         &mut self,
-        ability_map: &item::tool::AbilityMap,
-        msm: &item::MaterialStatManifest,
+        // Ne sert plus : il ne reste ici que le recalcul des empreintes. Voir
+        // `Item::new_from_item_base` pour pourquoi le parametre subsiste.
+        _ability_map: &item::tool::AbilityMap,
+        _msm: &item::MaterialStatManifest,
     ) {
         self.slots.iter_mut().for_each(|slot| {
             if let Some(item) = &mut slot.slot {
-                item.update_item_state(ability_map, msm);
+                item.update_hash();
             }
         });
     }

@@ -76,6 +76,7 @@ impl State {
             .get(info.viewpoint_entity)
         {
             use common::comp::ability::AuxiliaryAbility;
+            let ability_map = &common::comp::item::tool::AbilityMap::load().read();
             for ((i, ability), hotbar_slot) in active_abilities
                 .auxiliary_set(
                     client.inventories().get(info.viewpoint_entity),
@@ -83,6 +84,7 @@ impl State {
                         .state()
                         .read_storage::<comp::SkillSet>()
                         .get(info.viewpoint_entity),
+                    ability_map,
                 )
                 .iter()
                 .enumerate()

@@ -3149,11 +3149,12 @@ impl ServerEvent for ChangeAbilityEvent {
         WriteStorage<'a, comp::ActiveAbilities>,
         ReadStorage<'a, Inventory>,
         ReadStorage<'a, SkillSet>,
+        ReadExpect<'a, comp::item::tool::AbilityMap>,
     );
 
     fn handle(
         events: impl ExactSizeIterator<Item = Self>,
-        (mut active_abilities, inventories, skill_sets): Self::SystemData<'_>,
+        (mut active_abilities, inventories, skill_sets, ability_map): Self::SystemData<'_>,
     ) {
         for ev in events {
             if let Some(mut active_abilities) = active_abilities.get_mut(ev.entity) {
@@ -3163,6 +3164,7 @@ impl ServerEvent for ChangeAbilityEvent {
                     ev.new_ability,
                     inventories.get(ev.entity),
                     skill_sets.get(ev.entity),
+                    &ability_map,
                 );
             }
         }

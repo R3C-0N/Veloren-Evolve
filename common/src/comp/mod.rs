@@ -82,7 +82,7 @@ pub use self::{
     inventory::{
         CollectFailedReason, Inventory, InventoryUpdateBuffer, InventoryUpdateEvent,
         item::{
-            self, FrontendItem, Item, ItemConfig, ItemDrops, PickupItem, ThrownItem,
+            self, FrontendItem, Item, ItemDrops, PickupItem, ThrownItem,
             item_key::ItemKey,
             tool::{self, AbilityItem},
         },

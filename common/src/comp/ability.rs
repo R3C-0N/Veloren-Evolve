@@ -8,8 +8,7 @@ use crate::{
         inventory::{
             Inventory,
             item::{
-                ItemDefinitionIdOwned, ItemKind, Tool,
-                DurabilityMultiplier,
+                DurabilityMultiplier, Item, ItemDefinitionIdOwned, ItemKind, Tool,
                 tool::{AbilitySpec, Stats, ToolKind},
             },
             slot::EquipSlot,
@@ -128,11 +127,11 @@ impl ActiveAbilities {
         new_ability: AuxiliaryAbility,
         inventory: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) {
-        let auxiliary_set = self
-            .auxiliary_sets
-            .entry(auxiliary_key)
-            .or_insert(Self::default_ability_set(inventory, skill_set, self.limit));
+        let auxiliary_set = self.auxiliary_sets.entry(auxiliary_key).or_insert(
+            Self::default_ability_set(inventory, skill_set, self.limit, ability_map),
+        );
         if let Some(ability) = auxiliary_set.get_mut(slot) {
             *ability = new_ability;
         }
@@ -154,13 +153,13 @@ impl ActiveAbilities {
         &self,
         inv: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) -> Cow<'_, Vec<AuxiliaryAbility>> {
         let aux_key = Self::active_auxiliary_key(inv);
 
-        self.auxiliary_sets
-            .get(&aux_key)
-            .map(Cow::Borrowed)
-            .unwrap_or_else(|| Cow::Owned(Self::default_ability_set(inv, skill_set, self.limit)))
+        self.auxiliary_sets.get(&aux_key).map(Cow::Borrowed).unwrap_or_else(|| {
+            Cow::Owned(Self::default_ability_set(inv, skill_set, self.limit, ability_map))
+        })
     }
 
     pub fn get_ability(
@@ -169,6 +168,7 @@ impl ActiveAbilities {
         inventory: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
         stats: Option<&comp::Stats>,
+        ability_map: &AbilityMap,
     ) -> Ability {
         match input {
             AbilityInput::Guard => self.guard.into(),
@@ -179,7 +179,7 @@ impl ActiveAbilities {
                 if stats.is_some_and(|s| s.disable_auxiliary_abilities) {
                     Ability::Empty
                 } else {
-                    self.auxiliary_set(inventory, skill_set)
+                    self.auxiliary_set(inventory, skill_set, ability_map)
                         .get(index)
                         .copied()
                         .map(|a| a.into())
@@ -202,18 +202,33 @@ impl ActiveAbilities {
         combo: Option<&Combo>,
         stats: Option<&comp::Stats>,
         buffs: Option<&Buffs>,
+        ability_map: &AbilityMap,
         // bool is from_offhand
     ) -> Option<(CharacterAbility, bool, SpecifiedAbility)> {
-        let ability = self.get_ability(input, inv, Some(skill_set), stats);
+        let ability = self.get_ability(input, inv, Some(skill_set), stats, ability_map);
 
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         let scale_ability = |ability: CharacterAbility, equip_slot| {
-            let tool_kind = inv
-                .and_then(|inv| inv.equipped(equip_slot))
+            let item = inv.and_then(|inv| inv.equipped(equip_slot));
+            // L'ajustement aux statistiques de l'outil se faisait autrefois a
+            // l'equipement, en recopiant tout l'ensemble ajuste dans l'objet
+            // (`AbilitySet::modified_by_tool`). On l'applique ici, sur la seule
+            // abilite retenue. L'ordre compte : les statistiques d'abord, les
+            // competences ensuite, comme avant.
+            let ability = match item {
+                Some(item) => match &*item.kind() {
+                    ItemKind::Tool(tool) => {
+                        ability.adjusted_by_stats(tool.stats(item.stats_durability_multiplier()))
+                    },
+                    _ => ability,
+                },
+                None => ability,
+            };
+            let tool_kind = item
                 .and_then(|item| match_some!(&*item.kind(), ItemKind::Tool(tool) => tool.kind));
             ability.adjusted_by_skills(skill_set, tool_kind)
         };
@@ -297,10 +312,12 @@ impl ActiveAbilities {
         inv: Option<&'a Inventory>,
         skill_set: Option<&'a SkillSet>,
         equip_slot: EquipSlot,
+        ability_map: &'a AbilityMap,
     ) -> impl Iterator<Item = usize> + 'a {
-        inv.and_then(|inv| inv.equipped(equip_slot).and_then(|i| i.item_config()))
+        inv.and_then(|inv| inv.equipped(equip_slot))
+            .and_then(|i| ability_map.item_ability_set(i))
             .into_iter()
-            .flat_map(|config| &config.abilities.abilities)
+            .flat_map(|set| &set.abilities)
             .enumerate()
             .filter_map(move |(i, a)| match a {
                 AbilityKind::Simple(skill, _) => skill
@@ -321,6 +338,7 @@ impl ActiveAbilities {
     pub fn all_available_abilities(
         inv: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) -> Vec<AuxiliaryAbility> {
         let mut ability_buff = vec![];
         // Check if uses combo of two "equal" weapons
@@ -338,19 +356,19 @@ impl ActiveAbilities {
             .is_some_and(|(a_spec, a_kind, b_spec, b_kind)| (a_spec, a_kind) == (b_spec, b_kind));
 
         // Push main weapon abilities
-        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand)
+        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand, ability_map)
             .map(AuxiliaryAbility::MainWeapon)
             .for_each(|a| ability_buff.push(a));
 
         // Push secondary weapon abilities, if different
         // If equal, just take the first
         if !paired {
-            Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand)
+            Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand, ability_map)
                 .map(AuxiliaryAbility::OffWeapon)
                 .for_each(|a| ability_buff.push(a));
         }
         // Push glider abilities
-        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::Glider)
+        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::Glider, ability_map)
             .map(AuxiliaryAbility::Glider)
             .for_each(|a| ability_buff.push(a));
 
@@ -361,11 +379,12 @@ impl ActiveAbilities {
         inv: Option<&'a Inventory>,
         skill_set: Option<&'a SkillSet>,
         limit: Option<usize>,
+        ability_map: &'a AbilityMap,
     ) -> Vec<AuxiliaryAbility> {
-        let mut iter = Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand)
+        let mut iter = Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand, ability_map)
             .map(AuxiliaryAbility::MainWeapon)
             .chain(
-                Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand)
+                Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand, ability_map)
                     .map(AuxiliaryAbility::OffWeapon),
             );
 
@@ -430,10 +449,11 @@ impl Ability {
         stance: Option<&Stance>,
         combo: Option<&Combo>,
         buffs: Option<&Buffs>,
+        ability_map: &'a AbilityMap,
     ) -> Option<&'a str> {
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         let contextual_id = |kind: Option<&'a AbilityKind<_>>| -> Option<&'a str> {
@@ -545,10 +565,11 @@ impl SpecifiedAbility {
         self,
         char_state: Option<&CharacterState>,
         inv: Option<&'a Inventory>,
+        ability_map: &'a AbilityMap,
     ) -> Option<&'a str> {
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         fn ability_id(spec_ability: SpecifiedAbility, ability: &AbilityKind<AbilityItem>) -> &str {
@@ -4161,5 +4182,32 @@ impl Asset for AbilityMap {
                 })
                 .collect::<HashMap<_, _>>(),
         ))
+    }
+}
+
+impl AbilityMap {
+    /// L'ensemble d'abilites que confere un objet, ou `None` s'il n'en confere
+    /// aucun.
+    ///
+    /// Remplace l'ancien cache `Item::item_config`, qui recopiait dans chaque
+    /// objet l'ensemble de ses abilites deja ajustees. Ce cache obligeait
+    /// `Item` a contenir des `CharacterAbility`, donc le module des objets a
+    /// connaitre toute la couche haute, et il voyageait sur le reseau et
+    /// jusqu'en base a chaque objet transmis.
+    ///
+    /// La recherche est aussi moins de travail que la construction du cache :
+    /// un appel n'a besoin que d'une abilite, la ou `ItemConfig` les ajustait
+    /// toutes. L'ajustement aux statistiques de l'outil, qui se faisait a la
+    /// construction, se fait desormais sur la seule abilite retenue — voir
+    /// `ActiveAbilities::activate_ability`.
+    pub fn item_ability_set(&self, item: &Item) -> Option<&AbilitySet<AbilityItem>> {
+        let spec = item.ability_spec();
+        match &*item.kind() {
+            ItemKind::Tool(tool) => spec
+                .and_then(|key| self.get_ability_set(&key))
+                .or_else(|| self.get_ability_set(&AbilitySpec::Tool(tool.kind))),
+            ItemKind::Glider => spec.and_then(|key| self.get_ability_set(&key)),
+            _ => None,
+        }
     }
 }

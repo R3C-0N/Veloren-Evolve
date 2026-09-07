@@ -4366,12 +4366,20 @@ impl Hud {
                                 let me = info.viewpoint_entity;
                                 if let Some(active_abilities) = active_abilities.get(me) {
                                     let ability_a = active_abilities
-                                        .auxiliary_set(inventories.get(me), skill_sets.get(me))
+                                        .auxiliary_set(
+                                            inventories.get(me),
+                                            skill_sets.get(me),
+                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                        )
                                         .get(a)
                                         .copied()
                                         .unwrap_or(AuxiliaryAbility::Empty);
                                     let ability_b = active_abilities
-                                        .auxiliary_set(inventories.get(me), skill_sets.get(me))
+                                        .auxiliary_set(
+                                            inventories.get(me),
+                                            skill_sets.get(me),
+                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                        )
                                         .get(b)
                                         .copied()
                                         .unwrap_or(AuxiliaryAbility::Empty);
@@ -4510,12 +4518,20 @@ impl Hud {
                                 let me = info.viewpoint_entity;
                                 if let Some(active_abilities) = active_abilities.get(me) {
                                     let ability_a = active_abilities
-                                        .auxiliary_set(inventories.get(me), skill_sets.get(me))
+                                        .auxiliary_set(
+                                            inventories.get(me),
+                                            skill_sets.get(me),
+                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                        )
                                         .get(a)
                                         .copied()
                                         .unwrap_or(AuxiliaryAbility::Empty);
                                     let ability_b = active_abilities
-                                        .auxiliary_set(inventories.get(me), skill_sets.get(me))
+                                        .auxiliary_set(
+                                            inventories.get(me),
+                                            skill_sets.get(me),
+                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                        )
                                         .get(b)
                                         .copied()
                                         .unwrap_or(AuxiliaryAbility::Empty);

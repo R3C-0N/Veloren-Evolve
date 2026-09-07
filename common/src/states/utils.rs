@@ -1463,6 +1463,7 @@ fn handle_ability(
                     data.combo,
                     Some(data.stats),
                     data.buffs,
+                    data.ability_map,
                 )
             })
             .map(|(mut a, f, s)| {
@@ -1609,7 +1610,7 @@ pub fn handle_glider_input_or(
     if data
         .inventory
         .and_then(|inv| inv.equipped(EquipSlot::Glider))
-        .and_then(|glider| glider.item_config())
+        .and_then(|glider| data.ability_map.item_ability_set(glider))
         .is_none()
     {
         fallback_fn(data, update);

@@ -18,7 +18,6 @@ use crate::{
 };
 use common_i18n::Content;
 use core::{
-    convert::TryFrom,
     mem,
     num::{NonZeroU32, NonZeroU64},
 };
@@ -484,7 +483,6 @@ pub struct Item {
     amount: NonZeroU32,
     /// The slots for items that this item has
     slots: Vec<InvSlot>,
-    item_config: Option<Box<ItemConfig>>,
     hash: u64,
     /// Tracks how many deaths occurred while item was equipped, which is
     /// converted into the items durability. Only tracked for tools and armor
@@ -806,68 +804,13 @@ impl PartialEq for ItemDef {
     fn eq(&self, other: &Self) -> bool { self.item_definition_id == other.item_definition_id }
 }
 
-// TODO: Look into removing ItemConfig and just using AbilitySet
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ItemConfig {
-    pub abilities: AbilitySet<tool::AbilityItem>,
-}
-
-#[derive(Debug)]
-pub enum ItemConfigError {
-    BadItemKind,
-}
-
-impl TryFrom<(&Item, &AbilityMap, &MaterialStatManifest)> for ItemConfig {
-    type Error = ItemConfigError;
-
-    fn try_from(
-        // TODO: Either remove msm or use it as argument in fn kind
-        (item, ability_map, _msm): (&Item, &AbilityMap, &MaterialStatManifest),
-    ) -> Result<Self, Self::Error> {
-        match &*item.kind() {
-            ItemKind::Tool(tool) => {
-                // If no custom ability set is specified, fall back to abilityset of tool kind.
-                let tool_default = |tool_kind| {
-                    let key = &AbilitySpec::Tool(tool_kind);
-                    ability_map.get_ability_set(key)
-                };
-                let abilities = if let Some(set_key) = item.ability_spec() {
-                    if let Some(set) = ability_map.get_ability_set(&set_key) {
-                        set.clone()
-                            .modified_by_tool(tool, item.stats_durability_multiplier())
-                    } else {
-                        error!(
-                            "Custom ability set: {:?} references non-existent set, falling back \
-                             to default ability set.",
-                            set_key
-                        );
-                        tool_default(tool.kind).cloned().unwrap_or_default()
-                    }
-                } else if let Some(set) = tool_default(tool.kind) {
-                    set.clone()
-                        .modified_by_tool(tool, item.stats_durability_multiplier())
-                } else {
-                    error!(
-                        "No ability set defined for tool: {:?}, falling back to default ability \
-                         set.",
-                        tool.kind
-                    );
-                    Default::default()
-                };
-
-                Ok(ItemConfig { abilities })
-            },
-            ItemKind::Glider => item
-                .ability_spec()
-                .and_then(|set_key| ability_map.get_ability_set(&set_key))
-                .map(|abilities| ItemConfig {
-                    abilities: abilities.clone(),
-                })
-                .ok_or(ItemConfigError::BadItemKind),
-            _ => Err(ItemConfigError::BadItemKind),
-        }
-    }
-}
+// `ItemConfig` vivait ici : il recopiait dans chaque objet l'ensemble de ses
+// abilites, deja resolues et ajustees. C'etait la seule raison pour laquelle un
+// `Item` contenait des `CharacterAbility`, et il voyageait sur le reseau et
+// jusqu'en base a chaque objet transmis. Les abilites d'un objet se retrouvent
+// desormais par `AbilityMap::item_ability_set`, qui rend le TODO qui trainait
+// ici depuis longtemps : « Look into removing ItemConfig and just using
+// AbilitySet ».
 
 impl ItemDef {
     pub fn is_stackable(&self) -> bool {
@@ -1010,8 +953,12 @@ impl Item {
     pub fn new_from_item_base(
         inner_item: ItemBase,
         components: Vec<Item>,
-        ability_map: &AbilityMap,
-        msm: &MaterialStatManifest,
+        // `ability_map` et `msm` ne servent plus : ils n'etaient la que pour
+        // reconstruire le cache `ItemConfig`, que `AbilityMap::item_ability_set`
+        // remplace. Les retirer touche une centaine de sites d'appel (dont 62
+        // pour le seul `new_from_asset_expect`) et fera l'objet d'un commit a part.
+        _ability_map: &AbilityMap,
+        _msm: &MaterialStatManifest,
     ) -> Self {
         let mut item = Item {
             item_id: Arc::new(AtomicCell::new(None)),
@@ -1020,12 +967,11 @@ impl Item {
             slots: vec![None; inner_item.num_slots() as usize],
             item_base: inner_item,
             // These fields are updated immediately below
-            item_config: None,
             hash: 0,
             durability_lost: None,
         };
         item.durability_lost = item.has_durability().then_some(0);
-        item.update_item_state(ability_map, msm);
+        item.update_hash();
         item
     }
 
@@ -1244,15 +1190,13 @@ impl Item {
         self.components.get_mut(index)
     }
 
-    /// Updates state of an item (important for creation of new items,
-    /// persistence, and if components are ever added to items after initial
-    /// creation)
-    pub fn update_item_state(&mut self, ability_map: &AbilityMap, msm: &MaterialStatManifest) {
-        // Updates item config of an item
-        if let Ok(item_config) = ItemConfig::try_from((&*self, ability_map, msm)) {
-            self.item_config = Some(Box::new(item_config));
-        }
-        // Updates hash of an item
+    /// Recalcule l'empreinte de l'objet, a faire apres toute modification de sa
+    /// composition.
+    ///
+    /// S'appelait `update_item_state` et rafraichissait aussi un cache
+    /// d'abilites, que `AbilityMap::item_ability_set` remplace ; il ne reste
+    /// que l'empreinte.
+    pub fn update_hash(&mut self) {
         self.hash = {
             let mut s = DefaultHasher::new();
             self.hash(&mut s);
@@ -1400,7 +1344,6 @@ impl Item {
 
     pub fn slots_mut(&mut self) -> &mut [InvSlot] { &mut self.slots }
 
-    pub fn item_config(&self) -> Option<&ItemConfig> { self.item_config.as_deref() }
 
     pub fn free_slots(&self) -> usize { self.slots.iter().filter(|x| x.is_none()).count() }
 
@@ -1486,7 +1429,7 @@ impl Item {
         self.kind().has_durability() && self.quality() != Quality::Debug
     }
 
-    pub fn increment_damage(&mut self, ability_map: &AbilityMap, msm: &MaterialStatManifest) {
+    pub fn increment_damage(&mut self, _ability_map: &AbilityMap, _msm: &MaterialStatManifest) {
         if let Some(durability_lost) = &mut self.durability_lost
             && *durability_lost < Self::MAX_DURABILITY
         {
@@ -1494,7 +1437,7 @@ impl Item {
         }
         // Update item state after applying durability because stats have potential to
         // change from different durability
-        self.update_item_state(ability_map, msm);
+        self.update_hash();
     }
 
     pub fn persistence_durability(&self) -> Option<NonZeroU32> {
@@ -1513,11 +1456,11 @@ impl Item {
         }
     }
 
-    pub fn reset_durability(&mut self, ability_map: &AbilityMap, msm: &MaterialStatManifest) {
+    pub fn reset_durability(&mut self, _ability_map: &AbilityMap, _msm: &MaterialStatManifest) {
         self.durability_lost = self.has_durability().then_some(0);
         // Update item state after applying durability because stats have potential to
         // change from different durability
-        self.update_item_state(ability_map, msm);
+        self.update_hash();
     }
 
     /// If an item is stackable and has an amount greater than the requested
