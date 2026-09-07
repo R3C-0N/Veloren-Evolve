@@ -10,14 +10,17 @@ bien ainsi.
 
 ## Les mesures
 
-Trois builds complets, `cargo clean` avant chacun, même machine (4 cœurs),
+Quatre builds complets, `cargo clean` avant chacun, même machine (4 cœurs),
 profil `no_overflow`, relevés au `cargo build --timings` :
 
 | build | mur | CPU cumulé | unités |
 |---|---|---|---|
-| features par défaut | **18 min 24 s** | 61,8 min | 1026 |
-| `cargo fast-voxygen` | **14 min 49 s** | 48,1 min | 831 |
-| `cargo fast-voxygen` + `-Z threads=8` | 14 min 41 s | 47,9 min | 827 |
+| features par défaut, shaderc depuis les sources | **18 min 24 s** | 61,8 min | 1026 |
+| features réduites, shaderc depuis les sources | 14 min 49 s | 48,1 min | 831 |
+| features réduites, shaderc précompilé (`cargo fast-voxygen`) | **10 min 06 s** | 34,7 min | 829 |
+| features réduites + `-Z threads=8` | 14 min 41 s | 47,9 min | 827 |
+
+**18 min 24 s → 10 min 06 s, soit 45 %.**
 
 Les crates les plus chers du build par défaut :
 
@@ -38,9 +41,34 @@ critique — elle tourne de 626 s à 983 s, et `veloren-voxygen` démarre à 983
 exactement quand elle finit. Ensuite, la pile des greffons pèse 9,9 min de CPU,
 16 % du total, pour un dépôt qui ne livre aucun greffon.
 
-## 1. Compiler moins : `cargo fast-voxygen`
+Le premier point coûte d'ailleurs plus que ses 349 s : la supprimer fait tomber
+le CPU cumulé de 48,1 à 34,7 minutes, soit 13,4 minutes, parce que le `ninja`
+lancé par le script de build disputait les cœurs à tout ce qui compilait en même
+temps. `veloren-server` tombe de 186 s à 99 s sans avoir changé d'une ligne.
 
-C'est le levier mesuré ci-dessus : **20 % du build complet**.
+## 1. Ne pas compiler shaderc : le SDK Vulkan
+
+**4 min 43 s sur 14 min 49 s, soit 32 %.** Le plus gros levier de la liste, et
+il ne se joue pas dans du code Rust.
+
+La feature `shaderc-from-source` compile **glslang et SPIRV-Tools depuis leurs
+sources C++**, avec cmake, Python et ninja en prérequis. Le SDK Vulkan livre
+exactement la même bibliothèque, déjà construite (`shaderc_combined.lib`).
+
+`shaderc-from-source` est donc absent des alias `fast-voxygen` et `fast-run`.
+Sans elle, `shaderc-sys` cherche d'abord une bibliothèque déjà construite : il
+lit `$VULKAN_SDK` tout seul, et n'exige que la version 1.2.182 ou plus récente.
+S'il n'en trouve aucune, **il retombe de lui-même sur la compilation depuis les
+sources** — sans SDK, le comportement est donc celui d'avant, et il n'y a rien
+à désinstaller pour revenir en arrière. On peut aussi pointer un autre
+répertoire avec `SHADERC_LIB_DIR`.
+
+Installer le SDK Vulkan, c'est donc aussi trois prérequis de moins (cmake,
+Python, ninja) et près de cinq minutes sur chaque build complet.
+
+## 2. Compiler moins : `cargo fast-voxygen`
+
+Le second levier mesuré : **20 % du build complet**, cumulable avec le premier.
 
 Les features par défaut de voxygen tirent 690 crates. Elles incluent
 `plugins`, qui embarque **wasmtime et cranelift** — un compilateur JIT complet,
@@ -53,7 +81,7 @@ dernier ne servant qu'à afficher une boîte de dialogue quand le jeu panique.
     cargo fast-run --partie-rapide
 
 L'alias est défini dans `.cargo/config.toml` : profil `no_overflow`, et
-`--no-default-features --features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui`.
+`--no-default-features --features singleplayer,simd,hot-reloading,egui-ui`.
 Soit **586 crates au lieu de 690**, pour un client qui se joue exactement
 pareil en solo. Le gain ne se limite d'ailleurs pas aux crates supprimés :
 `veloren-voxygen` lui-même tombe de 122 s à 95 s, parce qu'il a moins de code
@@ -67,21 +95,6 @@ launch`.
 **Ne pas alterner** entre `cargo build` (features par défaut) et
 `cargo fast-voxygen` : chaque changement de jeu de features force la
 recompilation des crates concernés. Choisir un des deux et s'y tenir.
-
-## 2. Ne pas compiler shaderc : le SDK Vulkan
-
-La feature `shaderc-from-source` compile **glslang et SPIRV-Tools depuis leurs
-sources C++**, avec cmake, Python et ninja en prérequis. 357 s dans le relevé
-ci-dessus, l'unité la plus chère du build, et sur le chemin critique.
-
-Le SDK Vulkan livre exactement la même bibliothèque, déjà construite
-(`shaderc_combined.lib`). S'il est installé, `shaderc-sys` le trouve tout seul
-par la variable `VULKAN_SDK` : il suffit de **retirer `shaderc-from-source`**
-des deux alias `fast-voxygen` et `fast-run`. On peut aussi pointer un autre
-répertoire avec `SHADERC_LIB_DIR`.
-
-Ce n'est payant qu'au premier build — ensuite l'artefact est en cache dans
-`target/` — mais c'est aussi trois prérequis de moins à installer.
 
 ## 3. Relier plus vite : `rust-lld` sur Windows
 

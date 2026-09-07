@@ -49,10 +49,16 @@ tracy-test-server = "run --bin veloren-server-cli --no-default-features --featur
 # pour un client qui se joue exactement pareil. `egui-ui` reste : il ne coûte
 # presque rien à compiler, et le pilote de la compétence `run-veloren-evolve`
 # lit sa ligne de journal pour savoir que le démarrage est fini.
-# Si le SDK Vulkan est installé, retirer `shaderc-from-source` de ces deux
-# alias fait tomber la compilation C++ de shaderc (voir COMPILATION.md).
-fast-voxygen = "build --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui"
-fast-run = "run --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui --"
+#
+# `shaderc-from-source` est absent exprès, et c'est le plus gros gain de la
+# liste : sans cette feature, `shaderc-sys` cherche d'abord une bibliothèque
+# déjà construite — celle du SDK Vulkan, qu'il trouve seul par `$VULKAN_SDK` —
+# et ne retombe sur la compilation C++ de glslang que s'il n'en trouve aucune.
+# Avec le SDK installé, cela retire l'unité la plus chère de tout le build
+# (349 s mesurées, sur le chemin critique) ; sans le SDK, le comportement est
+# celui d'avant. Voir COMPILATION.md.
+fast-voxygen = "build --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,egui-ui"
+fast-run = "run --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,egui-ui --"
 test-voxygen = "run --bin veloren-voxygen --no-default-features --features simd,egui-ui,shaderc-from-source,hot-reloading"
 tracy-voxygen = "run --bin veloren-voxygen --no-default-features --features tracy,simd,egui-ui,shaderc-from-source --profile no_overflow"
 dbg-voxygen = "run --bin veloren-voxygen --profile debuginfo"

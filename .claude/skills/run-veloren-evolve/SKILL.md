@@ -31,18 +31,15 @@ rustup toolchain uninstall nightly-2026-06-13-x86_64-pc-windows-msvc
 rustup toolchain install   nightly-2026-06-13-x86_64-pc-windows-msvc --profile default
 ```
 
-`shaderc` est compilé depuis ses sources (`shaderc-from-source` est dans les
-features **par défaut** de voxygen, et dans celles de `cargo fast-voxygen`) :
-il faut cmake, Python et **ninja**.
+**Installer le SDK Vulkan.** `shaderc-sys` y trouve seul, par `$VULKAN_SDK`,
+une bibliothèque `shaderc` déjà construite. Sans lui, il compile glslang et
+SPIRV-Tools depuis leurs sources C++ : c'est l'unité la plus chère de tout le
+build (349 s mesurées) et il faut alors cmake, Python et **ninja**.
 
 ```powershell
-python -m pip install ninja
+python -m pip install ninja   # seulement si le SDK Vulkan n'est pas installé
 ninja --version
 ```
-
-Le SDK Vulkan livre la même bibliothèque déjà construite : s'il est installé,
-retirer `shaderc-from-source` des alias supprime cette compilation C++ et ces
-trois prérequis (voir `COMPILATION.md`).
 
 ## Build
 
@@ -52,7 +49,7 @@ cargo fast-voxygen
 
 L'alias est dans `.cargo/config.toml` ; il vaut
 `build --profile no_overflow --bin veloren-voxygen --no-default-features
---features singleplayer,simd,hot-reloading,shaderc-from-source,egui-ui`.
+--features singleplayer,simd,hot-reloading,egui-ui`.
 
 Profil `no_overflow` volontairement : il désactive les contrôles de
 débordement pour la génération de monde tout en gardant un temps de
@@ -70,8 +67,9 @@ ligne de journal pour savoir que le démarrage est fini.
 features par défaut : chaque bascule refait compiler les crates concernés.
 
 Compter **~10 min de téléchargement**, puis la compilation. Mesuré sur une
-machine à 4 cœurs, `cargo clean` avant : **14 min 49 s**, contre 18 min 24 s
-avec les features par défaut. Ensuite c'est incrémental. `COMPILATION.md`, à la racine, détaille les
+machine à 4 cœurs, `cargo clean` avant : **10 min 06 s** avec le SDK Vulkan
+installé, 14 min 49 s sans lui, contre 18 min 24 s pour un `cargo build` aux
+features par défaut. Ensuite c'est incrémental. `COMPILATION.md`, à la racine, détaille les
 autres leviers — `rust-lld`, le front-end parallèle, le SDK Vulkan, et
 surtout la boucle de travail sur `world` seul, qui ne demande que 206 crates
 au lieu de 586.
