@@ -285,15 +285,15 @@ après. Diagnostic juste, cause fausse.
 ## Découper `veloren-common` ?
 
 C'est la piste qui revient toujours, et pour de bonnes raisons : `veloren-common`
-est l'unité la plus chère du build après voxygen — **163,9 s**, treize crates en
+est l'unité la plus chère du build après voxygen — **152,3 s**, treize crates en
 dépendent, et toucher n'importe laquelle de ses 68 879 lignes les recompile
 toutes.
 
 On a mesuré avant de couper. Résumé : le découpage facile ne libère aucune
 crate en aval, celui qui rapporterait vraiment demande de casser un cycle de
-28 800 lignes, et il existe un levier à −26 % sur cette crate qui ne demande
-aucune ligne de code. Le détail suit, pour que personne n'y passe un mois en
-croyant gagner davantage.
+28 800 lignes, et on peut démontrer, sans rien découper, qu'aucun découpage
+ne peut aider sur une machine à quatre cœurs. Le détail suit, pour
+que personne n'y passe un mois en croyant gagner davantage.
 
 ### Le graphe : 93 % de la crate est un seul cycle
 
@@ -368,6 +368,29 @@ crate, et il est énorme : sur les 98,8 s que `common` coûte en mesure isolée
 les treize crates, puisque cargo les débloque sur le `rmeta`, pas sur le code
 objet.
 
+### Ce que ça rapporterait, simulé sur le vrai graphe
+
+En reconstruisant le DAG réel (`cargo build --unit-graph`), en y injectant les
+durées du build de référence et en simulant l'ordonnancement de cargo — une
+crate démarre dès que ses dépendances ont livré leur `rmeta`, pas leur code
+objet, la part `rmeta` de `common` étant mesurée à 58 % :
+
+| cœurs | tel quel | couche voxel | coupe 50/50 | 2 sœurs | 3 sœurs | borne : `common` gratuit |
+|---|---|---|---|---|---|---|
+| 4 | 756 s | −0 % | −0 % | −2 % | −4 % | −10 % |
+| 8 | 579 s | 0 % | 0 % | −8 % | −10 % | −15 % |
+| 16 | 483 s | 0 % | 0 % | −9 % | −12 % | −17 % |
+| ∞ | 443 s | 0 % | 0 % | −10 % | −13 % | −20 % |
+
+**Un découpage en couches vaut exactement zéro**, quel que soit le nombre de
+cœurs et quelle que soit la répartition. Seules des crates sœurs rapportent, et
+seulement à partir de huit cœurs.
+
+Même en supprimant `common` du build, on ne gagne que 20 % : la chaîne
+`syn` → `image` → `common-net` → `world` (108 s) → `rtsim` → `server-agent` →
+`server` (100 s) → `voxygen` (127 s) prend le relais. Ce sont les crates du
+dépôt elles-mêmes qui forment le plancher.
+
 ### Des sœurs sont-elles seulement possibles ?
 
 Le candidat naturel est `comp` — 31 016 lignes, presque la moitié de la crate —
@@ -392,29 +415,47 @@ centaines de sites d'appel.
 
 ### Ce que je ferais
 
-**Pas le grand découpage.** Casser un cycle de 28 800 lignes pour quelques
-pour cent d'un build complet est un mauvais marché, et le gain incrémental qu'on lui prête n'a
-pas pu être mesuré sans faire le travail d'abord — rustc étant déjà incrémental
-à l'intérieur d'une crate, il est probablement plus petit qu'il n'y paraît.
+**Pas le grand découpage.** Casser un cycle de 28 800 lignes pour 8 à 13 % d'un
+build complet, et seulement à partir de huit cœurs, est un mauvais marché. Le
+gain incrémental qu'on lui prête n'a pas pu être mesuré sans faire le travail
+d'abord — rustc étant déjà incrémental à l'intérieur d'une crate, il est
+probablement plus petit qu'il n'y paraît.
 
-Deux choses valent mieux, à effort égal ou moindre :
+Mais surtout : **sur cette machine, aucun découpage ne peut aider**, et on peut
+le prouver sans le faire.
 
-1. **Les lints.** `module_lints` coûte **18,1 s** des 98,8 s de `common`, et
-   c'est du frontend : ces 18 s bloquent les treize crates en aval. Compiler
-   avec `--cap-lints=allow` fait tomber `common` de 98,8 s à **73,3 s**, soit
-   −26 %, sans toucher une ligne. Ce n'est pas une option pour la CI, qui doit
-   voir les avertissements ; c'en est une pour la boucle d'itération locale.
+Le build de référence occupe **3,43 cœurs sur 4** en moyenne, 86 % de
+saturation. Dans ce régime, le mur vaut le travail CPU total divisé par le
+nombre de cœurs ; le chemin critique ne contraint rien. Un découpage ne retire
+aucun travail — il en ajoute même un peu, les génériques étant monomorphisés
+dans chaque crate — donc il ne peut rien donner.
 
-2. **`rusqlite`.** `libsqlite3-sys` compile 49 s de C dans son script de build,
-   sur le chemin de `veloren-server`. Un `optional = true` dans
-   `server/Cargo.toml` la coupe (voir plus haut).
+L'expérience qui le montre est celle des lints. `module_lints` coûte 18,1 s des
+98,8 s de `common`, et c'est du frontend, donc en théorie cela bloque les treize
+crates en aval. Compiler avec `--cap-lints=allow` fait bien tomber `common` de
+152,3 s à **132,8 s** dans le build complet. Et le mur ne bouge pas :
+
+| build complet | mur | CPU cumulé | `veloren-common` |
+|---|---|---|---|
+| référence | 10 min 08 s | 34,9 min | 152,3 s |
+| `--cap-lints=allow` | **10 min 07 s** | 34,8 min | **132,8 s** |
+
+Vingt secondes retirées à la crate la plus critique du build, une seconde de
+gagnée au mur. C'est la démonstration directe qu'il ne sert à rien de raccourcir
+une crate tant que les cœurs sont pleins — et le découpage de `common` est
+précisément cela.
+
+Ce qui marche, sur une machine saturée, c'est de **retirer du travail** :
+shaderc (−357 s de CPU, fait), `plugins`/wasmtime (9,9 min de CPU pour un dépôt
+sans plugins), `rusqlite` (49 s de C dans un script de build).
 
 Si le découpage devait quand même se faire, l'ordre serait : sortir d'abord le
 vocabulaire partagé dans une crate feuille — les quatorze types ci-dessus et
 leurs semblables — ce qui est utile en soi, réversible, et débloque aussi bien
 la couche voxel que la séparation `inventory`/`body` ; puis mesurer ; et
 seulement ensuite, si le chiffre le justifie, séparer les sœurs. Commencer par
-la couche voxel donnerait le petit gain en refermant la porte du grand.
+la couche voxel coûterait la journée pour zéro pour cent, en refermant la porte
+du seul découpage qui rapporte quelque chose.
 
 ## Ce qui a été essayé et écarté
 
