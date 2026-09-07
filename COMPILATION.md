@@ -282,6 +282,140 @@ macro procédurale met `regex` dans le graphe hôte pendant que voxygen l'a dans
 le graphe cible. Les deux unités ont exactement les mêmes features avant et
 après. Diagnostic juste, cause fausse.
 
+## Découper `veloren-common` ?
+
+C'est la piste qui revient toujours, et pour de bonnes raisons : `veloren-common`
+est l'unité la plus chère du build après voxygen — **163,9 s**, treize crates en
+dépendent, et toucher n'importe laquelle de ses 68 879 lignes les recompile
+toutes.
+
+On a mesuré avant de couper. Résumé : le découpage facile ne libère aucune
+crate en aval, celui qui rapporterait vraiment demande de casser un cycle de
+28 800 lignes, et il existe un levier à −26 % sur cette crate qui ne demande
+aucune ligne de code. Le détail suit, pour que personne n'y passe un mois en
+croyant gagner davantage.
+
+### Le graphe : 93 % de la crate est un seul cycle
+
+En construisant le graphe des 49 modules de premier niveau — commentaires et
+chaînes retirés, sinon les liens de doc `[crate::machin]` inventent des
+dépendances qui n'existent pas — et en cherchant les composantes fortement
+connexes, on trouve **une composante de 30 modules et 64 014 lignes**, soit 93 %
+de la crate :
+
+```
+astar, character, combat, comp, effect, event, explosion, figure, generation,
+interaction, lottery, map, mounting, npc, outcome, path, ray, recipe, resources,
+rtsim, skillset_builder, states, terrain, tether, time, trade, uid, util, vol,
+volumes
+```
+
+Une crate Rust ne peut pas contenir de cycle : ce bloc est, en l'état,
+indivisible. Ne restent dehors que 4 865 lignes éparses — `cmd` (1631),
+`slowjob` (842), `typed` (445), `region` (325), `weather` (273) et une dizaine
+de modules de moins de 200 lignes. Les extraire est facile et sans intérêt :
+7 % de la crate, dont rien n'est cher.
+
+### La coupe facile : 16 références
+
+La couche voxel — `vol`, `volumes`, `terrain`, `figure`, `ray`, `path`, `astar`,
+`util`, `grid`, `spiral`, `store`, `depot`, `typed`, `consts`, `calendar`,
+`lod`, `region`, `creusement` — pèse 14 750 lignes et n'est retenue dans le
+cycle que par **16 références réparties sur 8 fichiers** :
+
+| arête | refs | où |
+|---|---|---|
+| `util` → `comp` | 4 | `util/dir.rs:1`, `util/find_dist.rs:37-39` |
+| `terrain` → `comp` | 2 | `terrain/block.rs:5`, `terrain/sprite/mod.rs:42` |
+| `terrain` → `effect` | 2 | les deux mêmes lignes |
+| `terrain` → `lottery` | 2 | `terrain/sprite/mod.rs:42`, `terrain/structure.rs:256` |
+| `terrain` → `rtsim`, `generation`, `resources` | 3 | idem |
+| `path` → `resources` | 1 | `path.rs:1` |
+| `region` → `comp` | 1 | `region.rs:1` |
+| `creusement` → `comp` | 1 | `creusement.rs:13` |
+
+Deux d'entre elles sont dans un `#[cfg(test)]` (`terrain/structure.rs:256`) :
+cargo autorise les cycles de *dev-dependencies*, elles ne coûtent rien. Le reste
+tient à un petit vocabulaire partagé — `LiquidKind`, `ToolKind`, `BuffKind`,
+`BuffData`, `BuffEffect`, `LootSpec`, `ItemDefinitionIdOwned`, `Secs` — plus un
+`Cylinder::from_components` qui n'a rien à faire dans `util` et devrait vivre
+dans `comp`. Une journée de travail, guère plus.
+
+### Ce que ça rapporte : peu, et pas pour la raison qu'on croit
+
+On a compté, pour chacune des treize crates en aval, les modules de `common`
+qu'elle référence réellement :
+
+| crate | refs couche basse | refs couche haute |
+|---|---|---|
+| `world` | 154 | 78 (`generation`, `comp`, `trade`, `spot`…) |
+| `voxygen` | 133 | 259 |
+| `server` | 104 | 415 |
+| `voxygen/anim` | 17 | 187 (`states`, `comp`) |
+| `common/systems` | 30 | 133 |
+
+**Pas une seule ne se contente de la couche basse.** Détacher `terrain` ne
+permet donc à personne de démarrer plus tôt. Le seul gain possible est un gain
+de recouvrement — le codegen de la crate basse se déroule pendant le frontend
+de la crate haute, là où dans une seule crate il attendait son tour.
+
+Le gain qui compterait vraiment demanderait des crates **sœurs**, qui ne se
+dépendent pas et parallélisent le frontend. Car ce frontend est séquentiel par
+crate, et il est énorme : sur les 98,8 s que `common` coûte en mesure isolée
+(`-Z time-passes`), **58 s en sont** — résolution, expansion,
+`type_check_crate` 10 s, `MIR_borrow_checking` 15 s, lints 18,1 s,
+`generate_crate_metadata` 7,9 s — contre 41 s de codegen. C'est lui qui retient
+les treize crates, puisque cargo les débloque sur le `rmeta`, pas sur le code
+objet.
+
+### Des sœurs sont-elles seulement possibles ?
+
+Le candidat naturel est `comp` — 31 016 lignes, presque la moitié de la crate —
+dont on espérerait séparer les objets (`inventory`, 9 799 lignes) des corps
+(`body`, 5 708). Même analyse, mais résolue par noms de types et non par
+chemins, parce que `comp` réexporte tout et que les imports imbriqués
+(`crate::comp::{inventory::item::Item}`) masquent l'origine : **28 800 des
+31 016 lignes de `comp` forment, elles aussi, un seul cycle.** `inventory` et
+`body` se citent 404 fois dans les deux sens.
+
+La bonne nouvelle est que ce nœud est bruyant plutôt qu'épais :
+
+- `inventory` → `body` : **3** types (`Body`, `BodyType`, `Species`)
+- `body` → `inventory` : **11** types (`Item`, `ItemKind`, `Tool`, `ToolKind`,
+  `Armor`, `ArmorKind`, `Lantern`, `ModularComponent`, `ThrownItem`,
+  `Utility`, `Error`)
+
+Quatorze types déplacés dans une crate de vocabulaire, et les deux moitiés
+deviennent sœurs. Mais `ability` → `inventory` en réclame 12 de plus, et ainsi
+de suite : le vocabulaire grossit vite, et chaque type déplacé traverse des
+centaines de sites d'appel.
+
+### Ce que je ferais
+
+**Pas le grand découpage.** Casser un cycle de 28 800 lignes pour quelques
+pour cent d'un build complet est un mauvais marché, et le gain incrémental qu'on lui prête n'a
+pas pu être mesuré sans faire le travail d'abord — rustc étant déjà incrémental
+à l'intérieur d'une crate, il est probablement plus petit qu'il n'y paraît.
+
+Deux choses valent mieux, à effort égal ou moindre :
+
+1. **Les lints.** `module_lints` coûte **18,1 s** des 98,8 s de `common`, et
+   c'est du frontend : ces 18 s bloquent les treize crates en aval. Compiler
+   avec `--cap-lints=allow` fait tomber `common` de 98,8 s à **73,3 s**, soit
+   −26 %, sans toucher une ligne. Ce n'est pas une option pour la CI, qui doit
+   voir les avertissements ; c'en est une pour la boucle d'itération locale.
+
+2. **`rusqlite`.** `libsqlite3-sys` compile 49 s de C dans son script de build,
+   sur le chemin de `veloren-server`. Un `optional = true` dans
+   `server/Cargo.toml` la coupe (voir plus haut).
+
+Si le découpage devait quand même se faire, l'ordre serait : sortir d'abord le
+vocabulaire partagé dans une crate feuille — les quatorze types ci-dessus et
+leurs semblables — ce qui est utile en soi, réversible, et débloque aussi bien
+la couche voxel que la séparation `inventory`/`body` ; puis mesurer ; et
+seulement ensuite, si le chiffre le justifie, séparer les sœurs. Commencer par
+la couche voxel donnerait le petit gain en refermant la porte du grand.
+
 ## Ce qui a été essayé et écarté
 
 **`-Z threads=8`, le front-end parallèle de rustc.** L'idée : rustc analyse un
