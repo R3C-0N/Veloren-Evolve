@@ -42,7 +42,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
-use tracing::warn;
+use tracing::{debug, warn};
 use treeculler::{AABB, BVol, Frustum};
 use vek::*;
 
@@ -250,7 +250,6 @@ pub(super) fn get_sprite_instances<'a, I: 'a>(
 /// light map), or Some((light_map, glow_map)).
 fn mesh_worker(
     pos: Vec2<i32>,
-    z_bounds: (f32, f32),
     skip_remesh: Option<(LightMapFn, LightMapFn)>,
     started_tick: u64,
     volume: <VolGrid2d<TerrainChunk> as SampleVol<Aabr<i32>>>::Sample,
@@ -260,6 +259,8 @@ fn mesh_worker(
     sprite_render_state: &SpriteRenderState,
 ) -> MeshWorkerResponse {
     span!(_guard, "mesh_worker");
+    // CHRONO JETABLE (etape 0) — a retirer avant le commit final.
+    let t0 = std::time::Instant::now();
     let blocks_of_interest = BlocksOfInterest::from_blocks(
         chunk.iter_changed().map(|(pos, block)| (pos, *block)),
         chunk.meta().river_velocity(),
@@ -318,6 +319,8 @@ fn mesh_worker(
         // Extract sprite locations from volume
         sprite_instances: {
             prof_span!("extract sprite_instances");
+            // CHRONO JETABLE (etape 0)
+            let t_avant_sprites = t0.elapsed();
             let mut instances = [(); SPRITE_LOD_LEVELS].map(|()| {
                 (
                     Vec::new(), // Deep
@@ -332,6 +335,8 @@ fn mesh_worker(
                     (c.meta().alt() - SHALLOW_ALT, c.meta().alt() - DEEP_ALT)
                 });
 
+            let colonne = &*chunk;
+
             get_sprite_instances(
                 &mut instances,
                 |(deep_level, shallow_level, surface_level), instance, wpos| {
@@ -343,14 +348,30 @@ fn mesh_worker(
                         shallow_level.push(instance);
                     }
                 },
+                // Borne a l'etendue propre de la colonne, et lue a meme elle.
+                //
+                // `z_bounds` porte l'*union* des etendues verticales des neuf
+                // chunks de l'echantillon : pres d'une colline creusee de
+                // grottes, cela faisait balayer plusieurs centaines de niveaux
+                // pour une colonne qui n'en contient que quelques dizaines. Or
+                // hors de `[get_min_z, get_max_z)` un `Chonk` rend son bloc de
+                // remplissage — roche pleine en dessous, air `Empty` au-dessus
+                // —, et ni l'un ni l'autre ne porte de sprite : les positions
+                // retirees ne produisaient donc rien. La sortie est identique.
+                //
+                // Et la lecture passe par la colonne plutot que par
+                // l'echantillon, ce qui remplace un hachage de cle de chunk par
+                // bloc par une indexation de sous-chunk.
                 (0..TerrainChunk::RECT_SIZE.x as i32)
-                    .flat_map(|x| {
+                    .flat_map(move |x| {
                         (0..TerrainChunk::RECT_SIZE.y as i32).flat_map(move |y| {
-                            (z_bounds.0 as i32..z_bounds.1 as i32)
-                                .map(move |z| Vec3::new(x, y, z).as_())
+                            (colonne.get_min_z()..colonne.get_max_z())
+                                .map(move |z| Vec3::new(x, y, z))
                         })
                     })
-                    .filter_map(|rel_pos| Some((rel_pos, *volume.get(to_wpos(rel_pos)).ok()?))),
+                    .filter_map(|rel_pos| {
+                        Some((rel_pos.as_::<f32>(), *colonne.get(rel_pos).ok()?))
+                    }),
                 to_wpos,
                 light_map,
                 |wpos| {
@@ -365,6 +386,15 @@ fn mesh_worker(
                 },
                 &sprite_render_state.sprite_data,
                 &sprite_render_state.missing_sprite_placeholder,
+            );
+
+            // CHRONO JETABLE (etape 0)
+            debug!(
+                "chrono mesh_worker {:?} maille={:?} sprites={:?} etendue_propre={}",
+                pos,
+                t_avant_sprites,
+                t0.elapsed() - t_avant_sprites,
+                colonne.get_max_z() - colonne.get_min_z(),
             );
 
             instances.map(|(deep_level, shallow_level, surface_level)| {
@@ -1118,7 +1148,6 @@ impl<V: RectRasterableVol> Terrain<V> {
                 .spawn("TERRAIN_MESHING", move || {
                     let _ = send.send(mesh_worker(
                         pos,
-                        (min_z as f32, max_z as f32),
                         skip_remesh,
                         started_tick,
                         volume,

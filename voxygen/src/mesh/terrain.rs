@@ -16,7 +16,7 @@ use common::{
 };
 use common_base::span;
 use std::{collections::VecDeque, fmt::Debug, sync::Arc};
-use tracing::error;
+use tracing::{debug, error};
 use vek::*;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -33,11 +33,38 @@ pub const SUNLIGHT: u8 = 24;
 pub const SUNLIGHT_INV: f32 = 1.0 / SUNLIGHT as f32;
 pub const MAX_LIGHT_DIST: i32 = SUNLIGHT as i32;
 
+/// Comment amorcer la file de propagation, une fois la descente solaire faite.
+///
+/// [`Amorcage::Exhaustif`] est l'algorithme d'origine : toute cellule atteinte
+/// par la descente devient une graine. Il n'est plus employe en jeu — il
+/// coutait de l'ordre du million de graines par colonne remaillee — mais il
+/// reste ici comme **specification** de [`Amorcage::Frontiere`], auquel le test
+/// d'equivalence le compare cellule par cellule. Le retirer rendrait
+/// l'optimisation invérifiable.
+#[derive(Clone, Copy, PartialEq)]
+enum Amorcage {
+    /// Les seules cellules qui ont quelque chose a ameliorer.
+    Frontiere,
+    /// Toutes. Lent, et c'est le point de comparaison.
+    Exhaustif,
+}
+
+/// Le nombre de graines empilees depuis la derniere remise a zero, pour le seul
+/// test.
+///
+/// Sans lui, le test d'equivalence prouverait que les deux amorcages donnent la
+/// meme lumiere — y compris dans le cas ou la frontiere en empilerait autant
+/// que l'exhaustif, c'est-a-dire ou l'optimisation ne ferait rien. Une mesure
+/// qui ne bouge pas ne prouve pas.
+#[cfg(test)]
+static GRAINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn calc_light<
     V: RectRasterableVol<Vox = Block> + ReadVol + Debug,
     L: Iterator<Item = (Vec3<i32>, u8)>,
 >(
     is_sunlight: bool,
+    amorcage: Amorcage,
     // When above bounds
     default_light: u8,
     bounds: Aabb<i32>,
@@ -86,8 +113,69 @@ fn calc_light<
 
                     if light <= 0.0 {
                         break;
-                    } else {
+                    }
+                }
+            }
+        }
+
+        // Amorcer la file, la descente etant finie.
+        //
+        // Elle a rempli `light_map` *avant* que la propagation ne depile quoi
+        // que ce soit, si bien qu'on peut choisir les graines en connaissance
+        // de cause. Empiler chaque cellule atteinte — ce que faisait la
+        // descente — mettait de l'ordre du million de graines par colonne
+        // remaillee, dont la quasi-totalite n'avait rien a ameliorer : la
+        // propagation est un point fixe max monotone, donc une graine dont tous
+        // les voisins valent deja au moins sa valeur moins un ne peut jamais
+        // servir, ni maintenant ni plus tard — toute cellule qui augmente est
+        // reempilee et repropage d'elle-meme. Ce qui reste est la surface du
+        // terrain et les bords d'ombre.
+        //
+        // **`UNKNOWN` et `OPAQUE` valent 255 et 254, donc plus que `SUNLIGHT`
+        // :** le test `voisin < light - 1` est toujours faux pour eux, d'ou le
+        // test explicite d'`UNKNOWN`. L'omettre perdrait exactement les
+        // cellules par lesquelles `propagate` decouvre les blocs fluides encore
+        // sombres, et l'interieur des cavites resterait noir.
+        let (w, h, d) = outer.size().into_tuple();
+        for z in 0..d {
+            for x in 0..w {
+                for y in 0..h {
+                    let light = light_map[lm_idx(x, y, z)];
+                    // Une valeur au-dela de `SUNLIGHT` est un marqueur, pas
+                    // une lumiere.
+                    //
+                    // Une cellule a zero est ecartee, et c'est le seul point que
+                    // le test d'equivalence ne couvre pas — les deux amorcages
+                    // le partagent. L'argument : une graine a zero ne peut que
+                    // faire passer un voisin d'`UNKNOWN` a `0` s'il est fluide,
+                    // ou a `OPAQUE` sinon, sans jamais le reempiler
+                    // (`*dest > 1` est faux). Or la fermeture rendue plus bas
+                    // ramene `0`, `OPAQUE` et `UNKNOWN` a la meme valeur — zero.
+                    // L'effet est donc inobservable.
+                    if light == 0 || light > SUNLIGHT {
+                        continue;
+                    }
+
+                    let a_faire = amorcage == Amorcage::Exhaustif
+                        || [
+                            (z + 1 < d).then(|| lm_idx(x, y, z + 1)),
+                            (z > 0).then(|| lm_idx(x, y, z - 1)),
+                            (y + 1 < h).then(|| lm_idx(x, y + 1, z)),
+                            (y > 0).then(|| lm_idx(x, y - 1, z)),
+                            (x + 1 < w).then(|| lm_idx(x + 1, y, z)),
+                            (x > 0).then(|| lm_idx(x - 1, y, z)),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|i| {
+                            let voisin = light_map[i];
+                            voisin == UNKNOWN || voisin < light.saturating_sub(1)
+                        });
+
+                    if a_faire {
                         prop_que.push_back((x as u8, y as u8, z as u16));
+                        #[cfg(test)]
+                        GRAINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
             }
@@ -256,6 +344,9 @@ pub fn generate_mesh<'a>(
     /*  DefaultVolIterator::new(vol, range.min - MAX_LIGHT_DIST, range.max + MAX_LIGHT_DIST)
     .filter_map(|(pos, block)| block.get_glow().map(|glow| (pos, glow))); */
 
+    // CHRONO JETABLE (etape 0) — a retirer avant le commit final.
+    let t0 = std::time::Instant::now();
+
     let mut glow_blocks = Vec::new();
 
     // TODO: This expensive, use BlocksOfInterest instead
@@ -274,8 +365,38 @@ pub fn generate_mesh<'a>(
     }
 
     // Calculate chunk lighting (sunlight defaults to 1.0, glow to 0.0)
-    let light = calc_light(true, SUNLIGHT, range, vol, core::iter::empty());
-    let glow = calc_light(false, 0, range, vol, glow_blocks.into_iter());
+    // CHRONO JETABLE (etape 0)
+    let t_lueur = t0.elapsed();
+
+    let light = calc_light(
+        true,
+        Amorcage::Frontiere,
+        SUNLIGHT,
+        range,
+        vol,
+        core::iter::empty(),
+    );
+    // CHRONO JETABLE (etape 0)
+    let t_soleil = t0.elapsed() - t_lueur;
+
+    let glow = calc_light(
+        false,
+        Amorcage::Frontiere,
+        0,
+        range,
+        vol,
+        glow_blocks.into_iter(),
+    );
+    // CHRONO JETABLE (etape 0)
+    let t_glow = t0.elapsed() - t_lueur - t_soleil;
+    debug!(
+        "chrono generate_mesh H={} balayage_lueur={:?} calc_light_soleil={:?} \
+         calc_light_lueur={:?}",
+        range.size().d,
+        t_lueur,
+        t_soleil,
+        t_glow,
+    );
 
     let (underground_alt, deep_alt) = vol
         .get_key(vol.pos_key((range.min + range.max) / 2))
@@ -625,4 +746,201 @@ impl Limits {
     }
 
     fn into_tuple(self) -> (i32, i32) { (self.min, self.max) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::terrain::{BlockKind, MapSizeLg, SpriteKind, TerrainChunkMeta, TerrainChunkSize};
+    use common::vol::{RectVolSize, WriteVol};
+
+    const ROCHE: Block = Block::new(BlockKind::Rock, Rgb::new(60, 60, 60));
+    const FEUILLAGE: Block = Block::new(BlockKind::Leaves, Rgb::new(20, 90, 30));
+
+    /// Un monde de 5x5 colonnes portant une colline, un surplomb, une poche
+    /// scellee, un lac et une voute de feuillage.
+    ///
+    /// Aucune de ces formes n'est decorative ; chacune couvre un mode de
+    /// defaillance de l'amorcage par la frontiere :
+    ///
+    /// | Forme | Ce qu'elle eprouve |
+    /// |---|---|
+    /// | Colline | un bord d'ombre franc |
+    /// | Surplomb | la lumiere qui doit arriver lateralement sous un toit |
+    /// | Poche scellee | le seul cas ou `propagate` doit decouvrir des blocs fluides encore `UNKNOWN` — c'est elle que le test explicite d'`UNKNOWN` protege |
+    /// | Lac | l'atténuation **fractionnaire** de l'eau (0,4 par bloc), qui fait des paliers ou deux voisins ne differrent que de zero apres troncature |
+    /// | Feuillage | un plancher de lumiere (`min_light` = 9) jouxtant du plein soleil, donc le gradient lateral le plus raide du lot |
+    fn monde_temoin() -> VolGrid2d<TerrainChunk> {
+        let map_size_lg = MapSizeLg::new(Vec2::new(10, 10)).expect("taille de carte valide");
+        let vide = Arc::new(TerrainChunk::new(
+            0,
+            ROCHE,
+            Block::empty(),
+            TerrainChunkMeta::void(),
+        ));
+        let mut vol = VolGrid2d::new(map_size_lg, vide).expect("grille valide");
+
+        let (sx, sy) = (
+            TerrainChunkSize::RECT_SIZE.x as i32,
+            TerrainChunkSize::RECT_SIZE.y as i32,
+        );
+
+        for cx in -2..=2 {
+            for cy in -2..=2 {
+                let mut chunk =
+                    TerrainChunk::new(0, ROCHE, Block::empty(), TerrainChunkMeta::void());
+
+                for x in 0..sx {
+                    for y in 0..sy {
+                        // Le sol, et une colline centree sur la colonne (0, 0).
+                        let wx = cx * sx + x;
+                        let wy = cy * sy + y;
+                        let d = ((wx * wx + wy * wy) as f32).sqrt();
+                        let sommet = 40 + (18.0 - d * 0.5).max(0.0) as i32;
+                        for z in 0..sommet {
+                            chunk.set(Vec3::new(x, y, z), ROCHE).expect("sol");
+                        }
+
+                        // Un surplomb : une dalle a z=60, air en dessous.
+                        if (10..24).contains(&wx) && (10..24).contains(&wy) {
+                            for z in 60..63 {
+                                chunk.set(Vec3::new(x, y, z), ROCHE).expect("dalle");
+                            }
+                        }
+
+                        // Une poche scellee, creusee dans la masse du sol.
+                        if (4..12).contains(&wx) && (4..12).contains(&wy) {
+                            for z in 20..28 {
+                                chunk
+                                    .set(Vec3::new(x, y, z), Block::empty())
+                                    .expect("poche");
+                            }
+                        }
+
+                        // Un lac : de l'eau posee dans le sol, air au-dessus.
+                        if (0..10).contains(&wx) && (20..30).contains(&wy) {
+                            for z in sommet - 7..sommet {
+                                chunk
+                                    .set(Vec3::new(x, y, z), Block::water(SpriteKind::Empty))
+                                    .expect("lac");
+                            }
+                        }
+
+                        // Une voute de feuillage, a bonne distance du sol.
+                        if (24..32).contains(&wx) && (0..10).contains(&wy) {
+                            for z in 52..55 {
+                                chunk.set(Vec3::new(x, y, z), FEUILLAGE).expect("voute");
+                            }
+                        }
+                    }
+                }
+
+                let _ = vol.insert(Vec2::new(cx, cy), Arc::new(chunk));
+            }
+        }
+
+        vol
+    }
+
+    /// L'amorcage par la frontiere atteint le meme point fixe que l'amorcage
+    /// exhaustif.
+    ///
+    /// C'est la seule chose qui distingue l'optimisation d'un pari : le gain se
+    /// mesure au chronometre, mais la correction ne se voit pas a l'ecran — une
+    /// cavite restee noire sur trois blocs ne saute pas aux yeux.
+    ///
+    /// **Ce que ce test ne prouve pas.** Le tour `is_sunlight = false` est une
+    /// tautologie : l'amorcage n'est consulte qu'a l'interieur de
+    /// `if is_sunlight`, donc les deux appels y executent le meme code. Il est
+    /// garde parce qu'il eprouve quand meme le chemin de la lueur — un
+    /// debordement d'indice sur les graines de `lit_blocks` y serait attrape —,
+    /// mais il ne pourrait pas voir une erreur d'amorcage. Le seul tour
+    /// porteur est `is_sunlight = true`.
+    #[test]
+    fn amorcage_frontiere_egale_exhaustif() {
+        let vol = monde_temoin();
+
+        // L'etendue que `mesh_worker` demande : la colonne (0, 0) elargie d'un
+        // bloc, sur toute sa hauteur.
+        let bounds = Aabb {
+            min: Vec3::new(-1, -1, -2),
+            max: Vec3::new(
+                TerrainChunkSize::RECT_SIZE.x as i32 + 1,
+                TerrainChunkSize::RECT_SIZE.y as i32 + 1,
+                66,
+            ),
+        };
+
+        for is_sunlight in [true, false] {
+            let graines: Vec<(Vec3<i32>, u8)> = if is_sunlight {
+                Vec::new()
+            } else {
+                // Une lanterne posee dans la poche scellee, et une a l'air
+                // libre pres d'un bord de colonne.
+                vec![(Vec3::new(7, 7, 24), SUNLIGHT), (Vec3::new(1, 30, 59), 12)]
+            };
+            let defaut = if is_sunlight { SUNLIGHT } else { 0 };
+
+            use std::sync::atomic::Ordering::Relaxed;
+
+            GRAINES.store(0, Relaxed);
+            let frontiere = calc_light(
+                is_sunlight,
+                Amorcage::Frontiere,
+                defaut,
+                bounds,
+                &vol,
+                graines.clone().into_iter(),
+            );
+            let n_frontiere = GRAINES.swap(0, Relaxed);
+            let exhaustif = calc_light(
+                is_sunlight,
+                Amorcage::Exhaustif,
+                defaut,
+                bounds,
+                &vol,
+                graines.clone().into_iter(),
+            );
+            let n_exhaustif = GRAINES.swap(0, Relaxed);
+
+            // Le gain, et non seulement la correction. Sans cette assertion, une
+            // frontiere qui empilerait tout passerait le test en beneficiant de
+            // l'egalite qu'elle rendrait triviale.
+            if is_sunlight {
+                eprintln!("graines : frontiere = {n_frontiere}, exhaustif = {n_exhaustif}");
+                // Mesure sur ce monde temoin : 8 309 contre 157 621, soit un
+                // facteur 19. Le seuil est pose a 10 pour garder de la marge
+                // sans cesser de mordre. **En jeu le facteur est plus grand :**
+                // les graines exhaustives croissent avec le volume d'air, donc
+                // avec la hauteur remaillee, tandis que la frontiere reste la
+                // surface du terrain. Le monde temoin n'a que 70 niveaux, une
+                // colonne de falaise creusee de grottes en a plusieurs
+                // centaines.
+                assert!(
+                    n_exhaustif > 10 * n_frontiere,
+                    "l'amorcage par la frontiere n'elague pas : {n_frontiere} graines contre \
+                     {n_exhaustif}"
+                );
+            }
+
+            let mut compares = 0u32;
+            for z in bounds.min.z - 1..=bounds.max.z + 1 {
+                for x in bounds.min.x - 1..=bounds.max.x + 1 {
+                    for y in bounds.min.y - 1..=bounds.max.y + 1 {
+                        let pos = Vec3::new(x, y, z);
+                        // Egalite exacte assumee : les deux valeurs sortent du
+                        // meme `u8` divise par la meme constante. Un ecart, ici,
+                        // serait un ecart de point fixe, pas d'arrondi.
+                        assert_eq!(
+                            frontiere(pos),
+                            exhaustif(pos),
+                            "divergence en {pos:?} (is_sunlight = {is_sunlight})"
+                        );
+                        compares += 1;
+                    }
+                }
+            }
+            assert!(compares > 90_000, "l'etendue comparee est trop maigre");
+        }
+    }
 }
