@@ -4,6 +4,7 @@ members = [
     "client",
     "client/i18n",
     "common",
+    "common/body",
     "common/assets",
     "common/base",
     "common/dynlib",

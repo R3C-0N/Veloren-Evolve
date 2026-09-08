@@ -1,3 +1,4 @@
+pub mod mouvement;
 pub mod arthropod;
 pub mod biped_large;
 pub mod biped_small;
@@ -19,11 +20,9 @@ pub mod quadruped_small;
 pub mod ship;
 pub mod theropod;
 
-use crate::{
-    assets::{BoxedError, FileAsset, load_ron},
-    consts::{HUMAN_DENSITY, WATER_DENSITY},
-    npc::NpcKind,
-};
+use common_assets::{BoxedError, FileAsset, load_ron};
+use common_vocab::consts::{HUMAN_DENSITY, WATER_DENSITY};
+use crate::npc::NpcKind;
 use common_base::enum_iter;
 use common_i18n::Content;
 use serde::{Deserialize, Serialize};
@@ -31,7 +30,7 @@ use specs::{Component, DerefFlaggedStorage};
 use strum::{Display, IntoEnumIterator};
 use vek::*;
 
-use super::{Density, Mass, Scale};
+use common_vocab::phys::{Density, Mass, Scale};
 
 enum_iter! {
     #[derive(

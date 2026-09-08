@@ -1,6 +1,6 @@
-use crate::{
-    comp::{Density, Mass},
+use common_vocab::{
     consts::{AIR_DENSITY, WATER_DENSITY},
+    phys::{Density, Mass},
 };
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};

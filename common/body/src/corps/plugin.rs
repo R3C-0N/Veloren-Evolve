@@ -3,7 +3,8 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use vek::Vec3;
 
-use crate::{comp::Mass, npc::NpcBody};
+use common_vocab::phys::Mass;
+use crate::npc::NpcBody;
 
 #[derive(Debug, Deserialize)]
 struct PluginSpecies {
@@ -168,7 +169,7 @@ pub fn parse_name(s: &str) -> Option<NpcBody> {
     elem.map(|(n, _species)| {
         NpcBody(
             crate::npc::NpcKind::Plugin,
-            Box::new(move || crate::comp::body::Body::Plugin(Body { species: n })),
+            Box::new(move || crate::corps::Body::Plugin(Body { species: n })),
         )
     })
 }

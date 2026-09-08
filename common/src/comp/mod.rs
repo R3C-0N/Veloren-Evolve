@@ -5,7 +5,9 @@ pub mod anchor;
 pub mod arcing;
 pub mod aura;
 pub mod beam;
-pub mod body;
+// Les corps sont une crate a part : ils ne dependent de rien du jeu, et les
+// garder ici obligeait a compiler tout `veloren-common` avant eux.
+pub use common_body as body;
 pub mod buff;
 pub mod character_state;
 pub mod chat;

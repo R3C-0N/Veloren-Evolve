@@ -40,7 +40,7 @@ pub mod lod;
 pub mod lottery;
 pub mod map;
 pub mod mounting;
-pub mod npc;
+pub use common_body::npc;
 pub mod outcome;
 pub mod path;
 pub mod ray;

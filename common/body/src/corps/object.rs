@@ -1,6 +1,6 @@
-use crate::{
-    comp::{Density, Mass},
+use common_vocab::{
     consts::{AIR_DENSITY, IRON_DENSITY, WATER_DENSITY},
+    phys::{Density, Mass},
 };
 use common_base::enum_iter;
 use rand::{prelude::IndexedRandom, rng};

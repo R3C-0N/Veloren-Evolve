@@ -1,7 +1,5 @@
-use crate::{
-    assets::{AssetExt, AssetHandle},
-    comp::{self, AllBodies, Body, body},
-};
+use common_assets::{AssetExt, AssetHandle};
+use crate::{AllBodies, Body, corps};
 use common_i18n::Content;
 use lazy_static::lazy_static;
 use rand::seq::IndexedRandom;
@@ -124,22 +122,22 @@ pub fn get_npc_name(npc_type: NpcKind, body_type: Option<BodyType>) -> String {
 /// Randomly generates a body associated with this NPC kind.
 pub fn kind_to_body(kind: NpcKind) -> Body {
     match kind {
-        NpcKind::Humanoid => comp::humanoid::Body::random().into(),
-        NpcKind::Pig => comp::quadruped_small::Body::random().into(),
-        NpcKind::Wolf => comp::quadruped_medium::Body::random().into(),
-        NpcKind::Duck => comp::bird_medium::Body::random().into(),
-        NpcKind::Phoenix => comp::bird_large::Body::random().into(),
-        NpcKind::Clownfish => comp::fish_small::Body::random().into(),
-        NpcKind::Marlin => comp::fish_medium::Body::random().into(),
-        NpcKind::Ogre => comp::biped_large::Body::random().into(),
-        NpcKind::Gnome => comp::biped_small::Body::random().into(),
-        NpcKind::Archaeos => comp::theropod::Body::random().into(),
-        NpcKind::StoneGolem => comp::golem::Body::random().into(),
-        NpcKind::Reddragon => comp::dragon::Body::random().into(),
-        NpcKind::Crocodile => comp::quadruped_low::Body::random().into(),
-        NpcKind::Tarantula => comp::arthropod::Body::random().into(),
-        NpcKind::Crab => comp::crustacean::Body::random().into(),
-        NpcKind::Plugin => comp::plugin::Body::random().into(),
+        NpcKind::Humanoid => crate::humanoid::Body::random().into(),
+        NpcKind::Pig => crate::quadruped_small::Body::random().into(),
+        NpcKind::Wolf => crate::quadruped_medium::Body::random().into(),
+        NpcKind::Duck => crate::bird_medium::Body::random().into(),
+        NpcKind::Phoenix => crate::bird_large::Body::random().into(),
+        NpcKind::Clownfish => crate::fish_small::Body::random().into(),
+        NpcKind::Marlin => crate::fish_medium::Body::random().into(),
+        NpcKind::Ogre => crate::biped_large::Body::random().into(),
+        NpcKind::Gnome => crate::biped_small::Body::random().into(),
+        NpcKind::Archaeos => crate::theropod::Body::random().into(),
+        NpcKind::StoneGolem => crate::golem::Body::random().into(),
+        NpcKind::Reddragon => crate::dragon::Body::random().into(),
+        NpcKind::Crocodile => crate::quadruped_low::Body::random().into(),
+        NpcKind::Tarantula => crate::arthropod::Body::random().into(),
+        NpcKind::Crab => crate::crustacean::Body::random().into(),
+        NpcKind::Plugin => crate::plugin::Body::random().into(),
     }
 }
 
@@ -182,7 +180,7 @@ impl NpcBody {
         >(
             s: &str,
             npc_kind: NpcKind,
-            body_data: &'a comp::BodyData<BodyMeta, SpeciesData>,
+            body_data: &'a crate::BodyData<BodyMeta, SpeciesData>,
             conv_func: for<'d> fn(&mut rand::rngs::ThreadRng, &'d Species) -> B,
         ) -> Option<NpcBody>
         where
@@ -211,7 +209,7 @@ impl NpcBody {
                     s,
                     NpcKind::Humanoid,
                     &npc_names.humanoid,
-                    comp::humanoid::Body::random_with,
+                    crate::humanoid::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -219,7 +217,7 @@ impl NpcBody {
                     s,
                     NpcKind::Pig,
                     &npc_names.quadruped_small,
-                    comp::quadruped_small::Body::random_with,
+                    crate::quadruped_small::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -227,7 +225,7 @@ impl NpcBody {
                     s,
                     NpcKind::Wolf,
                     &npc_names.quadruped_medium,
-                    comp::quadruped_medium::Body::random_with,
+                    crate::quadruped_medium::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -235,7 +233,7 @@ impl NpcBody {
                     s,
                     NpcKind::Duck,
                     &npc_names.bird_medium,
-                    comp::bird_medium::Body::random_with,
+                    crate::bird_medium::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -243,7 +241,7 @@ impl NpcBody {
                     s,
                     NpcKind::Phoenix,
                     &npc_names.bird_large,
-                    comp::bird_large::Body::random_with,
+                    crate::bird_large::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -251,7 +249,7 @@ impl NpcBody {
                     s,
                     NpcKind::Clownfish,
                     &npc_names.fish_small,
-                    comp::fish_small::Body::random_with,
+                    crate::fish_small::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -259,7 +257,7 @@ impl NpcBody {
                     s,
                     NpcKind::Marlin,
                     &npc_names.fish_medium,
-                    comp::fish_medium::Body::random_with,
+                    crate::fish_medium::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -267,7 +265,7 @@ impl NpcBody {
                     s,
                     NpcKind::Ogre,
                     &npc_names.biped_large,
-                    comp::biped_large::Body::random_with,
+                    crate::biped_large::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -275,7 +273,7 @@ impl NpcBody {
                     s,
                     NpcKind::Gnome,
                     &npc_names.biped_small,
-                    comp::biped_small::Body::random_with,
+                    crate::biped_small::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -283,7 +281,7 @@ impl NpcBody {
                     s,
                     NpcKind::Archaeos,
                     &npc_names.theropod,
-                    comp::theropod::Body::random_with,
+                    crate::theropod::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -291,7 +289,7 @@ impl NpcBody {
                     s,
                     NpcKind::StoneGolem,
                     &npc_names.golem,
-                    comp::golem::Body::random_with,
+                    crate::golem::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -299,7 +297,7 @@ impl NpcBody {
                     s,
                     NpcKind::Reddragon,
                     &npc_names.dragon,
-                    comp::dragon::Body::random_with,
+                    crate::dragon::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -307,7 +305,7 @@ impl NpcBody {
                     s,
                     NpcKind::Crocodile,
                     &npc_names.quadruped_low,
-                    comp::quadruped_low::Body::random_with,
+                    crate::quadruped_low::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -315,7 +313,7 @@ impl NpcBody {
                     s,
                     NpcKind::Tarantula,
                     &npc_names.arthropod,
-                    comp::arthropod::Body::random_with,
+                    crate::arthropod::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -323,7 +321,7 @@ impl NpcBody {
                     s,
                     NpcKind::Crab,
                     &npc_names.crustacean,
-                    comp::crustacean::Body::random_with,
+                    crate::crustacean::Body::random_with,
                 )
             })
             .or_else(|| {
@@ -331,10 +329,10 @@ impl NpcBody {
                     s,
                     NpcKind::Plugin,
                     &npc_names.plugin,
-                    comp::plugin::Body::random_with,
+                    crate::plugin::Body::random_with,
                 )
             })
-            .or_else(|| crate::comp::body::plugin::parse_name(s))
+            .or_else(|| crate::corps::plugin::parse_name(s))
             .ok_or(())
     }
 }
@@ -348,8 +346,8 @@ impl BodyType {
     pub fn from_body(body: Body) -> Option<BodyType> {
         match body {
             Body::Humanoid(humanoid) => match humanoid.body_type {
-                body::humanoid::BodyType::Male => Some(BodyType::Male),
-                body::humanoid::BodyType::Female => Some(BodyType::Female),
+                corps::humanoid::BodyType::Male => Some(BodyType::Male),
+                corps::humanoid::BodyType::Female => Some(BodyType::Female),
             },
             _ => None,
         }

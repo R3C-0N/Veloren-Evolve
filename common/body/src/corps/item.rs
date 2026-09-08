@@ -1,7 +1,7 @@
-use crate::{
-    comp::{Density, Mass, Ori},
+use common_vocab::{
     consts::WATER_DENSITY,
-    util::Dir,
+    geometrie::{Dir, Ori},
+    phys::{Density, Mass},
 };
 use common_vocab::outils::ToolKind;
 use common_base::enum_iter;

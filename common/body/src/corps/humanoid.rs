@@ -1,4 +1,4 @@
-use crate::{make_case_elim, make_proj_elim};
+use common_vocab::{make_case_elim, make_proj_elim};
 use rand::{RngExt, prelude::IndexedRandom, rng};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};

@@ -4,7 +4,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use specs::{Component, DerefFlaggedStorage};
 
-use crate::resources::Time;
+use common_vocab::temps::Time;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum HeadState {
