@@ -457,6 +457,71 @@ seulement ensuite, si le chiffre le justifie, séparer les sœurs. Commencer par
 la couche voxel coûterait la journée pour zéro pour cent, en refermant la porte
 du seul découpage qui rapporte quelque chose.
 
+## Le decoupage, fait et mesure
+
+Le chantier decrit plus haut a ete mene jusqu'a l'extraction des corps. Voici ce
+qu'il donne, mesure sur la meme machine a quatre cœurs, `cargo clean` avant
+chaque build.
+
+| | avant | apres |
+|---|---|---|
+| mur | 10 min 08 s | **10 min 21 s** |
+| CPU cumule | 34,9 min | **35,6 min** |
+| `veloren-common` | 152,3 s | **134,7 s** |
+| nouvelles crates | — | `common-vocab` 0,8 s, `common-body` 15,8 s |
+
+**Le decoupage coute treize secondes.** C'est exactement ce que la simulation
+annoncait, et pour la raison qu'elle donnait : `veloren-common` maigrit bien de
+17,6 s, les deux nouvelles crates en coutent 16,6 -- mais le travail total monte
+de 42 secondes de CPU, parce que les generiques sont monomorphises dans chaque
+crate qui les instancie. Sur une machine saturee a 86 %, le mur vaut le CPU
+divise par les cœurs : 42 s de plus sur quatre cœurs font une dizaine de
+secondes, on en observe treize.
+
+Le gain n'apparaitra qu'a partir de huit cœurs, et il restera modeste -- les
+mesures de la section precedente le chiffrent a 1,3 %.
+
+### Ce que le chantier a rapporte d'autre
+
+Ce que le chronometre ne voit pas :
+
+- **Les objets ne transportent plus leurs abilites.** `Item::item_config`
+  recopiait dans chaque objet l'ensemble de ses abilites deja resolues, et ce
+  champ n'etait pas `#[serde(skip)]` : chaque objet transmis sur le reseau ou
+  ecrit en base emportait la definition complete de toutes ses
+  `CharacterAbility`. Il a disparu ; les abilites se retrouvent par une
+  recherche dans le manifeste. Le TODO qui le demandait est rendu.
+- **Moins de travail a l'execution.** `ItemConfig` ajustait tout l'ensemble a
+  l'equipement ; un appel n'a besoin que d'une abilite.
+- **Les dependances vont dans le bon sens.** `comp/inventory` ne nomme plus
+  rien de la couche haute ; `comp/body` ne nomme plus ni `terrain`, ni
+  `figure`, ni les objets, ni les effets. Une centaine de parametres morts ont
+  disparu des constructeurs d'objets.
+
+### Ou ca s'arrete, et pourquoi
+
+`common-inventory` n'a pas ete extrait. Deux cycles le retiennent, et ils ne
+sont pas de meme nature :
+
+1. `Inventory` → `RecipeBook` → `Recipe` → `Item` est **methodique** : la
+   structure ne porte qu'un `Vec<Item>`, c'est la signature des methodes qui
+   nomme `recipe`. Un trait d'extension suffirait.
+2. `Item` → `ItemKind::Consumable { effects }` → `Effects` → `Effect` est
+   **structurel**. `Effect` nomme `combat::Damage`, `comp::HealthChange`,
+   `BuffEffect` et `ability::Stance` -- soit `combat`, `buff`, `ability` et,
+   derriere, `states`.
+
+Le second est autrement plus dur que ce qu'a demande `ItemConfig`. Pour
+`ItemConfig`, la forme par identifiants existait deja sur le disque : le
+manifeste stockait des chaines, et c'est le chargement qui les resolvait. Ici,
+**49 fichiers d'assets serialisent des `Effect` a l'interieur des definitions
+d'objets** ; couper ce lien demande de changer le format sur disque, avec ce que
+cela suppose de migration et de compatibilite des sauvegardes.
+
+Vu que le gain mesure du decoupage complet est de 1,3 % a huit cœurs et de zero
+ici, ce n'est pas un prix a payer sans une raison qui ne soit pas le
+chronometre.
+
 ## Ce qui a été essayé et écarté
 
 **`-Z threads=8`, le front-end parallèle de rustc.** L'idée : rustc analyse un
