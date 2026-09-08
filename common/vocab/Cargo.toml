@@ -1,0 +1,12 @@
+[package]
+name = "veloren-common-vocab"
+description = "Types feuilles partages par les crates de common, sans dependance vers le jeu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }

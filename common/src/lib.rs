@@ -2,21 +2,21 @@
 #![type_length_limit = "1664759"]
 #![expect(clippy::option_map_unit_fn)]
 #![deny(clippy::clone_on_ref_ptr)]
-#![feature(
-    fundamental,
-    trait_alias,
-    type_changing_struct_update,
-    macro_metavar_expr
-)]
+#![feature(trait_alias, type_changing_struct_update, macro_metavar_expr)]
 
 pub use common_assets as assets;
+// `typed` et `consts` sont dans `common-vocab` : ce sont des feuilles, et les
+// garder ici obligeait a dependre de tout `common` pour s'en servir. Les
+// macros `make_case_elim!` et `make_proj_elim!` atterrissent a la racine de la
+// crate qui les definit ; on les reexporte pour que `crate::make_case_elim`
+// continue de resoudre.
+pub use common_vocab::{consts, make_case_elim, make_proj_elim, typed};
 pub use uuid;
 
 // Modules
 
 pub mod combat;
 pub mod comp;
-pub mod consts;
 pub mod resources;
 pub mod shared_server_config;
 pub mod uid;
@@ -67,7 +67,6 @@ mod view_distances;
 
 // We declare a macro in this module so there are issues referring to it by path
 // within this crate if typed module is declared in macro expansion.
-pub mod typed;
 
 pub use combat::{DamageKind, DamageSource};
 

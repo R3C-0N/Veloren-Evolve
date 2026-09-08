@@ -8811,6 +8811,7 @@ dependencies = [
  "veloren-common-assets",
  "veloren-common-base",
  "veloren-common-i18n",
+ "veloren-common-vocab",
 ]
 
 [[package]]
@@ -8945,6 +8946,13 @@ dependencies = [
  "veloren-common-ecs",
  "veloren-common-net",
  "veloren-common-state",
+]
+
+[[package]]
+name = "veloren-common-vocab"
+version = "0.18.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

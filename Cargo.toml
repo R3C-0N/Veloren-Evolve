@@ -14,6 +14,7 @@ members = [
     "common/query_server",
     "common/state",
     "common/systems",
+    "common/vocab",
     "network",
     "network/protocol",
     "rtsim",

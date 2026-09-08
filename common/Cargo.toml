@@ -24,6 +24,7 @@ default = ["simd"]
 
 common-base = { package = "veloren-common-base", path = "base" }
 common-i18n = { package = "veloren-common-i18n", path = "i18n" }
+common-vocab = { package = "veloren-common-vocab", path = "vocab" }
 # inline_tweak = { workspace = true }
 
 # Serde
