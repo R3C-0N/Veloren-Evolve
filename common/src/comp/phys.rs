@@ -2,7 +2,6 @@ use super::{Fluid, Ori};
 use crate::figure::ship_spec::{ShipSpec, VoxelCollider};
 use crate::{
     comp::inventory::item::armor::Friction,
-    consts::WATER_DENSITY,
     terrain::Block,
     uid::Uid,
     util::Dir,
@@ -75,38 +74,11 @@ impl Component for PreviousPhysCache {
     type Storage = VecStorage<Self>;
 }
 
-// Scale
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Scale(pub f32);
-
-impl Component for Scale {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
-
-// Mass
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Mass(pub f32);
-
-impl Default for Mass {
-    fn default() -> Mass { Mass(1.0) }
-}
-
-impl Component for Mass {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
-
-/// The average density (specific mass) of an entity.
-/// Units used for reference is kg/m³
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Density(pub f32);
-
-impl Default for Density {
-    fn default() -> Density { Density(WATER_DENSITY) }
-}
-
-impl Component for Density {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
+// Les grandeurs physiques d'une entite sont dans `common-vocab` : `comp::body`
+// en a besoin, et les garder ici l'obligeait a dependre de tout ce module,
+// `Collider` compris -- lequel ne peut pas descendre, puisqu'il tient un volume
+// de voxels.
+pub use common_vocab::phys::{CapsulePrism, Density, Mass, Scale};
 
 // Collider
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -153,6 +125,26 @@ pub fn cylinder_of(
     }
 }
 
+/// La geometrie de collision d'une entite, d'apres son corps.
+///
+/// Etait `Body::collider`. La garder la-haut faisait dependre `comp::body` de
+/// `Collider`, donc du volume de voxels, donc de `terrain`.
+pub fn collider_of(body: &super::Body) -> Collider {
+    if let super::Body::Ship(ship) = body {
+        make_collider(ship)
+    } else {
+        let (p0, p1, radius) = body.sausage();
+
+        Collider::CapsulePrism(CapsulePrism {
+            p0,
+            p1,
+            radius,
+            z_min: 0.0,
+            z_max: body.height(),
+        })
+    }
+}
+
 /// La geometrie de collision d'un aeronef.
 ///
 /// Vivait dans `comp::body::ship` sous forme de methode ; elle y faisait entrer
@@ -175,15 +167,6 @@ pub fn make_collider(ship: &super::body::ship::Body) -> Collider {
             })))
         },
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CapsulePrism {
-    pub p0: Vec2<f32>,
-    pub p1: Vec2<f32>,
-    pub radius: f32,
-    pub z_min: f32,
-    pub z_max: f32,
 }
 
 impl Collider {

@@ -99,6 +99,7 @@ pub use self::{
     pet::Pet,
     phys::{
         make_collider,
+        collider_of,
         cylinder_of,
         CapsulePrism, Collider, Density, ForceUpdate, Immovable, Mass, PhysicsState, Pos,
         PosVelOriDefer, PreviousPhysCache, Scale, Sticky, Vel,

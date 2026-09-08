@@ -8953,6 +8953,8 @@ name = "veloren-common-vocab"
 version = "0.18.0"
 dependencies = [
  "serde",
+ "specs",
+ "vek 0.17.2",
 ]
 
 [[package]]

@@ -2426,7 +2426,7 @@ impl ServerEvent for BuffEvent {
 
                         if !bodies
                             .get(ev.entity)
-                            .is_some_and(|body| body.immune_to(new_buff.kind))
+                            .is_some_and(|body| new_buff.kind.is_immune(body))
                             && immunity_by_buff.is_none()
                             && healths.get(ev.entity).is_none_or(|h| !h.is_dead)
                         {
@@ -2461,7 +2461,7 @@ impl ServerEvent for BuffEvent {
 
                             if bodies
                                 .get(ev.entity)
-                                .is_some_and(|body| body.negates_buff(new_buff.kind))
+                                .is_some_and(|body| new_buff.kind.is_negated_by(body))
                             {
                                 new_buff.effects.clear();
                             }
@@ -3301,7 +3301,7 @@ impl ServerEvent for ChangeBodyEvent {
                     .insert(ev.entity, ev.new_body.density())
                     .expect("We just got this entities body");
                 colliders
-                    .insert(ev.entity, ev.new_body.collider())
+                    .insert(ev.entity, comp::collider_of(&ev.new_body))
                     .expect("We just got this entities body");
             }
         }
@@ -3586,7 +3586,7 @@ pub fn transform_entity(
             set_or_remove_component(server, entity, Some(body), None)?;
             set_or_remove_component(server, entity, Some(body.mass()), None)?;
             set_or_remove_component(server, entity, Some(body.density()), None)?;
-            set_or_remove_component(server, entity, Some(body.collider()), None)?;
+            set_or_remove_component(server, entity, Some(comp::collider_of(&body)), None)?;
             set_or_remove_component(server, entity, Some(scale), None)?;
             set_or_remove_component(server, entity, death_effects, None)?;
             set_or_remove_component(server, entity, rider_effects, None)?;

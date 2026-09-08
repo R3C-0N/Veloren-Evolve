@@ -228,7 +228,7 @@ impl StateExt for State {
             .with(ori)
             .with(comp::Mass(body.mass().0 * scale.0.powi(3)))
             .with(body.density())
-            .with(body.collider())
+            .with(comp::collider_of(&body))
             .with(scale)
             .with(comp::Controller::default())
             .with(body)
@@ -272,7 +272,7 @@ impl StateExt for State {
         self.create_empty(pos)
             .with(body.mass())
             .with(body.density())
-            .with(body.collider())
+            .with(comp::collider_of(&body))
             .with(body)
     }
 
@@ -338,7 +338,7 @@ impl StateExt for State {
                 .with(item_body.orientation(&mut rand::rng()))
                 .with(item_body.mass())
                 .with(item_body.density())
-                .with(body.collider())
+                .with(comp::collider_of(&body))
                 .with(body)
                 .with(Object::DeleteAfter {
                     spawned_at,
@@ -411,7 +411,7 @@ impl StateExt for State {
         if projectile.is_point {
             projectile_base = projectile_base.with(comp::Collider::Point);
         } else {
-            projectile_base = projectile_base.with(body.collider());
+            projectile_base = projectile_base.with(comp::collider_of(&body));
         }
 
         projectile_base.with(projectile).with(body)
@@ -474,7 +474,7 @@ impl StateExt for State {
             .with(comp::Vel(Vec3::zero()))
             .with(body.mass())
             .with(body.density())
-            .with(body.collider())
+            .with(comp::collider_of(&body))
             .with(body)
             .with(comp::LightEmitter {
                 col: Rgb::new(1.0, 0.35, 0.05),
@@ -529,7 +529,7 @@ impl StateExt for State {
             .with(comp::Ori::default())
             .with({
                 let body: comp::Body = object.into();
-                body.collider()
+                comp::collider_of(&body)
             })
             .with(comp::Body::Object(object))
             .with(comp::Mass(100.0))
@@ -733,7 +733,7 @@ impl StateExt for State {
             // and we call nothing that can delete it in any of the subsequent
             // commands, so we can assume that all of these calls succeed,
             // justifying ignoring the result of insertion.
-            self.write_component_ignore_entity_dead(entity, body.collider());
+            self.write_component_ignore_entity_dead(entity, comp::collider_of(&body));
             self.write_component_ignore_entity_dead(entity, body);
             self.write_component_ignore_entity_dead(entity, body.mass());
             self.write_component_ignore_entity_dead(entity, body.density());

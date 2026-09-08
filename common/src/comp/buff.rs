@@ -5,6 +5,7 @@ use crate::{
     },
     comp::{
         FrontendMarker, Mass, Stats,
+        body::{arthropod, biped_large, biped_small, bird_large, golem, object, quadruped_low, quadruped_medium},
         aura::AuraKey,
         projectile::{
             ProjectileArcingProperties, ProjectileConstructorEffect,
@@ -1506,5 +1507,152 @@ pub mod tests {
                 .values()
                 .any(|b| b.end_time.unwrap().0 > 59.99)
         );
+    }
+}
+
+/// Les immunites d'un corps aux effets, cote effet.
+///
+/// Etaient `Body::immune_to` et `Body::negates_buff`. Les garder du cote du
+/// corps faisait dependre `comp::body` de `BuffKind`, donc de tout le systeme
+/// d'effets. Le code est le meme, le sens est inverse.
+impl BuffKind {
+    pub fn is_immune(self, body: &Body) -> bool {
+        let buff = self;
+        match buff {
+            BuffKind::Bleeding => match body {
+                Body::Golem(_) | Body::Ship(_) => true,
+                Body::Object(object) => !matches!(object, object::Body::TrainingDummy),
+                Body::BipedSmall(b) => matches!(
+                    b.species,
+                    biped_small::Species::Husk
+                        | biped_small::Species::Boreal
+                        | biped_small::Species::IronDwarf
+                        | biped_small::Species::Haniwa
+                        | biped_small::Species::ShamanicSpirit
+                        | biped_small::Species::Jiangshi
+                ),
+                Body::BipedLarge(b) => matches!(
+                    b.species,
+                    biped_large::Species::Huskbrute
+                        | biped_large::Species::Gigasfrost
+                        | biped_large::Species::Gigasfire
+                        | biped_large::Species::Dullahan
+                        | biped_large::Species::HaniwaGeneral
+                        | biped_large::Species::TerracottaBesieger
+                        | biped_large::Species::TerracottaDemolisher
+                        | biped_large::Species::TerracottaPunisher
+                        | biped_large::Species::TerracottaPursuer
+                        | biped_large::Species::Cursekeeper
+                ),
+                Body::QuadrupedMedium(b) => {
+                    matches!(b.species, quadruped_medium::Species::ClaySteed)
+                },
+                _ => false,
+            },
+            BuffKind::Crippled => match body {
+                Body::Golem(_) | Body::Ship(_) => true,
+                Body::Object(object) => !matches!(object, object::Body::TrainingDummy),
+                Body::BipedLarge(b) => matches!(
+                    b.species,
+                    biped_large::Species::Dullahan | biped_large::Species::HaniwaGeneral
+                ),
+                Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Haniwa),
+                Body::QuadrupedMedium(b) => {
+                    matches!(b.species, quadruped_medium::Species::ClaySteed)
+                },
+                _ => false,
+            },
+            BuffKind::Burning => match body {
+                Body::Golem(g) => matches!(
+                    g.species,
+                    golem::Species::Gravewarden
+                        | golem::Species::AncientEffigy
+                        | golem::Species::IronGolem
+                ),
+                Body::BipedSmall(b) => matches!(
+                    b.species,
+                    biped_small::Species::Haniwa
+                        | biped_small::Species::Flamekeeper
+                        | biped_small::Species::IronDwarf
+                ),
+                Body::Object(object) => matches!(
+                    object,
+                    object::Body::HaniwaSentry
+                        | object::Body::Lavathrower
+                        | object::Body::Flamethrower
+                        | object::Body::TerracottaStatue
+                        | object::Body::Crux
+                ),
+                Body::QuadrupedLow(q) => matches!(
+                    q.species,
+                    quadruped_low::Species::Lavadrake | quadruped_low::Species::Salamander
+                ),
+                Body::BirdLarge(b) => matches!(
+                    b.species,
+                    bird_large::Species::Phoenix
+                        | bird_large::Species::Cockatrice
+                        | bird_large::Species::FlameWyvern
+                        | bird_large::Species::CloudWyvern
+                        | bird_large::Species::FrostWyvern
+                        | bird_large::Species::SeaWyvern
+                        | bird_large::Species::WealdWyvern
+                ),
+                Body::Arthropod(b) => matches!(b.species, arthropod::Species::Moltencrawler),
+                Body::BipedLarge(b) => matches!(
+                    b.species,
+                    biped_large::Species::Cyclops
+                        | biped_large::Species::Minotaur
+                        | biped_large::Species::Forgemaster
+                        | biped_large::Species::Gigasfire
+                ),
+                _ => false,
+            },
+            BuffKind::Ensnared => match body {
+                Body::BipedLarge(b) => matches!(b.species, biped_large::Species::Harvester),
+                Body::Arthropod(_) => true,
+                _ => false,
+            },
+            BuffKind::Regeneration => {
+                matches!(
+                    body,
+                    Body::Object(
+                        object::Body::GnarlingTotemRed
+                            | object::Body::GnarlingTotemGreen
+                            | object::Body::GnarlingTotemWhite
+                            | object::Body::Crux
+                    )
+                )
+            },
+            BuffKind::Frozen => match body {
+                Body::BipedLarge(b) => matches!(
+                    b.species,
+                    biped_large::Species::Yeti
+                        | biped_large::Species::Gigasfrost
+                        | biped_large::Species::Tursus
+                ),
+                Body::QuadrupedLow(q) => matches!(q.species, quadruped_low::Species::Icedrake),
+                Body::BirdLarge(b) => matches!(b.species, bird_large::Species::FrostWyvern),
+                Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Boreal),
+                Body::QuadrupedMedium(b) => matches!(
+                    b.species,
+                    quadruped_medium::Species::Roshwalr | quadruped_medium::Species::Frostfang
+                ),
+                _ => false,
+            },
+            BuffKind::ProtectingWard => matches!(body, Body::Object(object::Body::BarrelOrgan)),
+            _ => false,
+        }
+    }
+
+    pub fn is_negated_by(self, body: &Body) -> bool {
+        let buff = self;
+        self.is_immune(body)
+            || match buff {
+                BuffKind::Burning => match body {
+                    Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Ashen),
+                    _ => false,
+                },
+                _ => false,
+            }
     }
 }

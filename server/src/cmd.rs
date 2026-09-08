@@ -6122,7 +6122,7 @@ fn assign_body(server: &mut Server, target: EcsEntity, body: comp::Body) -> CmdR
     insert_or_replace_component(server, target, body, "body")?;
     insert_or_replace_component(server, target, body.mass(), "mass")?;
     insert_or_replace_component(server, target, body.density(), "density")?;
-    insert_or_replace_component(server, target, body.collider(), "collider")?;
+    insert_or_replace_component(server, target, comp::collider_of(&body), "collider")?;
 
     if let Some(mut stat) = server
         .state
