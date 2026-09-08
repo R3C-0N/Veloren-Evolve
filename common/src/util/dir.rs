@@ -1,4 +1,4 @@
-use crate::comp::{self, Ori};
+use crate::comp::Ori;
 
 use super::{Plane, Projection};
 use rand::RngExt;
@@ -147,23 +147,6 @@ impl Dir {
             .look_dir()
     }
 
-    /// Generate a direction corresponding to an entity looking toward a target
-    /// entity given their respective positions, bodies, and scales.
-    pub fn look_toward(
-        this_pos: &comp::Pos,
-        this_body: Option<&comp::Body>,
-        this_scale: Option<&comp::Scale>,
-        tgt_pos: &comp::Pos,
-        tgt_body: Option<&comp::Body>,
-        tgt_scale: Option<&comp::Scale>,
-    ) -> Option<Self> {
-        let eye_offset = this_body.map_or(0.0, |b| b.eye_height(this_scale.map_or(1.0, |s| s.0)));
-        let tgt_eye_offset = tgt_body.map_or(0.0, |b| b.eye_height(tgt_scale.map_or(1.0, |s| s.0)));
-        Dir::from_unnormalized(
-            Vec3::new(tgt_pos.0.x, tgt_pos.0.y, tgt_pos.0.z + tgt_eye_offset)
-                - Vec3::new(this_pos.0.x, this_pos.0.y, this_pos.0.z + eye_offset),
-        )
-    }
 }
 
 impl std::ops::Deref for Dir {

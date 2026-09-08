@@ -124,6 +124,35 @@ pub enum Collider {
     Point,
 }
 
+/// Le cylindre englobant d'une entite, d'apres ses composants.
+///
+/// Etait `Cylinder::from_components`, dans `util::find_dist`, ou elle faisait
+/// remonter `util` vers `comp` pour son seul usage. Elle est ici, aupres des
+/// composants qu'elle lit.
+#[inline]
+pub fn cylinder_of(
+    pos: vek::Vec3<f32>,
+    scale: Option<Scale>,
+    collider: Option<&Collider>,
+    char_state: Option<&super::CharacterState>,
+) -> crate::util::find_dist::Cylinder {
+    let scale = scale.map_or(1.0, |s| s.0);
+    let radius = collider.as_ref().map_or(0.5, |c| c.bounding_radius()) * scale;
+    let z_limit_modifier = char_state
+        .filter(|char_state| char_state.is_dodge())
+        .map_or(1.0, |_| 0.5)
+        * scale;
+    let (z_bottom, z_top) = collider
+        .map(|c| c.get_z_limits(z_limit_modifier))
+        .unwrap_or((-0.5 * z_limit_modifier, 0.5 * z_limit_modifier));
+
+    crate::util::find_dist::Cylinder {
+        center: pos + vek::Vec3::unit_z() * (z_top + z_bottom) / 2.0,
+        radius,
+        height: z_top - z_bottom,
+    }
+}
+
 /// La geometrie de collision d'un aeronef.
 ///
 /// Vivait dans `comp::body::ship` sous forme de methode ; elle y faisait entrer

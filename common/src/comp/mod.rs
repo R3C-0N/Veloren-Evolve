@@ -95,10 +95,11 @@ pub use self::{
     loot_owner::LootOwner,
     melee::{Melee, MeleeConstructor, MeleeConstructorKind},
     misc::Object,
-    ori::Ori,
+    ori::{Ori, look_toward},
     pet::Pet,
     phys::{
         make_collider,
+        cylinder_of,
         CapsulePrism, Collider, Density, ForceUpdate, Immovable, Mass, PhysicsState, Pos,
         PosVelOriDefer, PreviousPhysCache, Scale, Sticky, Vel,
     },

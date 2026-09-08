@@ -125,7 +125,7 @@ impl ServerEvent for InventoryManipEvent {
         let mut emitters = data.events.get_emitters();
         let get_cylinder = |entity| {
             data.positions.get(entity).map(|p| {
-                find_dist::Cylinder::from_components(
+                comp::cylinder_of(
                     p.0,
                     data.scales.get(entity).copied(),
                     data.colliders.get(entity),
@@ -1200,7 +1200,7 @@ mod tests {
 
     // Helper function
     fn test_cylinder(pos: Pos) -> Option<Cylinder> {
-        Some(Cylinder::from_components(pos.0, None, None, None))
+        Some(comp::cylinder_of(pos.0, None, None, None))
     }
 
     #[test]

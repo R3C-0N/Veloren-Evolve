@@ -714,7 +714,7 @@ pub fn handle_orientation(
         && let (tgt_body, Some(tgt_prev_phys)) =
             (data.bodies.get(tgt), data.prev_phys_caches.get(tgt))
         && let Some(tgt_pos) = tgt_prev_phys.pos.as_ref()
-        && let Some(dir) = Dir::look_toward(
+        && let Some(dir) = crate::comp::look_toward(
             data.pos,
             Some(data.body),
             data.scale,

@@ -31,29 +31,6 @@ impl Cylinder {
         }
     }
 
-    #[inline]
-    pub fn from_components(
-        pos: Vec3<f32>,
-        scale: Option<crate::comp::Scale>,
-        collider: Option<&crate::comp::Collider>,
-        char_state: Option<&crate::comp::CharacterState>,
-    ) -> Self {
-        let scale = scale.map_or(1.0, |s| s.0);
-        let radius = collider.as_ref().map_or(0.5, |c| c.bounding_radius()) * scale;
-        let z_limit_modifier = char_state
-            .filter(|char_state| char_state.is_dodge())
-            .map_or(1.0, |_| 0.5)
-            * scale;
-        let (z_bottom, z_top) = collider
-            .map(|c| c.get_z_limits(z_limit_modifier))
-            .unwrap_or((-0.5 * z_limit_modifier, 0.5 * z_limit_modifier));
-
-        Self {
-            center: pos + Vec3::unit_z() * (z_top + z_bottom) / 2.0,
-            radius,
-            height: z_top - z_bottom,
-        }
-    }
 }
 
 /// An axis aligned cube
