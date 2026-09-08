@@ -168,7 +168,7 @@ impl<'a> SlotKey<HotbarSource<'a>, HotbarImageSource<'a>> for HotbarSlot {
             hotbar::SlotContents::Ability(i) => {
                 // Les abilites d'un objet se retrouvent par une recherche dans
                 // le manifeste, la ou l'objet en portait une copie.
-                let ability_map = &common::comp::item::tool::AbilityMap::load().read();
+                let ability_map = &common::comp::ability::AbilityMap::load().read();
                 let ability_id = active_abilities.and_then(|a| {
                     a.auxiliary_set(Some(inventory), Some(skillset), ability_map)
                         .get(i)
@@ -273,7 +273,7 @@ impl<'a> SlotKey<AbilitiesSource<'a>, img_ids::Imgs> for AbilitySlot {
             'a,
         >,
     ) -> Option<(Self::ImageKey, Option<Color>)> {
-        let ability_map = &common::comp::item::tool::AbilityMap::load().read();
+        let ability_map = &common::comp::ability::AbilityMap::load().read();
         let ability_id = match self {
             Self::Slot(index) => active_abilities
                 .get_ability(

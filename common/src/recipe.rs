@@ -9,7 +9,7 @@ use crate::{
         item::{
             ItemBase, ItemDef, ItemDefinitionIdOwned, ItemKind, ItemTag, MaterialStatManifest,
             modular,
-            tool::{AbilityMap, ToolKind},
+            tool::ToolKind,
         },
     },
     terrain::SpriteKind,
@@ -97,7 +97,6 @@ impl Recipe {
         inv: &mut Inventory,
         // Vec tying an input to a slot
         slots: Vec<(u32, InvSlotId)>,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Result<Vec<Item>, Vec<(&RecipeInput, u32)>> {
         let mut slot_claims = HashMap::new();
@@ -158,7 +157,7 @@ impl Recipe {
             let mut components = Vec::new();
             for slot in component_slots.iter() {
                 let component = inv
-                    .take(*slot, ability_map, msm)
+                    .take(*slot, msm)
                     .expect("Expected item to exist in the inventory");
                 components.push(component);
                 let to_remove = slot_claims
@@ -169,7 +168,7 @@ impl Recipe {
             for (slot, to_remove) in slot_claims.iter() {
                 for _ in 0..*to_remove {
                     let _ = inv
-                        .take(*slot, ability_map, msm)
+                        .take(*slot, msm)
                         .expect("Expected item to exist in the inventory");
                 }
             }
@@ -178,12 +177,11 @@ impl Recipe {
             let crafted_item = Item::new_from_item_base(
                 ItemBase::Simple(Arc::clone(item_def)),
                 components,
-                ability_map,
-                msm,
+                                msm,
             );
             let mut crafted_items = Vec::with_capacity(*quantity as usize);
             for _ in 0..*quantity {
-                crafted_items.push(crafted_item.duplicate(ability_map, msm));
+                crafted_items.push(crafted_item.duplicate(msm));
             }
             Ok(crafted_items)
         } else {
@@ -311,7 +309,6 @@ pub enum SalvageError {
 pub fn try_salvage(
     inv: &mut Inventory,
     slot: InvSlotId,
-    ability_map: &AbilityMap,
     msm: &MaterialStatManifest,
 ) -> Result<Vec<Item>, SalvageError> {
     if inv.get(slot).is_some_and(|item| item.is_salvageable()) {
@@ -331,7 +328,7 @@ pub fn try_salvage(
         } else {
             // Remove item that is being salvaged
             let _ = inv
-                .take(slot, ability_map, msm)
+                .take(slot, msm)
                 .expect("Expected item to exist in inventory");
             // Return the salvaging output
             Ok(salvage_output)
@@ -352,7 +349,6 @@ pub fn modular_weapon(
     inv: &mut Inventory,
     primary_component: InvSlotId,
     secondary_component: InvSlotId,
-    ability_map: &AbilityMap,
     msm: &MaterialStatManifest,
 ) -> Result<Item, ModularWeaponError> {
     use modular::ModularComponent;
@@ -409,18 +405,17 @@ pub fn modular_weapon(
         Ok(()) => {
             // Remove components from inventory
             let primary_component = inv
-                .take(primary_component, ability_map, msm)
+                .take(primary_component, msm)
                 .expect("Expected component to exist");
             let secondary_component = inv
-                .take(secondary_component, ability_map, msm)
+                .take(secondary_component, msm)
                 .expect("Expected component to exist");
 
             // Create modular weapon
             Ok(Item::new_from_item_base(
                 ItemBase::Modular(modular::ModularBase::Tool),
                 vec![primary_component, secondary_component],
-                ability_map,
-                msm,
+                                msm,
             ))
         },
         Err(err) => Err(err),
@@ -604,7 +599,6 @@ impl ComponentRecipe {
         modifier_slot: Option<InvSlotId>,
         // Vec tying an input to a slot
         slots: Vec<(u32, InvSlotId)>,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Result<Vec<Item>, Vec<(&RecipeInput, u32)>> {
         let mut slot_claims = HashMap::new();
@@ -659,12 +653,12 @@ impl ComponentRecipe {
             for (slot, to_remove) in slot_claims.iter() {
                 for _ in 0..*to_remove {
                     let _ = inv
-                        .take(*slot, ability_map, msm)
+                        .take(*slot, msm)
                         .expect("Expected item to exist in the inventory");
                 }
             }
 
-            let crafted_item = self.item_output(ability_map, msm);
+            let crafted_item = self.item_output(msm);
 
             Ok(vec![crafted_item])
         } else {
@@ -707,7 +701,7 @@ impl ComponentRecipe {
         }
     }
 
-    pub fn item_output(&self, ability_map: &AbilityMap, msm: &MaterialStatManifest) -> Item {
+    pub fn item_output(&self, msm: &MaterialStatManifest) -> Item {
         match &self.output {
             ComponentOutput::ItemComponents {
                 item: item_def,
@@ -719,16 +713,14 @@ impl ComponentRecipe {
                         Item::new_from_item_base(
                             ItemBase::Simple(Arc::clone(item_def)),
                             Vec::new(),
-                            ability_map,
-                            msm,
+                                                        msm,
                         )
                     })
                     .collect::<Vec<_>>();
                 Item::new_from_item_base(
                     ItemBase::Simple(Arc::clone(item_def)),
                     components,
-                    ability_map,
-                    msm,
+                                        msm,
                 )
             },
         }

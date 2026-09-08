@@ -496,7 +496,6 @@ impl Loadout {
         &mut self,
         // Ne sert plus : il ne reste ici que le recalcul des empreintes. Voir
         // `Item::new_from_item_base` pour pourquoi le parametre subsiste.
-        _ability_map: &item::tool::AbilityMap,
         _msm: &item::MaterialStatManifest,
     ) {
         self.slots.iter_mut().for_each(|slot| {
@@ -509,21 +508,19 @@ impl Loadout {
     /// Increments durability by 1 of all valid items
     pub(super) fn damage_items(
         &mut self,
-        ability_map: &item::tool::AbilityMap,
         msm: &item::MaterialStatManifest,
     ) {
         self.slots
             .iter_mut()
             .filter_map(|slot| slot.slot.as_mut())
             .filter(|item| item.has_durability())
-            .for_each(|item| item.increment_damage(ability_map, msm));
+            .for_each(|item| item.increment_damage(msm));
     }
 
     /// Resets durability of item in specified slot
     pub(super) fn repair_item_at_slot(
         &mut self,
         equip_slot: EquipSlot,
-        ability_map: &item::tool::AbilityMap,
         msm: &item::MaterialStatManifest,
     ) {
         if let Some(item) = self
@@ -532,7 +529,7 @@ impl Loadout {
             .find(|slot| slot.equip_slot == equip_slot)
             .and_then(|slot| slot.slot.as_mut())
         {
-            item.reset_durability(ability_map, msm);
+            item.reset_durability(msm);
         }
     }
 

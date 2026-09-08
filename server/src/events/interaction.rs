@@ -14,7 +14,6 @@ use common::{
         inventory::slot::EquipSlot,
         item::{MaterialStatManifest, flatten_counted_items},
         loot_owner::LootOwnerKind,
-        tool::AbilityMap,
     },
     consts::{MAX_INTERACT_RANGE, MAX_NPCINTERACT_RANGE, SOUND_TRAVEL_DIST_PER_VOLUME},
     event::{
@@ -133,7 +132,6 @@ impl ServerEvent for DialogueEvent {
         ReadStorage<'a, Client>,
         WriteStorage<'a, comp::Agent>,
         WriteStorage<'a, comp::Inventory>,
-        ReadExpect<'a, AbilityMap>,
         ReadExpect<'a, MaterialStatManifest>,
         WriteStorage<'a, comp::InventoryUpdateBuffer>,
     );
@@ -146,7 +144,6 @@ impl ServerEvent for DialogueEvent {
             clients,
             mut agents,
             mut inventories,
-            ability_map,
             msm,
             mut inventory_update_buffers,
         ): Self::SystemData<'_>,
@@ -179,12 +176,12 @@ impl ServerEvent for DialogueEvent {
                         && let Some(mut sender_inv) = inventories.get_mut(sender)
                         && sender_inv.item_count(item_def) >= *amount as u64
                         // First, remove the item from the sender's inventory
-                        && let Some(items) = sender_inv.remove_item_amount(item_def, *amount, &ability_map, &msm)
+                        && let Some(items) = sender_inv.remove_item_amount(item_def, *amount, &msm)
                         && let Some(mut target_inv) = inventories.get_mut(target)
                     {
                         for item in items {
                             let item_event = InventoryUpdateEvent::Collected(
-                                item.frontend_item(&ability_map, &msm),
+                                item.frontend_item(&msm),
                             );
                             // Push the items to the target's inventory
                             if target_inv.push(item).is_err() {
@@ -268,7 +265,6 @@ impl ServerEvent for MineBlockEvent {
         WriteExpect<'a, BlockChange>,
         ReadExpect<'a, TerrainGrid>,
         ReadExpect<'a, MaterialStatManifest>,
-        ReadExpect<'a, AbilityMap>,
         ReadExpect<'a, EventBus<CreateItemDropEvent>>,
         ReadExpect<'a, EventBus<SoundEvent>>,
         ReadExpect<'a, EventBus<Outcome>>,
@@ -284,7 +280,6 @@ impl ServerEvent for MineBlockEvent {
             mut block_change,
             terrain,
             msm,
-            ability_map,
             create_item_drop_events,
             sound_events,
             outcomes,
@@ -339,7 +334,7 @@ impl ServerEvent for MineBlockEvent {
                         && let Some(items) = comp::Item::try_reclaim_from_block(block, sprite_cfg)
                     {
                         let mut items: Vec<_> =
-                            flatten_counted_items(&items, &ability_map, &msm).collect();
+                            flatten_counted_items(&items, &msm).collect();
                         let maybe_uid = uids.get(ev.entity).copied();
 
                         if let Some(mut skillset) = skill_sets.get_mut(ev.entity) {

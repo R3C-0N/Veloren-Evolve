@@ -5,7 +5,6 @@ use common::{
         agent::{AgentEvent, Target, TimerAction},
         inventory::item::{ItemTag, MaterialStatManifest},
         invite::InviteResponse,
-        tool::AbilityMap,
     },
     event::{ChatEvent, EmitExt, ProcessTradeActionEvent},
     rtsim::NpcInput,
@@ -351,14 +350,12 @@ pub fn handle_inbox_update_pending_trade(bdata: &mut BehaviorData) -> bool {
                 },
                 TradingBehavior::AcceptFood => {
                     let mut only_food = true;
-                    let ability_map = AbilityMap::load().read();
                     let msm = MaterialStatManifest::load().read();
                     if let Some(ri) = &inventories[1 - who] {
                         for (slot, _) in pending.offers[1 - who].iter() {
                             if let Some(item) = ri.inventory.get(slot)
                                 && let Ok(item) = Item::new_from_item_definition_id(
                                     item.name.as_ref(),
-                                    &ability_map,
                                     &msm,
                                 )
                                 && !item.tags().contains(&ItemTag::Food)

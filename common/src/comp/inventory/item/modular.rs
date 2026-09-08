@@ -1,7 +1,7 @@
 use super::{
     DurabilityMultiplier, Item, ItemBase, ItemDef, ItemDesc, ItemKind, ItemTag, Material, Quality,
     ToolKind, armor,
-    tool::{self, AbilityMap, AbilitySpec, Hands, Tool},
+    tool::{self, AbilitySpec, Hands, Tool},
 };
 use crate::{
     assets::{AssetExt, AssetHandle, BoxedError, FileAsset, load_ron},
@@ -335,7 +335,6 @@ lazy_static! {
         // (done to check that material is valid for a particular component)
         use crate::recipe::ComponentKey;
         let recipes = recipe::default_component_recipe_book().read();
-        let ability_map = &AbilityMap::load().read();
         let msm = &MaterialStatManifest::load().read();
 
         recipes.iter().for_each(
@@ -345,7 +344,7 @@ lazy_static! {
                 },
                 recipe,
             )| {
-                let component = recipe.item_output(ability_map, msm);
+                let component = recipe.item_output(msm);
                 let hand_restriction =
                     if let ItemKind::ModularComponent(ModularComponent::ToolPrimaryComponent {
                         hand_restriction,
@@ -446,7 +445,6 @@ pub fn generate_weapon_primary_components(
 ) -> Result<Vec<(Item, Option<Hands>)>, ModularWeaponCreationError> {
     if let Some(material_id) = material.asset_identifier() {
         // Loads default ability map and material stat manifest for later use
-        let ability_map = &AbilityMap::load().read();
         let msm = &MaterialStatManifest::load().read();
 
         Ok(PRIMARY_COMPONENT_POOL
@@ -454,7 +452,7 @@ pub fn generate_weapon_primary_components(
             .into_iter()
             .flatten()
             .filter(|(_comp, hand)| compatible_handedness(hand_restriction, *hand))
-            .map(|(c, h)| (c.duplicate(ability_map, msm), *h))
+            .map(|(c, h)| (c.duplicate(msm), *h))
             .collect())
     } else {
         Err(ModularWeaponCreationError::MaterialNotFound)
@@ -480,7 +478,6 @@ pub fn random_weapon_primary_component(
     let result = {
         if let Some(material_id) = material.asset_identifier() {
             // Loads default ability map and material stat manifest for later use
-            let ability_map = &AbilityMap::load().read();
             let msm = &MaterialStatManifest::load().read();
 
             let primary_components = PRIMARY_COMPONENT_POOL
@@ -493,7 +490,7 @@ pub fn random_weapon_primary_component(
             let (comp, hand) = primary_components
                 .choose(&mut rng)
                 .ok_or(ModularWeaponCreationError::PrimaryComponentNotFound)?;
-            let comp = comp.duplicate(ability_map, msm);
+            let comp = comp.duplicate(msm);
             Ok((comp, (*hand)))
         } else {
             Err(ModularWeaponCreationError::MaterialNotFound)
@@ -516,7 +513,6 @@ pub fn generate_weapons(
     hand_restriction: Option<Hands>,
 ) -> Result<Vec<Item>, ModularWeaponCreationError> {
     // Loads default ability map and material stat manifest for later use
-    let ability_map = &AbilityMap::load().read();
     let msm = &MaterialStatManifest::load().read();
 
     let primaries = generate_weapon_primary_components(tool, material, hand_restriction)?;
@@ -533,14 +529,12 @@ pub fn generate_weapons(
             let secondary = Item::new_from_item_base(
                 ItemBase::Simple(Arc::clone(def)),
                 Vec::new(),
-                ability_map,
-                msm,
+                                msm,
             );
             weapons.push(Item::new_from_item_base(
                 ItemBase::Modular(ModularBase::Tool),
-                vec![comp.duplicate(ability_map, msm), secondary],
-                ability_map,
-                msm,
+                vec![comp.duplicate(msm), secondary],
+                                msm,
             ));
         }
     }
@@ -558,7 +552,6 @@ pub fn random_weapon(
 ) -> Result<Item, ModularWeaponCreationError> {
     let result = {
         // Loads default ability map and material stat manifest for later use
-        let ability_map = &AbilityMap::load().read();
         let msm = &MaterialStatManifest::load().read();
 
         let (primary_component, primary_hands) =
@@ -580,8 +573,7 @@ pub fn random_weapon(
             Item::new_from_item_base(
                 ItemBase::Simple(Arc::clone(def)),
                 Vec::new(),
-                ability_map,
-                msm,
+                                msm,
             )
         };
 
@@ -589,8 +581,7 @@ pub fn random_weapon(
         Ok(Item::new_from_item_base(
             ItemBase::Modular(ModularBase::Tool),
             vec![primary_component, secondary_component],
-            ability_map,
-            msm,
+                        msm,
         ))
     };
     if let Err(err) = &result {

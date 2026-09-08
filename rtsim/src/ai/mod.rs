@@ -123,7 +123,6 @@ pub struct ActorSystemData<'a> {
     pub server_constants: ReadExpect<'a, ServerConstants>,
     pub weather_grid: ReadExpect<'a, WeatherGrid>,
     pub rtsim_gizmos: WriteExpect<'a, RtsimGizmos>,
-    pub ability_map: ReadExpect<'a, comp::tool::AbilityMap>,
     pub msm: ReadExpect<'a, comp::item::MaterialStatManifest>,
     pub inventories: Mutex<WriteStorage<'a, comp::Inventory>>,
 }

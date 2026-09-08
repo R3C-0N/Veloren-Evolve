@@ -1,10 +1,11 @@
 use common::{
     comp::{
         Ori, Pos, SpectatingEntity, Vel,
-        item::{MaterialStatManifest, tool::AbilityMap},
+        item::{MaterialStatManifest},
     },
     uid::Uid,
 };
+use common::comp::ability::AbilityMap;
 use common_ecs::{Job, Origin, Phase, System};
 use common_net::{
     msg::EcsCompPacket,

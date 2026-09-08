@@ -33,7 +33,7 @@ use common::{
         aura::{self, EnteredAuras},
         buff,
         chat::{KillSource, KillType},
-        inventory::item::{AbilityMap, MaterialStatManifest},
+        inventory::item::MaterialStatManifest,
         item::flatten_counted_items,
         loot_owner::{LootOwnerKind, ONWERSHIP_TIMEOUT_SLOW},
         projectile::{ProjectileAttack, ProjectileConstructorKind, ProjectileExplosionTarget},
@@ -530,7 +530,6 @@ pub struct DestroyEventData<'a> {
     rtsim: WriteExpect<'a, RtSim>,
     id_maps: Read<'a, IdMaps>,
     msm: ReadExpect<'a, MaterialStatManifest>,
-    ability_map: ReadExpect<'a, AbilityMap>,
     time: Read<'a, Time>,
     program_time: ReadExpect<'a, ProgramTime>,
     #[cfg(feature = "worldgen")]
@@ -1309,7 +1308,7 @@ impl ServerEvent for DestroyEvent {
 
                         if item_receivers.is_empty() {
                             debug!("No item receivers");
-                            for item in flatten_counted_items(&items, &data.ability_map, &data.msm)
+                            for item in flatten_counted_items(&items, &data.msm)
                             {
                                 spawn_item(item, None)
                             }
@@ -1324,7 +1323,7 @@ impl ServerEvent for DestroyEvent {
                                 |(amount, _)| *amount,
                                 |(_, item), loot_owner, count| {
                                     for item in
-                                        item.stacked_duplicates(&data.ability_map, &data.msm, count)
+                                        item.stacked_duplicates(&data.msm, count)
                                     {
                                         spawn_item(item, loot_owner)
                                     }
@@ -1353,7 +1352,7 @@ impl ServerEvent for DestroyEvent {
                 if !resists_durability
                     && let Some(mut inventory) = data.inventories.get_mut(ev.entity)
                 {
-                    inventory.damage_items(&data.ability_map, &data.msm, *data.time);
+                    inventory.damage_items(&data.msm, *data.time);
                 }
             }
 
@@ -2269,8 +2268,7 @@ impl ServerEvent for BonkEvent {
                     let sprite_cfg = terrain.sprite_cfg_at(pos);
                     if let Some(items) = comp::Item::try_reclaim_from_block(block, sprite_cfg) {
                         let msm = &MaterialStatManifest::load().read();
-                        let ability_map = &AbilityMap::load().read();
-                        for item in flatten_counted_items(&items, ability_map, msm) {
+                        for item in flatten_counted_items(&items, msm) {
                             let pos = Pos(pos.map(|e| e as f32) + Vec3::new(0.5, 0.5, 0.0));
                             let vel = comp::Vel::default();
                             // TODO: Use the `ItemDrop` body for this.
@@ -3149,7 +3147,7 @@ impl ServerEvent for ChangeAbilityEvent {
         WriteStorage<'a, comp::ActiveAbilities>,
         ReadStorage<'a, Inventory>,
         ReadStorage<'a, SkillSet>,
-        ReadExpect<'a, comp::item::tool::AbilityMap>,
+        ReadExpect<'a, comp::ability::AbilityMap>,
     );
 
     fn handle(

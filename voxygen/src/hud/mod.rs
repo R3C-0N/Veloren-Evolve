@@ -4369,7 +4369,7 @@ impl Hud {
                                         .auxiliary_set(
                                             inventories.get(me),
                                             skill_sets.get(me),
-                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                            &common::comp::ability::AbilityMap::load().read(),
                                         )
                                         .get(a)
                                         .copied()
@@ -4378,7 +4378,7 @@ impl Hud {
                                         .auxiliary_set(
                                             inventories.get(me),
                                             skill_sets.get(me),
-                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                            &common::comp::ability::AbilityMap::load().read(),
                                         )
                                         .get(b)
                                         .copied()
@@ -4521,7 +4521,7 @@ impl Hud {
                                         .auxiliary_set(
                                             inventories.get(me),
                                             skill_sets.get(me),
-                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                            &common::comp::ability::AbilityMap::load().read(),
                                         )
                                         .get(a)
                                         .copied()
@@ -4530,7 +4530,7 @@ impl Hud {
                                         .auxiliary_set(
                                             inventories.get(me),
                                             skill_sets.get(me),
-                                            &common::comp::item::tool::AbilityMap::load().read(),
+                                            &common::comp::ability::AbilityMap::load().read(),
                                         )
                                         .get(b)
                                         .copied()

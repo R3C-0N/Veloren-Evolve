@@ -1,4 +1,5 @@
 use crate::util::*;
+use common::comp::ability::AbilityMap;
 use common::{
     comp::{
         ActiveAbilities, Alignment, Body, CharacterState, Combo, Energy, Health, Inventory,
@@ -12,7 +13,7 @@ use common::{
         inventory::{
             item::{
                 ItemKind, MaterialStatManifest,
-                tool::{AbilityMap, ToolKind},
+                tool::ToolKind,
             },
             slot::EquipSlot,
         },

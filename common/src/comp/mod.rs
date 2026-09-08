@@ -43,8 +43,9 @@ pub mod visual;
 // Reexports
 pub use self::{
     ability::{
-        Ability, AbilityInput, ActiveAbilities, BASE_ABILITY_LIMIT, CharacterAbility,
-        CharacterAbilityType, Stance,
+        Ability, AbilityContext, AbilityInput, AbilityItem, AbilityKind, AbilityMap,
+        AbilityMapEntry, AbilitySet, ActiveAbilities, BASE_ABILITY_LIMIT, CharacterAbility,
+        CharacterAbilityType, ContextualIndex, Stance,
     },
     admin::{Admin, AdminRole},
     agent::{
@@ -84,7 +85,7 @@ pub use self::{
         item::{
             self, FrontendItem, Item, ItemDrops, PickupItem, ThrownItem,
             item_key::ItemKey,
-            tool::{self, AbilityItem},
+            tool::{self},
         },
         recipe_book::RecipeBook,
         slot,

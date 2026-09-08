@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use common::{
+    use common::comp::ability::AbilityMap;
+use common::{
         SkillSetBuilder,
         comp::{
             CharacterActivity, CharacterState, Controller, Energy, Ori, PhysicsState, Poise, Pos,
-            Stats, Vel, item::MaterialStatManifest, tool::AbilityMap,
+            Stats, Vel, item::MaterialStatManifest,
         },
         resources::{DeltaTime, GameMode, Time},
         shared_server_config::ServerConstants,

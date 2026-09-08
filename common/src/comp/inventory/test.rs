@@ -16,20 +16,19 @@ lazy_static! {
 #[test]
 fn push_full() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory {
         slots: TEST_ITEMS
             .iter()
-            .map(|a| Some(a.duplicate(ability_map, msm)))
+            .map(|a| Some(a.duplicate(msm)))
             .collect(),
         loadout: LoadoutBuilder::empty().build(),
         overflow_items: vec![],
         recipe_book: RecipeBook::default(),
     };
     assert_eq!(
-        inv.push(TEST_ITEMS[0].duplicate(ability_map, msm))
+        inv.push(TEST_ITEMS[0].duplicate(msm))
             .unwrap_err(),
-        (TEST_ITEMS[0].duplicate(ability_map, msm), None)
+        (TEST_ITEMS[0].duplicate(msm), None)
     )
 }
 
@@ -37,11 +36,10 @@ fn push_full() {
 #[test]
 fn push_all_full() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory {
         slots: TEST_ITEMS
             .iter()
-            .map(|a| Some(a.duplicate(ability_map, msm)))
+            .map(|a| Some(a.duplicate(msm)))
             .collect(),
         loadout: LoadoutBuilder::empty().build(),
         overflow_items: vec![],
@@ -51,14 +49,14 @@ fn push_all_full() {
         .push_all(
             TEST_ITEMS
                 .iter()
-                .map(|item| item.duplicate(ability_map, msm)),
+                .map(|item| item.duplicate(msm)),
         )
         .expect_err("Pushing into a full inventory somehow worked!");
     assert_eq!(
         leftovers,
         TEST_ITEMS
             .iter()
-            .map(|item| item.duplicate(ability_map, msm))
+            .map(|item| item.duplicate(msm))
             .collect::<Vec<_>>()
     )
 }
@@ -68,11 +66,10 @@ fn push_all_full() {
 #[test]
 fn push_unique_all_full() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory {
         slots: TEST_ITEMS
             .iter()
-            .map(|a| Some(a.duplicate(ability_map, msm)))
+            .map(|a| Some(a.duplicate(msm)))
             .collect(),
         loadout: LoadoutBuilder::empty().build(),
         overflow_items: vec![],
@@ -81,7 +78,7 @@ fn push_unique_all_full() {
     inv.push_all_unique(
         TEST_ITEMS
             .iter()
-            .map(|item| item.duplicate(ability_map, msm)),
+            .map(|item| item.duplicate(msm)),
     )
     .expect("Pushing unique items into an inventory that already contains them didn't work!");
 }
@@ -91,7 +88,6 @@ fn push_unique_all_full() {
 #[test]
 fn push_all_empty() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory {
         slots: vec![None, None],
         loadout: LoadoutBuilder::empty().build(),
@@ -101,7 +97,7 @@ fn push_all_empty() {
     inv.push_all(
         TEST_ITEMS
             .iter()
-            .map(|item| item.duplicate(ability_map, msm)),
+            .map(|item| item.duplicate(msm)),
     )
     .expect("Pushing items into an empty inventory didn't work!");
 }
@@ -111,7 +107,6 @@ fn push_all_empty() {
 #[test]
 fn push_all_unique_empty() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory {
         slots: vec![None, None],
         loadout: LoadoutBuilder::empty().build(),
@@ -121,7 +116,7 @@ fn push_all_unique_empty() {
     inv.push_all_unique(
         TEST_ITEMS
             .iter()
-            .map(|item| item.duplicate(ability_map, msm)),
+            .map(|item| item.duplicate(msm)),
     )
     .expect("Pushing unique items into an empty inventory that didn't contain them didn't work!");
 }
@@ -129,13 +124,12 @@ fn push_all_unique_empty() {
 #[test]
 fn free_slots_minus_equipped_item_items_only_present_in_equipped_bag_slots() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory::with_empty();
 
     let bag = get_test_bag(18);
     let bag1_slot = EquipSlot::Armor(ArmorSlot::Bag1);
     inv.loadout
-        .swap(bag1_slot, Some(bag.duplicate(ability_map, msm)), Time(0.0));
+        .swap(bag1_slot, Some(bag.duplicate(msm)), Time(0.0));
 
     assert!(inv.insert_at(InvSlotId::new(15, 0), bag).unwrap().is_none());
 
@@ -149,16 +143,15 @@ fn free_slots_minus_equipped_item_items_only_present_in_equipped_bag_slots() {
 #[test]
 fn free_slots_minus_equipped_item() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory::with_empty();
 
     let bag = get_test_bag(18);
     let bag1_slot = EquipSlot::Armor(ArmorSlot::Bag1);
     inv.loadout
-        .swap(bag1_slot, Some(bag.duplicate(ability_map, msm)), Time(0.0));
+        .swap(bag1_slot, Some(bag.duplicate(msm)), Time(0.0));
     inv.loadout.swap(
         EquipSlot::Armor(ArmorSlot::Bag2),
-        Some(bag.duplicate(ability_map, msm)),
+        Some(bag.duplicate(msm)),
         Time(0.0),
     );
 
@@ -238,19 +231,18 @@ fn can_swap_equipped_bag_into_only_empty_slot_provided_by_itself_should_return_t
 #[test]
 fn unequip_items_both_hands() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory::with_empty();
 
     let sword = Item::new_from_asset_expect("common.items.weapons.sword.starter");
 
     inv.replace_loadout_item(
         EquipSlot::ActiveMainhand,
-        Some(sword.duplicate(ability_map, msm)),
+        Some(sword.duplicate(msm)),
         Time(0.0),
     );
     inv.replace_loadout_item(
         EquipSlot::InactiveMainhand,
-        Some(sword.duplicate(ability_map, msm)),
+        Some(sword.duplicate(msm)),
         Time(0.0),
     );
 
@@ -279,7 +271,6 @@ fn unequip_items_both_hands() {
 #[test]
 fn equip_replace_already_equipped_item() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let boots = Item::new_from_asset_expect("common.items.testing.test_boots");
 
     let starting_sandles = Some(Item::new_from_asset_expect(
@@ -287,16 +278,16 @@ fn equip_replace_already_equipped_item() {
     ));
 
     let mut inv = Inventory::with_empty();
-    inv.push(boots.duplicate(ability_map, msm)).unwrap();
+    inv.push(boots.duplicate(msm)).unwrap();
     inv.replace_loadout_item(
         EquipSlot::Armor(ArmorSlot::Feet),
         starting_sandles
             .as_ref()
-            .map(|item| item.duplicate(ability_map, msm)),
+            .map(|item| item.duplicate(msm)),
         Time(0.0),
     );
 
-    let _ = inv.equip(InvSlotId::new(0, 0), Time(0.0), ability_map, msm);
+    let _ = inv.equip(InvSlotId::new(0, 0), Time(0.0), msm);
 
     // We should now have the testing boots equipped
     assert_eq!(
@@ -377,7 +368,6 @@ fn unequip_unequipping_bag_into_its_own_slot_with_no_other_free_slots_returns_on
 #[test]
 fn equip_one_bag_equipped_equip_second_bag() {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let mut inv = Inventory::with_empty();
 
     let bag = get_test_bag(9);
@@ -385,7 +375,7 @@ fn equip_one_bag_equipped_equip_second_bag() {
         inv.loadout
             .swap(
                 EquipSlot::Armor(ArmorSlot::Bag1),
-                Some(bag.duplicate(ability_map, msm)),
+                Some(bag.duplicate(msm)),
                 Time(0.0)
             )
             .is_none()
@@ -393,7 +383,7 @@ fn equip_one_bag_equipped_equip_second_bag() {
 
     inv.push(bag).unwrap();
 
-    let _ = inv.equip(InvSlotId::new(0, 0), Time(0.0), ability_map, msm);
+    let _ = inv.equip(InvSlotId::new(0, 0), Time(0.0), msm);
 
     assert!(inv.equipped(EquipSlot::Armor(ArmorSlot::Bag2)).is_some());
 }
@@ -525,9 +515,8 @@ fn backpack_crash() {
 
 fn fill_inv_slots(inv: &mut Inventory, items: u16) {
     let msm = &MaterialStatManifest::load().read();
-    let ability_map = &AbilityMap::load().read();
     let boots = Item::new_from_asset_expect("common.items.testing.test_boots");
     for _ in 0..items {
-        inv.push(boots.duplicate(ability_map, msm)).unwrap();
+        inv.push(boots.duplicate(msm)).unwrap();
     }
 }

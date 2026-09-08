@@ -13,7 +13,6 @@ use common::{
         buff::{BuffCategory, BuffChange, BuffData, BuffKind, BuffSource},
         item::MaterialStatManifest,
         ship::figuredata::VOXEL_COLLIDER_MANIFEST,
-        tool::AbilityMap,
     },
     consts::MAX_CAMPFIRE_RANGE,
     event::{
@@ -465,7 +464,6 @@ pub fn handle_throw(server: &mut Server, ev: ThrowEvent) {
         .get_mut(ev.entity)
         .and_then(|mut inv| {
             if let Some(thrown_item) = inv.equipped(ev.equip_slot) {
-                let ability_map = state.ecs().read_resource::<AbilityMap>();
                 let msm = state.ecs().read_resource::<MaterialStatManifest>();
                 let time = state.ecs().read_resource::<Time>();
 
@@ -474,7 +472,7 @@ pub fn handle_throw(server: &mut Server, ev: ThrowEvent) {
                 if let Some(inv_slot) = inv.get_slot_of_item(thrown_item)
                     && thrown_item.is_stackable()
                 {
-                    inv.take(inv_slot, &ability_map, &msm)
+                    inv.take(inv_slot, &msm)
                 } else {
                     inv.replace_loadout_item(ev.equip_slot, None, *time)
                 }

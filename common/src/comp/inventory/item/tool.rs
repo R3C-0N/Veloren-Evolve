@@ -8,13 +8,9 @@ use strum::EnumIter;
 
 // La machinerie d'abilites (`AbilitySet`, `AbilityKind`, `AbilityMap`…) vivait
 // ici, ce qui faisait entrer `CharacterAbility`, `Stance`, `Buffs` et `SkillSet`
-// dans le module des objets. Elle est desormais dans `comp::ability`, ou elle a
-// sa place ; on la reexporte pour que les chemins existants continuent de
-// resoudre.
-pub use crate::comp::ability::{
-    AbilityContext, AbilityItem, AbilityKind, AbilityMap, AbilityMapEntry, AbilitySet,
-    ContextualIndex,
-};
+// dans le module des objets. Elle est dans `comp::ability`, ou elle a sa place,
+// et se nomme par ce chemin : ce module ne doit rien reexporter d'en haut, sans
+// quoi la dependance qu'on vient de couper se reformerait.
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, EnumIter,

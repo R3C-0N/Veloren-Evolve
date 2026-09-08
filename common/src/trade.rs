@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use crate::{
     comp::inventory::{
         Inventory,
-        item::{AbilityMap, Item, ItemDefinitionIdOwned, MaterialStatManifest, Quality},
+        item::{Item, ItemDefinitionIdOwned, MaterialStatManifest, Quality},
         slot::InvSlotId,
         trade_pricing::TradePricing,
     },
@@ -436,8 +436,7 @@ impl SitePrices {
                                         // `ItemDefinitionIdOwned` into `Quality`
                                         Item::new_from_item_definition_id(
                                             item.name.as_ref(),
-                                            &AbilityMap::load().read(),
-                                            &MaterialStatManifest::load().read(),
+                                                                        &MaterialStatManifest::load().read(),
                                         )
                                         .map_or(Quality::Low, |i| i.quality()),
                                     )

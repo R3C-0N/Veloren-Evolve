@@ -5,7 +5,7 @@ pub mod tool;
 
 // Reexports
 pub use modular::{MaterialStatManifest, ModularBase, ModularComponent};
-pub use tool::{AbilityMap, AbilitySet, AbilitySpec, Hands, Tool, ToolKind};
+pub use tool::{AbilitySpec, Hands, Tool, ToolKind};
 
 use crate::{
     assets::{self, Asset, AssetCache, AssetExt, BoxedError, Error, Ron, SharedString},
@@ -953,11 +953,6 @@ impl Item {
     pub fn new_from_item_base(
         inner_item: ItemBase,
         components: Vec<Item>,
-        // `ability_map` et `msm` ne servent plus : ils n'etaient la que pour
-        // reconstruire le cache `ItemConfig`, que `AbilityMap::item_ability_set`
-        // remplace. Les retirer touche une centaine de sites d'appel (dont 62
-        // pour le seul `new_from_asset_expect`) et fera l'objet d'un commit a part.
-        _ability_map: &AbilityMap,
         _msm: &MaterialStatManifest,
     ) -> Self {
         let mut item = Item {
@@ -977,7 +972,6 @@ impl Item {
 
     pub fn new_from_item_definition_id(
         item_definition_id: ItemDefinitionId<'_>,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Result<Self, Error> {
         let (base, components) = match item_definition_id {
@@ -992,7 +986,7 @@ impl Item {
                 let base = ItemBase::Modular(ModularBase::load_from_pseudo_id(pseudo_base));
                 let components = components
                     .into_iter()
-                    .map(|id| Item::new_from_item_definition_id(id, ability_map, msm))
+                    .map(|id| Item::new_from_item_definition_id(id, msm))
                     .collect::<Result<Vec<_>, _>>()?;
                 (base, components)
             },
@@ -1003,12 +997,12 @@ impl Item {
                 let base = ItemBase::Simple(Arc::<ItemDef>::load_cloned(simple_base)?);
                 let components = components
                     .into_iter()
-                    .map(|id| Item::new_from_item_definition_id(id, ability_map, msm))
+                    .map(|id| Item::new_from_item_definition_id(id, msm))
                     .collect::<Result<Vec<_>, _>>()?;
                 (base, components)
             },
         };
-        Ok(Item::new_from_item_base(base, components, ability_map, msm))
+        Ok(Item::new_from_item_base(base, components, msm))
     }
 
     /// Creates a new instance of an `Item` from the provided asset identifier
@@ -1037,13 +1031,11 @@ impl Item {
     /// it exists
     pub fn new_from_asset(asset: &str) -> Result<Self, Error> {
         let inner_item = ItemBase::from_item_id_string(asset)?;
-        // TODO: Get msm and ability_map less hackily
+        // TODO: Get msm less hackily
         let msm = &MaterialStatManifest::load().read();
-        let ability_map = &AbilityMap::load().read();
         Ok(Item::new_from_item_base(
             inner_item,
             Vec::new(),
-            ability_map,
             msm,
         ))
     }
@@ -1052,19 +1044,18 @@ impl Item {
     #[must_use]
     pub fn frontend_item(
         &self,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> FrontendItem {
-        FrontendItem(self.duplicate(ability_map, msm))
+        FrontendItem(self.duplicate(msm))
     }
 
     /// Duplicates an item, creating an exact copy but with a new item ID
     #[must_use]
-    pub fn duplicate(&self, ability_map: &AbilityMap, msm: &MaterialStatManifest) -> Self {
+    pub fn duplicate(&self, msm: &MaterialStatManifest) -> Self {
         let duplicated_components = self
             .components
             .iter()
-            .map(|comp| comp.duplicate(ability_map, msm))
+            .map(|comp| comp.duplicate(msm))
             .collect();
         let mut new_item = Item::new_from_item_base(
             match &self.item_base {
@@ -1072,7 +1063,6 @@ impl Item {
                 ItemBase::Modular(mod_base) => ItemBase::Modular(mod_base.clone()),
             },
             duplicated_components,
-            ability_map,
             msm,
         );
         new_item.set_amount(self.amount()).expect(
@@ -1083,7 +1073,7 @@ impl Item {
             |(new_item_slot, old_item_slot)| {
                 *new_item_slot = old_item_slot
                     .as_ref()
-                    .map(|old_item| old_item.duplicate(ability_map, msm));
+                    .map(|old_item| old_item.duplicate(msm));
             },
         );
         new_item
@@ -1091,7 +1081,6 @@ impl Item {
 
     pub fn stacked_duplicates<'a>(
         &'a self,
-        ability_map: &'a AbilityMap,
         msm: &'a MaterialStatManifest,
         count: u32,
     ) -> impl Iterator<Item = Self> + 'a {
@@ -1100,7 +1089,7 @@ impl Item {
 
         (0..max_stack_count)
             .map(|_| {
-                let mut item = self.duplicate(ability_map, msm);
+                let mut item = self.duplicate(msm);
 
                 item.set_amount(item.max_amount())
                     .expect("max_amount() is always a valid amount.");
@@ -1108,7 +1097,7 @@ impl Item {
                 item
             })
             .chain((rest > 0).then(move || {
-                let mut item = self.duplicate(ability_map, msm);
+                let mut item = self.duplicate(msm);
 
                 item.set_amount(rest)
                     .expect("anything less than max_amount() is always a valid amount.");
@@ -1429,7 +1418,7 @@ impl Item {
         self.kind().has_durability() && self.quality() != Quality::Debug
     }
 
-    pub fn increment_damage(&mut self, _ability_map: &AbilityMap, _msm: &MaterialStatManifest) {
+    pub fn increment_damage(&mut self, _msm: &MaterialStatManifest) {
         if let Some(durability_lost) = &mut self.durability_lost
             && *durability_lost < Self::MAX_DURABILITY
         {
@@ -1456,7 +1445,7 @@ impl Item {
         }
     }
 
-    pub fn reset_durability(&mut self, _ability_map: &AbilityMap, _msm: &MaterialStatManifest) {
+    pub fn reset_durability(&mut self, _msm: &MaterialStatManifest) {
         self.durability_lost = self.has_durability().then_some(0);
         // Update item state after applying durability because stats have potential to
         // change from different durability
@@ -1469,12 +1458,11 @@ impl Item {
     #[must_use = "Returned items will be lost if not used"]
     pub fn take_amount(
         &mut self,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
         returning_amount: u32,
     ) -> Option<Item> {
         if self.is_stackable() && self.amount() > 1 && returning_amount < self.amount() {
-            let mut return_item = self.duplicate(ability_map, msm);
+            let mut return_item = self.duplicate(msm);
             self.decrease_amount(returning_amount).ok()?;
             return_item.set_amount(returning_amount).expect(
                 "return_item.amount() = returning_amount < self.amount() (since self.amount() ≥ \
@@ -1493,20 +1481,17 @@ impl Item {
     #[must_use = "Returned items will be lost if not used"]
     pub fn take_half(
         &mut self,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Item> {
-        self.take_amount(ability_map, msm, self.amount() / 2)
+        self.take_amount(msm, self.amount() / 2)
     }
 
     #[cfg(test)]
     pub fn create_test_item_from_kind(kind: ItemKind) -> Self {
-        let ability_map = &AbilityMap::load().read();
         let msm = &MaterialStatManifest::load().read();
         Self::new_from_item_base(
             ItemBase::Simple(Arc::new(ItemDef::create_test_itemdef_from_kind(kind))),
             Vec::new(),
-            ability_map,
             msm,
         )
     }
@@ -1579,8 +1564,8 @@ impl FrontendItem {
     /// See [`Item::duplicate`], the returned item will still be a
     /// [`FrontendItem`]
     #[must_use]
-    pub fn duplicate(&self, ability_map: &AbilityMap, msm: &MaterialStatManifest) -> Self {
-        FrontendItem(self.0.duplicate(ability_map, msm))
+    pub fn duplicate(&self, msm: &MaterialStatManifest) -> Self {
+        FrontendItem(self.0.duplicate(msm))
     }
 
     pub fn set_amount(&mut self, amount: u32) -> Result<(), OperationFailure> {
@@ -1704,12 +1689,11 @@ impl PickupItem {
 
 pub fn flatten_counted_items<'a>(
     items: &'a [(u32, Item)],
-    ability_map: &'a AbilityMap,
     msm: &'a MaterialStatManifest,
 ) -> impl Iterator<Item = Item> + 'a {
     items
         .iter()
-        .flat_map(|(count, item)| item.stacked_duplicates(ability_map, msm, *count))
+        .flat_map(|(count, item)| item.stacked_duplicates(msm, *count))
 }
 
 /// Provides common methods providing details about an item definition
@@ -2108,7 +2092,6 @@ mod tests {
             {
                 Item::new_from_item_definition_id(
                     container.as_ref(),
-                    &AbilityMap::load().read(),
                     &MaterialStatManifest::load().read(),
                 )
                 .unwrap();

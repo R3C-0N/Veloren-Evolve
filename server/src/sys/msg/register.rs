@@ -45,7 +45,7 @@ pub struct ReadData<'a> {
     settings: ReadExpect<'a, Settings>,
     time_of_day: Read<'a, TimeOfDay>,
     material_stats: ReadExpect<'a, comp::item::MaterialStatManifest>,
-    ability_map: ReadExpect<'a, comp::item::tool::AbilityMap>,
+    ability_map: ReadExpect<'a, comp::ability::AbilityMap>,
     recipe_book: ReadExpect<'a, common::recipe::RecipeBookManifest>,
     map: ReadExpect<'a, WorldMapMsg>,
     trackers: TrackedStorages<'a>,

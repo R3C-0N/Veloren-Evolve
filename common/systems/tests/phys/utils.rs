@@ -2,7 +2,6 @@ use common::{
     comp::{
         Auras, Buffs, CapsulePrism, CharacterActivity, CharacterState, Collider, Combo, Controller,
         Energy, EnteredAuras, Health, Ori, Pos, Stats, Vel, inventory::item::MaterialStatManifest,
-        tool::AbilityMap,
     },
     resources::{DeltaTime, GameMode, Time},
     shared_server_config::ServerConstants,
@@ -11,6 +10,7 @@ use common::{
         Block, BlockKind, MapSizeLg, SpriteKind, TerrainChunk, TerrainChunkMeta, TerrainGrid,
     },
 };
+use common::comp::ability::AbilityMap;
 use common_ecs::{System, dispatch};
 use common_net::sync::WorldSyncExt;
 use common_state::State;

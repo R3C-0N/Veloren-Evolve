@@ -4,6 +4,7 @@ use super::{
     img_ids::{Imgs, ImgsRot},
     item_imgs::{ItemImgs, animate_by_pulse},
 };
+use common::comp::ability::AbilityMap;
 use crate::{
     GlobalState,
     game_input::GameInput,
@@ -25,7 +26,7 @@ use common::{
         self, Body, Buffs, CharacterState, Combo, Energy, Health, Inventory, Poise, Stance, Stats,
         ability::{Ability, ActiveAbilities, AuxiliaryAbility, BASE_ABILITY_LIMIT},
         inventory::{
-            item::{ItemI18n, ItemKind, MaterialStatManifest, item_key::ItemKey, tool::{AbilityMap, ToolKind}},
+            item::{ItemI18n, ItemKind, MaterialStatManifest, item_key::ItemKey, tool::ToolKind},
             slot::EquipSlot,
         },
         skills::{

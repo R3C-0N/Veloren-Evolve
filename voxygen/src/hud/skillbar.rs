@@ -1003,7 +1003,7 @@ impl<'a> Skillbar<'a> {
         let shortcuts = self.global_state.settings.interface.shortcut_numbers;
         // Les abilites d'un objet se retrouvent par une recherche dans le
         // manifeste, la ou l'objet en portait une copie.
-        let ability_map = &common::comp::item::tool::AbilityMap::load().read();
+        let ability_map = &common::comp::ability::AbilityMap::load().read();
 
         // TODO: avoid this
         let content_source = (

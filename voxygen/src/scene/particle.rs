@@ -1230,7 +1230,7 @@ impl ParticleMgr {
     ) {
         // L'identifiant renvoye pointe dans le manifeste : le garde doit vivre
         // aussi longtemps que lui.
-        let ability_map = common::comp::item::tool::AbilityMap::load();
+        let ability_map = common::comp::ability::AbilityMap::load();
         let ability_map = ability_map.read();
         let Some(ability_id) = state
             .ability_info()
