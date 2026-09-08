@@ -1,7 +1,6 @@
 use crate::{comp::Pos, shared_server_config::ServerConstants, time::DayPeriod};
 use serde::{Deserialize, Serialize};
 use specs::Entity;
-use std::ops::{Mul, MulAssign};
 use vek::Vec3;
 
 pub const DAY: f64 = 3600.0 * 24.0;
@@ -42,25 +41,24 @@ impl TimeOfDay {
     pub fn day(&self) -> f64 { self.0.rem_euclid(24.0 * 3600.0) }
 }
 
-/// A resource that stores the tick (i.e: physics) time.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, PartialOrd)]
-pub struct Time(pub f64);
+// `Time`, `ProgramTime` et `Secs` sont dans `common-vocab` : ce sont des
+// enveloppes autour d'un `f64`, et les garder ici obligeait a dependre de tout
+// `veloren-common` pour nommer une duree.
+pub use common_vocab::temps::{ProgramTime, Secs, Time};
 
-impl Time {
-    pub fn add_seconds(self, seconds: f64) -> Self { Self(self.0 + seconds) }
+/// Ajoute un nombre de jours de jeu, ce qui demande les constantes du serveur
+/// -- raison pour laquelle cette methode ne descend pas avec `Time`.
+pub trait TimeExt {
+    fn add_days(self, days: f64, server_constants: &ServerConstants) -> Self;
+}
 
-    pub fn add_minutes(self, minutes: f64) -> Self { Self(self.0 + minutes * 60.0) }
-
+impl TimeExt for Time {
     // Note that this applies in 'game time' and does not respect either real time
     // or in-game time of day.
-    pub fn add_days(self, days: f64, server_constants: &ServerConstants) -> Self {
+    fn add_days(self, days: f64, server_constants: &ServerConstants) -> Self {
         self.add_seconds(days * DAY / server_constants.day_cycle_coefficient)
     }
 }
-
-/// A resource that stores the real tick, local to the server/client.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct ProgramTime(pub f64);
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct TimeScale(pub f64);
@@ -72,20 +70,6 @@ impl Default for TimeScale {
 /// A resource that stores the time since the previous tick.
 #[derive(Default)]
 pub struct DeltaTime(pub f32);
-
-/// A resource used to indicate a duration of time, in seconds
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(transparent)]
-pub struct Secs(pub f64);
-
-impl Mul<f64> for Secs {
-    type Output = Self;
-
-    fn mul(self, mult: f64) -> Self { Self(self.0 * mult) }
-}
-impl MulAssign<f64> for Secs {
-    fn mul_assign(&mut self, mult: f64) { *self = *self * mult; }
-}
 
 #[derive(Default)]
 pub struct EntitiesDiedLastTick(pub Vec<(Entity, Pos)>);
