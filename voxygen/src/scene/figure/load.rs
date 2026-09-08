@@ -1,6 +1,7 @@
 use super::cache::{
     FigureKey, FigureModelEntryFuture, ModelEntryFuture, TerrainModelEntryFuture, ToolKey,
 };
+use common::figure::ship_spec::{ShipSpec, VoxelCollider};
 use common::{
     assets::{
         self, AssetCache, AssetExt, AssetHandle, BoxedError, Concatenate, DotVox, MultiRon,
@@ -26,7 +27,7 @@ use common::{
         quadruped_small::{self, BodyType as QSBodyType, Species as QSSpecies},
         ship::{
             self,
-            figuredata::{ShipSpec, VoxelCollider},
+
         },
         theropod::{self, BodyType as TBodyType, Species as TSpecies},
     },

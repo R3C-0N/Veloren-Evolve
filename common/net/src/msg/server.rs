@@ -76,7 +76,7 @@ pub enum ServerInit {
         recipe_book: RecipeBookManifest,
         component_recipe_book: ComponentRecipeBook,
         material_stats: MaterialStatManifest,
-        ability_map: comp::item::tool::AbilityMap,
+        ability_map: comp::ability::AbilityMap,
         server_constants: ServerConstants,
         description: ServerDescription,
         active_plugins: Vec<PluginHash>,

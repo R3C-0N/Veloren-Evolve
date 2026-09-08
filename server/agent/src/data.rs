@@ -1,4 +1,5 @@
 use crate::util::*;
+use common::comp::ability::AbilityMap;
 use common::{
     comp::{
         ActiveAbilities, Alignment, Body, CharacterState, Combo, Energy, Health, Inventory,
@@ -12,7 +13,7 @@ use common::{
         inventory::{
             item::{
                 ItemKind, MaterialStatManifest,
-                tool::{AbilityMap, ToolKind},
+                tool::ToolKind,
             },
             slot::EquipSlot,
         },
@@ -73,6 +74,9 @@ pub struct AgentData<'a> {
     pub stance: Option<&'a Stance>,
     pub cached_spatial_grid: &'a common::CachedSpatialGrid,
     pub msm: &'a MaterialStatManifest,
+    // Les abilites que confere un objet se retrouvent desormais par une
+    // recherche dans le manifeste, la ou l'objet en portait une copie.
+    pub ability_map: &'a AbilityMap,
     pub rtsim_actor: Option<&'a rtsim::ActorId>,
 }
 

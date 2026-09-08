@@ -1,7 +1,7 @@
-use super::{Fluid, Ori, ship::figuredata::ShipSpec};
+use super::{Fluid, Ori};
+use crate::figure::ship_spec::{ShipSpec, VoxelCollider};
 use crate::{
-    comp::{body::ship::figuredata::VoxelCollider, inventory::item::armor::Friction},
-    consts::WATER_DENSITY,
+    comp::inventory::item::armor::Friction,
     terrain::Block,
     uid::Uid,
     util::Dir,
@@ -74,38 +74,11 @@ impl Component for PreviousPhysCache {
     type Storage = VecStorage<Self>;
 }
 
-// Scale
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Scale(pub f32);
-
-impl Component for Scale {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
-
-// Mass
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Mass(pub f32);
-
-impl Default for Mass {
-    fn default() -> Mass { Mass(1.0) }
-}
-
-impl Component for Mass {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
-
-/// The average density (specific mass) of an entity.
-/// Units used for reference is kg/m³
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Density(pub f32);
-
-impl Default for Density {
-    fn default() -> Density { Density(WATER_DENSITY) }
-}
-
-impl Component for Density {
-    type Storage = DerefFlaggedStorage<Self, VecStorage<Self>>;
-}
+// Les grandeurs physiques d'une entite sont dans `common-vocab` : `comp::body`
+// en a besoin, et les garder ici l'obligeait a dependre de tout ce module,
+// `Collider` compris -- lequel ne peut pas descendre, puisqu'il tient un volume
+// de voxels.
+pub use common_vocab::phys::{CapsulePrism, Density, Mass, Scale};
 
 // Collider
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,13 +96,77 @@ pub enum Collider {
     Point,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CapsulePrism {
-    pub p0: Vec2<f32>,
-    pub p1: Vec2<f32>,
-    pub radius: f32,
-    pub z_min: f32,
-    pub z_max: f32,
+/// Le cylindre englobant d'une entite, d'apres ses composants.
+///
+/// Etait `Cylinder::from_components`, dans `util::find_dist`, ou elle faisait
+/// remonter `util` vers `comp` pour son seul usage. Elle est ici, aupres des
+/// composants qu'elle lit.
+#[inline]
+pub fn cylinder_of(
+    pos: vek::Vec3<f32>,
+    scale: Option<Scale>,
+    collider: Option<&Collider>,
+    char_state: Option<&super::CharacterState>,
+) -> crate::util::find_dist::Cylinder {
+    let scale = scale.map_or(1.0, |s| s.0);
+    let radius = collider.as_ref().map_or(0.5, |c| c.bounding_radius()) * scale;
+    let z_limit_modifier = char_state
+        .filter(|char_state| char_state.is_dodge())
+        .map_or(1.0, |_| 0.5)
+        * scale;
+    let (z_bottom, z_top) = collider
+        .map(|c| c.get_z_limits(z_limit_modifier))
+        .unwrap_or((-0.5 * z_limit_modifier, 0.5 * z_limit_modifier));
+
+    crate::util::find_dist::Cylinder {
+        center: pos + vek::Vec3::unit_z() * (z_top + z_bottom) / 2.0,
+        radius,
+        height: z_top - z_bottom,
+    }
+}
+
+/// La geometrie de collision d'une entite, d'apres son corps.
+///
+/// Etait `Body::collider`. La garder la-haut faisait dependre `comp::body` de
+/// `Collider`, donc du volume de voxels, donc de `terrain`.
+pub fn collider_of(body: &super::Body) -> Collider {
+    if let super::Body::Ship(ship) = body {
+        make_collider(ship)
+    } else {
+        let (p0, p1, radius) = body.sausage();
+
+        Collider::CapsulePrism(CapsulePrism {
+            p0,
+            p1,
+            radius,
+            z_min: 0.0,
+            z_max: body.height(),
+        })
+    }
+}
+
+/// La geometrie de collision d'un aeronef.
+///
+/// Vivait dans `comp::body::ship` sous forme de methode ; elle y faisait entrer
+/// `terrain` et `Collider` dans le module des corps pour un seul usage. Elle est
+/// ici, aupres de `Collider` qu'elle construit.
+pub fn make_collider(ship: &super::body::ship::Body) -> Collider {
+    match ship.manifest_entry() {
+        Some(manifest_entry) => Collider::Voxel {
+            id: manifest_entry.to_string(),
+        },
+        None => {
+            use rand::prelude::*;
+            let sz = vek::Vec3::broadcast(11);
+            Collider::Volume(std::sync::Arc::new(VoxelCollider::from_fn(sz, |_pos| {
+                if rand::rng().random_bool(0.25) {
+                    Block::new(crate::terrain::BlockKind::Rock, vek::Rgb::new(255, 0, 0))
+                } else {
+                    Block::air(crate::terrain::SpriteKind::Empty)
+                }
+            })))
+        },
+    }
 }
 
 impl Collider {

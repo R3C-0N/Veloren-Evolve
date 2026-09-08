@@ -9,7 +9,6 @@ use crate::{
             Item, ItemDefinitionId, ItemDefinitionIdOwned, ItemKind, MaterialStatManifest,
             ModularBase,
         },
-        tool::AbilityMap,
     },
     lottery::LootSpec,
     recipe::{RecipeInput, complete_recipe_book, default_component_recipe_book},
@@ -217,7 +216,6 @@ impl FreqEntries {
         } else {
             let stackable = Item::new_from_item_definition_id(
                 canonical_itemname.as_ref(),
-                &AbilityMap::load().read(),
                 &MaterialStatManifest::load().read(),
             )
             .is_ok_and(|i| i.is_stackable());
@@ -891,7 +889,6 @@ impl TradePricing {
 
         // re-evaluate prices based on crafting tables
         // (start with cheap ones to avoid changing material prices after evaluation)
-        let ability_map = &AbilityMap::load().read();
         let msm = &MaterialStatManifest::load().read();
         while result.sort_by_price(&mut ordered_recipes) {
             ordered_recipes.retain(|recipe| {
@@ -911,8 +908,7 @@ impl TradePricing {
                         });
                         let stackable = Item::new_from_item_definition_id(
                             recipe.output.as_ref(),
-                            ability_map,
-                            msm,
+                                                        msm,
                         )
                         .is_ok_and(|i| i.is_stackable());
                         let new_entry = PriceEntry {
@@ -1121,7 +1117,6 @@ impl TradePricing {
         {
             Item::new_from_item_definition_id(
                 item_id.as_ref(),
-                &AbilityMap::load().read(),
                 &MaterialStatManifest::load().read(),
             )
             .ok()

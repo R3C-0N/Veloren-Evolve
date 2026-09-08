@@ -104,11 +104,10 @@ pub fn trader_loadout(
         .filter(|(good, _amount)| **good != Good::Coin)
         .for_each(|(_good, amount)| *amount *= 0.1);
     // Fill bags with stuff according to unclaimed stock
-    let ability_map = &comp::tool::AbilityMap::load().read();
     let msm = &comp::item::MaterialStatManifest::load().read();
 
     let mut allow_item = |n: ItemDefinitionIdOwned, a: &u32| -> Option<Item> {
-        let i = Item::new_from_item_definition_id(n.as_ref(), ability_map, msm).ok();
+        let i = Item::new_from_item_definition_id(n.as_ref(), msm).ok();
         if !permitted_quality(i.as_ref()?.quality()) {
             return None;
         }
@@ -467,7 +466,6 @@ impl<'a> System<'a> for Sys {
         ReadExpect<'a, WeatherGrid>,
         WriteStorage<'a, comp::Inventory>,
         WriteExpect<'a, comp::gizmos::RtsimGizmos>,
-        ReadExpect<'a, comp::tool::AbilityMap>,
         ReadExpect<'a, comp::item::MaterialStatManifest>,
     );
 
@@ -499,7 +497,6 @@ impl<'a> System<'a> for Sys {
             weather_grid,
             inventories,
             rtsim_gizmos,
-            ability_map,
             msm,
         ): Self::SystemData,
     ) {
@@ -526,7 +523,6 @@ impl<'a> System<'a> for Sys {
                 weather_grid,
                 inventories: Mutex::new(inventories),
                 rtsim_gizmos,
-                ability_map,
                 msm,
             },
             &world,

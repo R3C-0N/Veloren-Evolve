@@ -9,7 +9,7 @@ use common::{
     mounting::{Mount, Rider},
     uid::Uid,
     util::{
-        find_dist::{Cylinder, FindDist},
+        find_dist::FindDist,
         lines::closest_points_3d,
     },
     vol::ReadVol,
@@ -75,7 +75,7 @@ pub(super) fn targets_under_cursor(
     let player_char_state = char_states.get(player_entity);
     let player_scale = scales.get(player_entity).copied();
     // Get the player's cylinder
-    let player_cylinder = Cylinder::from_components(
+    let player_cylinder = common::comp::cylinder_of(
         player_pos,
         player_scale,
         colliders.get(player_entity),
@@ -200,7 +200,7 @@ pub(super) fn targets_under_cursor(
         })
         .and_then(|(e, p, _)| {
             // Get the entity's cylinder
-            let target_cylinder = Cylinder::from_components(
+            let target_cylinder = common::comp::cylinder_of(
                 p,
                 scales.get(*e).copied(),
                 colliders.get(*e),

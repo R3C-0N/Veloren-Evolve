@@ -1,4 +1,5 @@
 use common_net::synced_components::Heads;
+use common::comp::ability::AbilityMap;
 use specs::{
     Entities, LazyUpdate, LendJoin, Read, ReadExpect, ReadStorage, SystemData, WriteStorage, shred,
 };
@@ -10,7 +11,7 @@ use common::{
         PhysicsState, Poise, Pos, PreviousPhysCache, Scale, SkillSet, Stance, StateUpdate, Stats,
         Vel,
         character_state::{CharacterStateEvents, OutputEvents},
-        inventory::item::{MaterialStatManifest, tool::AbilityMap},
+        inventory::item::{MaterialStatManifest},
     },
     event::{self, EventBus, KnockbackEvent, LocalEvent},
     link::Is,

@@ -7,13 +7,14 @@ use crate::persistence::{
     },
     models::{AbilitySets, Character, Item, SkillGroup},
 };
+use common::comp::ability::AbilityMap;
 use common::{
     character::CharacterId,
     comp::{
         ActiveAbilities, Body as CompBody, Content, Hardcore, Inventory, MapMarker, Stats,
         Waypoint, body,
         inventory::{
-            item::{Item as VelorenItem, MaterialStatManifest, tool::AbilityMap},
+            item::{Item as VelorenItem, MaterialStatManifest},
             loadout::{Loadout, LoadoutError},
             loadout_builder::LoadoutBuilder,
             recipe_book::RecipeBook,
@@ -516,7 +517,7 @@ pub fn convert_inventory_from_database_items(
 
     // Some items may have had components added, so update the item config of each
     // item to ensure that it correctly accounts for components that were added
-    inventory.persistence_update_all_item_states(&ABILITY_MAP, &MATERIAL_STATS_MANIFEST);
+    inventory.persistence_update_all_item_states(&MATERIAL_STATS_MANIFEST);
 
     Ok(inventory)
 }
@@ -576,7 +577,7 @@ pub fn convert_loadout_from_database_items(
 
     // Some items may have had components added, so update the item config of each
     // item to ensure that it correctly accounts for components that were added
-    loadout.persistence_update_all_item_states(&ABILITY_MAP, &MATERIAL_STATS_MANIFEST);
+    loadout.persistence_update_all_item_states(&MATERIAL_STATS_MANIFEST);
 
     Ok(loadout)
 }

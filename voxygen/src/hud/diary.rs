@@ -4,6 +4,7 @@ use super::{
     img_ids::{Imgs, ImgsRot},
     item_imgs::{ItemImgs, animate_by_pulse},
 };
+use common::comp::ability::AbilityMap;
 use crate::{
     GlobalState,
     game_input::GameInput,
@@ -873,6 +874,10 @@ impl Widget for Diary<'_> {
                     pulse: 0.0,
                 };
 
+                // Les abilites d'un objet se retrouvent par une recherche dans
+                // le manifeste ; le motif est celui de `crafting.rs`.
+                let ability_map = &AbilityMap::load().read();
+
                 for i in 0..BASE_ABILITY_LIMIT {
                     let ability_id = self
                         .active_abilities
@@ -881,6 +886,7 @@ impl Widget for Diary<'_> {
                             Some(self.inventory),
                             Some(self.skill_set),
                             self.stats,
+                            ability_map,
                         )
                         .ability_id(
                             Some(self.char_state),
@@ -889,6 +895,7 @@ impl Widget for Diary<'_> {
                             self.stance,
                             self.combo,
                             self.buffs,
+                            ability_map,
                         );
                     let (ability_title, ability_desc) = if let Some(ability_id) = ability_id {
                         util::ability_description(ability_id, self.localized_strings)
@@ -952,6 +959,7 @@ impl Widget for Diary<'_> {
                 let abilities: Vec<_> = ActiveAbilities::all_available_abilities(
                     Some(self.inventory),
                     Some(self.skill_set),
+                    ability_map,
                 )
                 .into_iter()
                 .map(|a| {
@@ -963,6 +971,7 @@ impl Widget for Diary<'_> {
                             self.stance,
                             self.combo,
                             self.buffs,
+                            ability_map,
                         ),
                         a,
                     )

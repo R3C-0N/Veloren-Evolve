@@ -3,7 +3,7 @@ use super::{
     cache::{FigureKey, TerrainModelEntryFuture},
     load::{BodySpec, ShipBoneMeshes},
 };
-use common::{assets, comp::ship::figuredata::VoxelCollider};
+use common::{assets, figure::ship_spec::VoxelCollider};
 use std::{convert::TryFrom, sync::Arc};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]

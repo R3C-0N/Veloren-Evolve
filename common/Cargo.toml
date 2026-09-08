@@ -24,6 +24,8 @@ default = ["simd"]
 
 common-base = { package = "veloren-common-base", path = "base" }
 common-i18n = { package = "veloren-common-i18n", path = "i18n" }
+common-body = { package = "veloren-common-body", path = "body" }
+common-vocab = { package = "veloren-common-vocab", path = "vocab" }
 # inline_tweak = { workspace = true }
 
 # Serde
@@ -98,9 +100,6 @@ rand_chacha = { workspace = true }
 #test
 tracing-subscriber =  { workspace = true }
 petgraph = "0.8.1"
-
-[build-dependencies]
-regex = "1"
 
 [[bench]]
 name = "chonk_benchmark"

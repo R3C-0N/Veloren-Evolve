@@ -1,5 +1,6 @@
 use crate::{data::quest::Payload, rule::npc_ai::quest::get_nearest_spot};
 
+use common::resources::TimeExt;
 use super::*;
 
 pub fn general<S: State>(tgt: ActorId, session: DialogueSession) -> impl Action<S> {

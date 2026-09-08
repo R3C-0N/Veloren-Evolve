@@ -1228,9 +1228,13 @@ impl ParticleMgr {
         state: &CharacterState,
         inventory: Option<&Inventory>,
     ) {
+        // L'identifiant renvoye pointe dans le manifeste : le garde doit vivre
+        // aussi longtemps que lui.
+        let ability_map = common::comp::ability::AbilityMap::load();
+        let ability_map = ability_map.read();
         let Some(ability_id) = state
             .ability_info()
-            .and_then(|info| info.ability.map(|a| a.ability_id(Some(state), inventory)))
+            .and_then(|info| info.ability.map(|a| a.ability_id(Some(state), inventory, &ability_map)))
         else {
             return;
         };

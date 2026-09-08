@@ -31,34 +31,55 @@ rustup toolchain uninstall nightly-2026-06-13-x86_64-pc-windows-msvc
 rustup toolchain install   nightly-2026-06-13-x86_64-pc-windows-msvc --profile default
 ```
 
-`shaderc` est compilé depuis ses sources (`shaderc-from-source` est dans les
-features **par défaut** de voxygen) : il faut cmake, Python et **ninja**.
+**Installer le SDK Vulkan.** `shaderc-sys` y trouve seul, par `$VULKAN_SDK`,
+une bibliothèque `shaderc` déjà construite. Sans lui, il compile glslang et
+SPIRV-Tools depuis leurs sources C++ : c'est l'unité la plus chère de tout le
+build (349 s mesurées) et il faut alors cmake, Python et **ninja**.
 
 ```powershell
-python -m pip install ninja
+python -m pip install ninja   # seulement si le SDK Vulkan n'est pas installé
 ninja --version
 ```
 
 ## Build
 
 ```powershell
-cargo build --profile no_overflow --bin veloren-voxygen
+cargo fast-voxygen
 ```
+
+L'alias est dans `.cargo/config.toml` ; il vaut
+`build --profile no_overflow --bin veloren-voxygen --no-default-features
+--features singleplayer,simd,hot-reloading,egui-ui`.
 
 Profil `no_overflow` volontairement : il désactive les contrôles de
 débordement pour la génération de monde tout en gardant un temps de
 compilation raisonnable. `--release` ajoute du LTO sur tout le workspace pour
 un gain nul ici.
 
-Compter **~10 min de téléchargement + ~15 min de compilation** au premier
-build (≈ 900 crates). Ensuite c'est incrémental.
+Features réduites volontairement aussi : par rapport au jeu par défaut, cela
+retire les greffons — wasmtime et cranelift, **95 crates** à eux seuls, pour
+un dépôt qui ne livre aucun greffon — Discord, et la boîte de dialogue native
+du gestionnaire de panique. 586 crates au lieu de 690, et un client qui se
+joue exactement pareil en solo. `egui-ui` reste : le pilote ci-dessous lit sa
+ligne de journal pour savoir que le démarrage est fini.
+
+**Ne pas alterner** entre `cargo fast-voxygen` et un `cargo build` aux
+features par défaut : chaque bascule refait compiler les crates concernés.
+
+Compter **~10 min de téléchargement**, puis la compilation. Mesuré sur une
+machine à 4 cœurs, `cargo clean` avant : **10 min 06 s** avec le SDK Vulkan
+installé, 14 min 49 s sans lui, contre 18 min 24 s pour un `cargo build` aux
+features par défaut. Ensuite c'est incrémental. `COMPILATION.md`, à la racine, détaille les
+autres leviers — `rust-lld`, le front-end parallèle, le SDK Vulkan, et
+surtout la boucle de travail sur `world` seul, qui ne demande que 206 crates
+au lieu de 586.
 
 **Ne pas lancer ce build via un outil qui coupe à 10 minutes** — il sera tué en
 plein téléchargement. Le détacher :
 
 ```powershell
 Start-Process -FilePath "$env:USERPROFILE\.cargo\bin\cargo.exe" `
-  -ArgumentList "build","--profile","no_overflow","--bin","veloren-voxygen" `
+  -ArgumentList "fast-voxygen" `
   -WorkingDirectory (Get-Location) `
   -RedirectStandardOutput "$env:TEMP\veloren-run\build.out" `
   -RedirectStandardError  "$env:TEMP\veloren-run\build.err" -NoNewWindow -PassThru

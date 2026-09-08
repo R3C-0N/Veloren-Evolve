@@ -237,6 +237,7 @@ impl AgentData<'_> {
                     self.combo,
                     self.stats,
                     self.buffs,
+                    self.ability_map,
                 )
                 .map_or(Default::default(), |a| a.0),
         )

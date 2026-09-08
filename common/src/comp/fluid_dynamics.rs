@@ -136,8 +136,32 @@ pub struct Wings {
     pub ori: Ori,
 }
 
-impl Body {
-    pub fn aerodynamic_forces(
+/// Ce que la traversee d'un fluide fait a un corps.
+///
+/// C'etait un `impl Body`. Les corps sont desormais une crate a part, et la
+/// regle d'orphelin interdit d'y ajouter des methodes inherentes depuis ici :
+/// ces trois-la ne peuvent pas descendre avec le corps, puisqu'elles nomment
+/// `Vel`, `Wings` et `Fluid`, qui sont de la logique de jeu.
+pub trait BodyAerodynamique {
+    /// Calculates the drag and lift forces on a body moving through a fluid.
+    fn aerodynamic_forces(
+        &self,
+        rel_flow: &Vel,
+        fluid_density: f32,
+        wings: Option<&Wings>,
+        scale: f32,
+    ) -> Vec3<f32>;
+
+    /// Physically incorrect (but relatively dt-independent) way to calculate
+    /// drag coefficients for liquids.
+    fn drag_coefficient_liquid(&self, fluid_density: f32, scale: f32) -> f32;
+
+    /// Parasite drag is the sum of pressure drag and skin friction.
+    fn parasite_drag(&self, scale: f32) -> f32;
+}
+
+impl BodyAerodynamique for Body {
+    fn aerodynamic_forces(
         &self,
         rel_flow: &Vel,
         fluid_density: f32,
@@ -230,7 +254,7 @@ impl Body {
     /// Physically incorrect (but relatively dt-independent) way to calculate
     /// drag coefficients for liquids.
     // TODO: Remove this in favour of `aerodynamic_forces` (see: `integrate_forces`)
-    pub fn drag_coefficient_liquid(&self, fluid_density: f32, scale: f32) -> f32 {
+    fn drag_coefficient_liquid(&self, fluid_density: f32, scale: f32) -> f32 {
         fluid_density * self.parasite_drag(scale)
     }
 
@@ -239,7 +263,7 @@ impl Body {
     /// and a surface, while pressure drag is due to flow separation. Both are
     /// viscous effects. The returned value is alternatively called the
     /// Reference Area of the body, and is used in the drag force equation.
-    pub fn parasite_drag(&self, scale: f32) -> f32 {
+    fn parasite_drag(&self, scale: f32) -> f32 {
         let from_terminal_velocity =
             |vel: f32| 2.0 * self.mass().0 * GRAVITY * scale * scale / (vel * vel * AIR_DENSITY);
 

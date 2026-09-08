@@ -224,7 +224,6 @@ impl ServerEvent for PlaceBlockEvent {
         WriteExpect<'a, BlockChange>,
         ReadExpect<'a, TerrainGrid>,
         ReadExpect<'a, comp::item::MaterialStatManifest>,
-        ReadExpect<'a, comp::item::tool::AbilityMap>,
         WriteStorage<'a, comp::Inventory>,
         WriteStorage<'a, comp::InventoryUpdateBuffer>,
         crate::sys::msg::in_game::TerrainPersistenceData<'a>,
@@ -236,7 +235,6 @@ impl ServerEvent for PlaceBlockEvent {
             mut block_change,
             terrain,
             msm,
-            ability_map,
             mut inventories,
             mut inventory_update_buffers,
             mut _terrain_persistence,
@@ -274,7 +272,7 @@ impl ServerEvent for PlaceBlockEvent {
                 continue;
             }
 
-            inventory.take(ev.slot, &ability_map, &msm);
+            inventory.take(ev.slot, &msm);
 
             #[cfg(feature = "persistent_world")]
             if let Some(terrain_persistence) = _terrain_persistence.as_mut() {

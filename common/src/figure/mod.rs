@@ -1,5 +1,6 @@
 pub mod cell;
 pub mod mat_cell;
+pub mod ship_spec;
 pub use mat_cell::Material;
 
 // Reexport

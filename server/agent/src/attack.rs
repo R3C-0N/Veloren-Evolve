@@ -802,6 +802,7 @@ impl AgentData<'_> {
                         Some(self.inventory),
                         Some(self.skill_set),
                         self.stats,
+                        self.ability_map,
                     );
                     let additional_conditions = match ability {
                         Ability::MainWeaponAux(0) => self
@@ -2472,6 +2473,7 @@ impl AgentData<'_> {
                         Some(self.inventory),
                         Some(self.skill_set),
                         self.stats,
+                        self.ability_map,
                     );
                     let additional_conditions = match ability {
                         Ability::MainWeaponAux(8) => self
@@ -2607,6 +2609,7 @@ impl AgentData<'_> {
                             Some(self.inventory),
                             Some(self.skill_set),
                             self.stats,
+                            self.ability_map,
                         );
                         raw_input == Ability::MainWeaponAux(16)
                     } else {
@@ -2679,6 +2682,7 @@ impl AgentData<'_> {
                     self.combo,
                     self.stats,
                     self.buffs,
+                    self.ability_map,
                 )
                 .map_or(Default::default(), |a| a.0)
         };

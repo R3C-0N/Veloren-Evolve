@@ -12,6 +12,15 @@ rustflags = [
     "link-arg=-lpsapi",
 ]
 
+# Windows MSVC, la cible par défaut sur Windows. `link.exe` relie voxygen
+# (~600 crates, un exécutable de plusieurs centaines de Mo) en dizaines de
+# secondes ; `rust-lld`, livré avec le toolchain Rust et donc déjà installé,
+# fait le même travail plusieurs fois plus vite. L'édition de liens domine le
+# build incrémental : après une ligne changée dans voxygen, c'est presque tout
+# ce que fait `cargo build`.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
 # Clever way to get workspace dir, from https://github.com/rust-lang/cargo/issues/3946#issuecomment-973132993
 [env]
 CARGO_WORKSPACE_DIR = { value = "", relative = true }
@@ -33,6 +42,23 @@ tracy-server-debuginfo = "run --bin veloren-server-cli --features tracy,simd --p
 tracy-server-releasedebuginfo = "run --bin veloren-server-cli --features tracy,simd --profile releasedebuginfo"
 tracy-test-server = "run --bin veloren-server-cli --no-default-features --features tracy,simd --profile no_overflow"
 # voxygen
+# Le build de développement conseillé : profil `no_overflow` et jeu de features
+# réduit à ce qu'il faut pour jouer en solo. Face aux features par défaut cela
+# retire les greffons (wasmtime + cranelift, 95 crates à eux seuls), Discord et
+# la boîte de dialogue native du gestionnaire de panique — 104 crates de moins,
+# pour un client qui se joue exactement pareil. `egui-ui` reste : il ne coûte
+# presque rien à compiler, et le pilote de la compétence `run-veloren-evolve`
+# lit sa ligne de journal pour savoir que le démarrage est fini.
+#
+# `shaderc-from-source` est absent exprès, et c'est le plus gros gain de la
+# liste : sans cette feature, `shaderc-sys` cherche d'abord une bibliothèque
+# déjà construite — celle du SDK Vulkan, qu'il trouve seul par `$VULKAN_SDK` —
+# et ne retombe sur la compilation C++ de glslang que s'il n'en trouve aucune.
+# Avec le SDK installé, cela retire l'unité la plus chère de tout le build
+# (349 s mesurées, sur le chemin critique) ; sans le SDK, le comportement est
+# celui d'avant. Voir COMPILATION.md.
+fast-voxygen = "build --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,egui-ui"
+fast-run = "run --profile no_overflow --bin veloren-voxygen --no-default-features --features singleplayer,simd,hot-reloading,egui-ui --"
 test-voxygen = "run --bin veloren-voxygen --no-default-features --features simd,egui-ui,shaderc-from-source,hot-reloading"
 tracy-voxygen = "run --bin veloren-voxygen --no-default-features --features tracy,simd,egui-ui,shaderc-from-source --profile no_overflow"
 dbg-voxygen = "run --bin veloren-voxygen --profile debuginfo"

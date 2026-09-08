@@ -11,7 +11,7 @@ use common::{
     comp::{
         self, LootOwner, PickupItem,
         group::members,
-        item::{self, Lantern, MaterialStatManifest, flatten_counted_items, tool::AbilityMap},
+        item::{self, Lantern, MaterialStatManifest, flatten_counted_items},
         loot_owner::{LootOwnerKind, ONWERSHIP_TIMEOUT_FAST, ONWERSHIP_TIMEOUT_SLOW},
         slot::{self, Slot},
     },
@@ -91,7 +91,6 @@ pub struct InventoryManipData<'a> {
     #[cfg(feature = "worldgen")]
     index: ReadExpect<'a, world::IndexOwned>,
     program_time: ReadExpect<'a, ProgramTime>,
-    ability_map: ReadExpect<'a, AbilityMap>,
     msm: ReadExpect<'a, MaterialStatManifest>,
     rbm: ReadExpect<'a, RecipeBookManifest>,
     inventories: WriteStorage<'a, comp::Inventory>,
@@ -126,7 +125,7 @@ impl ServerEvent for InventoryManipEvent {
         let mut emitters = data.events.get_emitters();
         let get_cylinder = |entity| {
             data.positions.get(entity).map(|p| {
-                find_dist::Cylinder::from_components(
+                comp::cylinder_of(
                     p.0,
                     data.scales.get(entity).copied(),
                     data.colliders.get(entity),
@@ -248,7 +247,7 @@ impl ServerEvent for InventoryManipEvent {
 
                     let (item, reinsert_item) = item.pick_up();
 
-                    let mut item_msg = item.frontend_item(&data.ability_map, &data.msm);
+                    let mut item_msg = item.frontend_item(&data.msm);
 
                     // Next, we try to equip the picked up item
                     let event = match inventory.try_equip(item).or_else(|returned_item| {
@@ -292,13 +291,12 @@ impl ServerEvent for InventoryManipEvent {
                                     announce_loot_to_group(
                                         group_id,
                                         entity,
-                                        item_msg.duplicate(&data.ability_map, &data.msm),
+                                        item_msg.duplicate(&data.msm),
                                         &data.clients,
                                         &data.uids,
                                         &data.groups,
                                         &data.alignments,
                                         &data.entities,
-                                        &data.ability_map,
                                         &data.msm,
                                     );
                                 }
@@ -325,13 +323,12 @@ impl ServerEvent for InventoryManipEvent {
                                 announce_loot_to_group(
                                     group_id,
                                     entity,
-                                    item_msg.duplicate(&data.ability_map, &data.msm),
+                                    item_msg.duplicate(&data.msm),
                                     &data.clients,
                                     &data.uids,
                                     &data.groups,
                                     &data.alignments,
                                     &data.entities,
-                                    &data.ability_map,
                                     &data.msm,
                                 );
                             }
@@ -374,7 +371,7 @@ impl ServerEvent for InventoryManipEvent {
                             }
                             // If an item was required to collect the sprite, consume it now
                             if let Some((inv_slot, true)) = required_item {
-                                inventory.take(inv_slot, &data.ability_map, &data.msm);
+                                inventory.take(inv_slot, &data.msm);
                             }
 
                             let sprite_cfg = data.terrain.sprite_cfg_at(sprite_pos);
@@ -382,10 +379,10 @@ impl ServerEvent for InventoryManipEvent {
                                 comp::Item::try_reclaim_from_block(block, sprite_cfg)
                             {
                                 for item in
-                                    flatten_counted_items(&items, &data.ability_map, &data.msm)
+                                    flatten_counted_items(&items, &data.msm)
                                 {
                                     let mut item_msg =
-                                        item.frontend_item(&data.ability_map, &data.msm);
+                                        item.frontend_item(&data.msm);
                                     let do_announce = match inventory.push(item) {
                                         Ok(_) => true,
                                         Err((item, inserted)) => {
@@ -407,13 +404,12 @@ impl ServerEvent for InventoryManipEvent {
                                             announce_loot_to_group(
                                                 group_id,
                                                 entity,
-                                                item_msg.duplicate(&data.ability_map, &data.msm),
+                                                item_msg.duplicate(&data.msm),
                                                 &data.clients,
                                                 &data.uids,
                                                 &data.groups,
                                                 &data.alignments,
                                                 &data.entities,
-                                                &data.ability_map,
                                                 &data.msm,
                                             );
                                         }
@@ -544,7 +540,6 @@ impl ServerEvent for InventoryManipEvent {
                                     && let Ok(Some(unloaded_items)) = inventory.equip(
                                         slot,
                                         *data.time,
-                                        &data.ability_map,
                                         &data.msm,
                                     )
                                 {
@@ -562,7 +557,7 @@ impl ServerEvent for InventoryManipEvent {
                                 }
                                 Some(InventoryUpdateEvent::Used)
                             } else if let Some(item) =
-                                inventory.take(slot, &data.ability_map, &data.msm)
+                                inventory.take(slot, &data.msm)
                             {
                                 match &*item.kind() {
                                     ItemKind::Consumable {
@@ -574,7 +569,6 @@ impl ServerEvent for InventoryManipEvent {
                                             && let Ok(container_item) =
                                                 comp::Item::new_from_item_definition_id(
                                                     container.as_ref(),
-                                                    &data.ability_map,
                                                     &data.msm,
                                                 )
                                         {
@@ -855,7 +849,7 @@ impl ServerEvent for InventoryManipEvent {
 
                     let item = match slot {
                         Slot::Inventory(slot) => {
-                            inventory.take_half(slot, &data.ability_map, &data.msm)
+                            inventory.take_half(slot, &data.msm)
                         },
                         Slot::Equip(_) => None,
                         Slot::Overflow(_) => None,
@@ -895,11 +889,11 @@ impl ServerEvent for InventoryManipEvent {
                 comp::InventoryManip::SplitDrop(slot) => {
                     let item = match slot {
                         Slot::Inventory(slot) => {
-                            inventory.take_half(slot, &data.ability_map, &data.msm)
+                            inventory.take_half(slot, &data.msm)
                         },
                         Slot::Equip(_) => None,
                         Slot::Overflow(o) => {
-                            inventory.overflow_take_half(o, &data.ability_map, &data.msm)
+                            inventory.overflow_take_half(o, &data.msm)
                         },
                     };
 
@@ -982,7 +976,6 @@ impl ServerEvent for InventoryManipEvent {
                                             .craft_simple(
                                                 &mut inventory,
                                                 slots.clone(),
-                                                &data.ability_map,
                                                 &data.msm,
                                             )
                                             .ok()
@@ -1001,7 +994,6 @@ impl ServerEvent for InventoryManipEvent {
                                 recipe::try_salvage(
                                     &mut inventory,
                                     slot,
-                                    &data.ability_map,
                                     &data.msm,
                                 )
                                 .ok()
@@ -1019,7 +1011,6 @@ impl ServerEvent for InventoryManipEvent {
                                     &mut inventory,
                                     primary_component,
                                     secondary_component,
-                                    &data.ability_map,
                                     &data.msm,
                                 )
                                 .ok()
@@ -1063,7 +1054,6 @@ impl ServerEvent for InventoryManipEvent {
                                             material,
                                             modifier,
                                             slots,
-                                            &data.ability_map,
                                             &data.msm,
                                         )
                                         .ok()
@@ -1075,7 +1065,7 @@ impl ServerEvent for InventoryManipEvent {
                         CraftEvent::Repair(item) => {
                             let sprite = get_craft_sprite(craft_sprite);
                             if matches!(sprite, Some(SpriteKind::RepairBench)) {
-                                inventory.repair_item_at_slot(item, &data.ability_map, &data.msm);
+                                inventory.repair_item_at_slot(item, &data.msm);
                             }
                             None
                         },
@@ -1132,7 +1122,7 @@ impl ServerEvent for InventoryManipEvent {
                     inventory.swap_equipped_weapons(*data.time);
                 },
                 comp::InventoryManip::Delete(slot, amount) => {
-                    let _ = inventory.take_amount(slot, amount, &data.ability_map, &data.msm);
+                    let _ = inventory.take_amount(slot, amount, &data.msm);
                 },
             }
             if data.trades.in_mutable_trade(uid) {
@@ -1183,7 +1173,6 @@ fn announce_loot_to_group(
     groups: &ReadStorage<comp::Group>,
     alignments: &ReadStorage<comp::Alignment>,
     entities: &Entities,
-    ability_map: &AbilityMap,
     msm: &MaterialStatManifest,
 ) {
     if let Some(uid) = uids.get(entity) {
@@ -1192,7 +1181,7 @@ fn announce_loot_to_group(
             .for_each(|(e, _)| {
                 clients.get(e).map(|c| {
                     c.send_fallible(ServerGeneral::GroupInventoryUpdate(
-                        item.duplicate(ability_map, msm),
+                        item.duplicate(msm),
                         *uid,
                     ));
                 });
@@ -1211,7 +1200,7 @@ mod tests {
 
     // Helper function
     fn test_cylinder(pos: Pos) -> Option<Cylinder> {
-        Some(Cylinder::from_components(pos.0, None, None, None))
+        Some(comp::cylinder_of(pos.0, None, None, None))
     }
 
     #[test]

@@ -8792,7 +8792,6 @@ dependencies = [
  "rand 0.10.1",
  "rand_chacha 0.10.0",
  "rayon",
- "regex",
  "ron",
  "roots",
  "serde",
@@ -8811,7 +8810,9 @@ dependencies = [
  "vek 0.17.2",
  "veloren-common-assets",
  "veloren-common-base",
+ "veloren-common-body",
  "veloren-common-i18n",
+ "veloren-common-vocab",
 ]
 
 [[package]]
@@ -8838,6 +8839,24 @@ dependencies = [
  "directories-next",
  "profiling",
  "tracing",
+]
+
+[[package]]
+name = "veloren-common-body"
+version = "0.18.0"
+dependencies = [
+ "lazy_static",
+ "rand 0.10.1",
+ "serde",
+ "serde_repr",
+ "specs",
+ "strum",
+ "tracing",
+ "vek 0.17.2",
+ "veloren-common-assets",
+ "veloren-common-base",
+ "veloren-common-i18n",
+ "veloren-common-vocab",
 ]
 
 [[package]]
@@ -8946,6 +8965,19 @@ dependencies = [
  "veloren-common-ecs",
  "veloren-common-net",
  "veloren-common-state",
+]
+
+[[package]]
+name = "veloren-common-vocab"
+version = "0.18.0"
+dependencies = [
+ "approx 0.5.1",
+ "rand 0.10.1",
+ "serde",
+ "specs",
+ "strum",
+ "tracing",
+ "vek 0.17.2",
 ]
 
 [[package]]

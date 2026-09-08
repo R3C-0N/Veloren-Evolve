@@ -33,7 +33,7 @@ use common::{
         aura::{self, EnteredAuras},
         buff,
         chat::{KillSource, KillType},
-        inventory::item::{AbilityMap, MaterialStatManifest},
+        inventory::item::MaterialStatManifest,
         item::flatten_counted_items,
         loot_owner::{LootOwnerKind, ONWERSHIP_TIMEOUT_SLOW},
         projectile::{ProjectileAttack, ProjectileConstructorKind, ProjectileExplosionTarget},
@@ -530,7 +530,6 @@ pub struct DestroyEventData<'a> {
     rtsim: WriteExpect<'a, RtSim>,
     id_maps: Read<'a, IdMaps>,
     msm: ReadExpect<'a, MaterialStatManifest>,
-    ability_map: ReadExpect<'a, AbilityMap>,
     time: Read<'a, Time>,
     program_time: ReadExpect<'a, ProgramTime>,
     #[cfg(feature = "worldgen")]
@@ -1309,7 +1308,7 @@ impl ServerEvent for DestroyEvent {
 
                         if item_receivers.is_empty() {
                             debug!("No item receivers");
-                            for item in flatten_counted_items(&items, &data.ability_map, &data.msm)
+                            for item in flatten_counted_items(&items, &data.msm)
                             {
                                 spawn_item(item, None)
                             }
@@ -1324,7 +1323,7 @@ impl ServerEvent for DestroyEvent {
                                 |(amount, _)| *amount,
                                 |(_, item), loot_owner, count| {
                                     for item in
-                                        item.stacked_duplicates(&data.ability_map, &data.msm, count)
+                                        item.stacked_duplicates(&data.msm, count)
                                     {
                                         spawn_item(item, loot_owner)
                                     }
@@ -1353,7 +1352,7 @@ impl ServerEvent for DestroyEvent {
                 if !resists_durability
                     && let Some(mut inventory) = data.inventories.get_mut(ev.entity)
                 {
-                    inventory.damage_items(&data.ability_map, &data.msm, *data.time);
+                    inventory.damage_items(&data.msm, *data.time);
                 }
             }
 
@@ -2269,8 +2268,7 @@ impl ServerEvent for BonkEvent {
                     let sprite_cfg = terrain.sprite_cfg_at(pos);
                     if let Some(items) = comp::Item::try_reclaim_from_block(block, sprite_cfg) {
                         let msm = &MaterialStatManifest::load().read();
-                        let ability_map = &AbilityMap::load().read();
-                        for item in flatten_counted_items(&items, ability_map, msm) {
+                        for item in flatten_counted_items(&items, msm) {
                             let pos = Pos(pos.map(|e| e as f32) + Vec3::new(0.5, 0.5, 0.0));
                             let vel = comp::Vel::default();
                             // TODO: Use the `ItemDrop` body for this.
@@ -2428,7 +2426,7 @@ impl ServerEvent for BuffEvent {
 
                         if !bodies
                             .get(ev.entity)
-                            .is_some_and(|body| body.immune_to(new_buff.kind))
+                            .is_some_and(|body| new_buff.kind.is_immune(body))
                             && immunity_by_buff.is_none()
                             && healths.get(ev.entity).is_none_or(|h| !h.is_dead)
                         {
@@ -2463,7 +2461,7 @@ impl ServerEvent for BuffEvent {
 
                             if bodies
                                 .get(ev.entity)
-                                .is_some_and(|body| body.negates_buff(new_buff.kind))
+                                .is_some_and(|body| new_buff.kind.is_negated_by(body))
                             {
                                 new_buff.effects.clear();
                             }
@@ -3149,11 +3147,12 @@ impl ServerEvent for ChangeAbilityEvent {
         WriteStorage<'a, comp::ActiveAbilities>,
         ReadStorage<'a, Inventory>,
         ReadStorage<'a, SkillSet>,
+        ReadExpect<'a, comp::ability::AbilityMap>,
     );
 
     fn handle(
         events: impl ExactSizeIterator<Item = Self>,
-        (mut active_abilities, inventories, skill_sets): Self::SystemData<'_>,
+        (mut active_abilities, inventories, skill_sets, ability_map): Self::SystemData<'_>,
     ) {
         for ev in events {
             if let Some(mut active_abilities) = active_abilities.get_mut(ev.entity) {
@@ -3163,6 +3162,7 @@ impl ServerEvent for ChangeAbilityEvent {
                     ev.new_ability,
                     inventories.get(ev.entity),
                     skill_sets.get(ev.entity),
+                    &ability_map,
                 );
             }
         }
@@ -3301,7 +3301,7 @@ impl ServerEvent for ChangeBodyEvent {
                     .insert(ev.entity, ev.new_body.density())
                     .expect("We just got this entities body");
                 colliders
-                    .insert(ev.entity, ev.new_body.collider())
+                    .insert(ev.entity, comp::collider_of(&ev.new_body))
                     .expect("We just got this entities body");
             }
         }
@@ -3586,7 +3586,7 @@ pub fn transform_entity(
             set_or_remove_component(server, entity, Some(body), None)?;
             set_or_remove_component(server, entity, Some(body.mass()), None)?;
             set_or_remove_component(server, entity, Some(body.density()), None)?;
-            set_or_remove_component(server, entity, Some(body.collider()), None)?;
+            set_or_remove_component(server, entity, Some(comp::collider_of(&body)), None)?;
             set_or_remove_component(server, entity, Some(scale), None)?;
             set_or_remove_component(server, entity, death_effects, None)?;
             set_or_remove_component(server, entity, rider_effects, None)?;

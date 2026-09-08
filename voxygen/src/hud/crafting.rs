@@ -26,7 +26,7 @@ use common::{
             Quality, TagExampleInfo,
             item_key::ItemKey,
             modular::{self, ModularComponent},
-            tool::{AbilityMap, ToolKind},
+            tool::ToolKind,
         },
         slot::{InvSlotId, Slot},
     },
@@ -1297,7 +1297,6 @@ impl Widget for Crafting<'_> {
                             .set(state.ids.modular_wep_ing_2_bg, ui);
                     }
 
-                    let ability_map = &AbilityMap::load().read();
                     let msm = &MaterialStatManifest::load().read();
 
                     let (output_item, recipe_known) = match recipe_kind {
@@ -1331,10 +1330,9 @@ impl Widget for Crafting<'_> {
                                         Item::new_from_item_base(
                                             ItemBase::Modular(modular::ModularBase::Tool),
                                             vec![
-                                                primary_comp.duplicate(ability_map, msm),
-                                                secondary_comp.duplicate(ability_map, msm),
+                                                primary_comp.duplicate(msm),
+                                                secondary_comp.duplicate(msm),
                                             ],
-                                            ability_map,
                                             msm,
                                         )
                                     })
@@ -1362,7 +1360,7 @@ impl Widget for Crafting<'_> {
                                     .component_recipe_book()
                                     .get(&component_key)
                                     .map(|component_recipe| {
-                                        let item = component_recipe.item_output(ability_map, msm);
+                                        let item = component_recipe.item_output(msm);
                                         let learned = self
                                             .inventory
                                             .recipe_is_known(&component_recipe.recipe_book_key);

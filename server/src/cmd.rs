@@ -41,7 +41,7 @@ use common::{
         aura::{AuraKindVariant, AuraTarget},
         buff::{Buff, BuffData, BuffKind, BuffSource, DestInfo, MiscBuffData},
         inventory::{
-            item::{MaterialStatManifest, Quality, all_items_expect, tool::AbilityMap},
+            item::{MaterialStatManifest, Quality, all_items_expect},
             slot::Slot,
         },
         invite::InviteKind,
@@ -650,7 +650,6 @@ fn handle_give_item(
                         }
                     });
             } else {
-                let ability_map = server.state.ecs().read_resource::<AbilityMap>();
                 let msm = server.state.ecs().read_resource::<MaterialStatManifest>();
                 // This item can't stack. Give each item in a loop.
                 server
@@ -661,7 +660,7 @@ fn handle_give_item(
                     .map(|mut inv| {
                         for i in 0..give_amount {
                             // NOTE: Deliberately ignores items that couldn't be pushed.
-                            if inv.push(item.duplicate(&ability_map, &msm)).is_err() {
+                            if inv.push(item.duplicate(&msm)).is_err() {
                                 res = Err(Content::localized_with_args(
                                     "command-give-inventory-full",
                                     [("total", give_amount as u64), ("given", i as u64)],
@@ -2424,7 +2423,7 @@ fn handle_spawn_airship(
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
         .state
-        .create_ship(pos, ori, ship, |ship| ship.make_collider());
+        .create_ship(pos, ori, ship, |ship| comp::make_collider(&ship));
     if let Some(pos) = destination {
         let agent = comp::Agent::from_body(&comp::Body::Ship(ship))
             .with_destination(pos)
@@ -2471,7 +2470,7 @@ fn handle_spawn_ship(
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
         .state
-        .create_ship(pos, ori, ship, |ship| ship.make_collider());
+        .create_ship(pos, ori, ship, |ship| comp::make_collider(&ship));
 
     if let Some(pos) = destination {
         let agent = comp::Agent::from_body(&comp::Body::Ship(ship))
@@ -2541,7 +2540,7 @@ fn handle_make_volume(
     args: Vec<String>,
     _action: &ServerChatCommand,
 ) -> CmdResult<()> {
-    use comp::body::ship::figuredata::VoxelCollider;
+    use common::figure::ship_spec::VoxelCollider;
 
     //let () = parse_cmd_args!(args);
     let pos = position(server, target, "target")?;
@@ -3159,11 +3158,10 @@ fn push_item(
             let _ = item.set_amount(quantity);
             res = push(item);
         } else {
-            let ability_map = server.state.ecs().read_resource::<AbilityMap>();
             let msm = server.state.ecs().read_resource::<MaterialStatManifest>();
 
             for _ in 0..quantity {
-                res = push(item.duplicate(&ability_map, &msm));
+                res = push(item.duplicate(&msm));
 
                 if res.is_err() {
                     break;
@@ -6124,7 +6122,7 @@ fn assign_body(server: &mut Server, target: EcsEntity, body: comp::Body) -> CmdR
     insert_or_replace_component(server, target, body, "body")?;
     insert_or_replace_component(server, target, body.mass(), "mass")?;
     insert_or_replace_component(server, target, body.density(), "density")?;
-    insert_or_replace_component(server, target, body.collider(), "collider")?;
+    insert_or_replace_component(server, target, comp::collider_of(&body), "collider")?;
 
     if let Some(mut stat) = server
         .state
@@ -6201,7 +6199,6 @@ fn handle_repair_equipment(
     let repair_inventory = parse_cmd_args!(args, bool).unwrap_or(false);
     let ecs = server.state.ecs();
     if let Some(mut inventory) = ecs.write_storage::<comp::Inventory>().get_mut(target) {
-        let ability_map = ecs.read_resource::<AbilityMap>();
         let msm = ecs.read_resource::<MaterialStatManifest>();
         let slots = inventory
             .equipped_items_with_slot()
@@ -6223,7 +6220,7 @@ fn handle_repair_equipment(
             .collect::<Vec<Slot>>();
 
         for slot in slots {
-            inventory.repair_item_at_slot(slot, &ability_map, &msm);
+            inventory.repair_item_at_slot(slot, &msm);
         }
 
         let key = if repair_inventory {

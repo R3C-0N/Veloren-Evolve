@@ -446,7 +446,7 @@ impl Server {
             Arc::<RwLock<DatabaseSettings>>::clone(&database_settings),
         )?);
 
-        let ability_map = comp::item::tool::AbilityMap::<comp::AbilityItem>::load_expect_cloned(
+        let ability_map = comp::ability::AbilityMap::<comp::AbilityItem>::load_expect_cloned(
             "common.abilities.ability_set_manifest",
         );
         state.ecs_mut().insert(ability_map);

@@ -1,5 +1,6 @@
 use crate::{
-    comp::{self, pet::is_mountable, ship::figuredata::VOXEL_COLLIDER_MANIFEST},
+    comp::{self, pet::is_mountable},
+    figure::ship_spec::VOXEL_COLLIDER_MANIFEST,
     link::{Is, Link, LinkHandle, Role},
     terrain::{Block, TerrainGrid},
     tether,

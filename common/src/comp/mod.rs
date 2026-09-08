@@ -5,7 +5,9 @@ pub mod anchor;
 pub mod arcing;
 pub mod aura;
 pub mod beam;
-pub mod body;
+// Les corps sont une crate a part : ils ne dependent de rien du jeu, et les
+// garder ici obligeait a compiler tout `veloren-common` avant eux.
+pub use common_body as body;
 pub mod buff;
 pub mod character_state;
 pub mod chat;
@@ -20,6 +22,7 @@ mod hardcore;
 mod health;
 mod inputs;
 pub mod inventory;
+pub mod item_body;
 pub mod invite;
 mod last;
 mod location;
@@ -43,8 +46,9 @@ pub mod visual;
 // Reexports
 pub use self::{
     ability::{
-        Ability, AbilityInput, ActiveAbilities, BASE_ABILITY_LIMIT, CharacterAbility,
-        CharacterAbilityType, Stance,
+        Ability, AbilityContext, AbilityInput, AbilityItem, AbilityKind, AbilityMap,
+        AbilityMapEntry, AbilitySet, ActiveAbilities, BASE_ABILITY_LIMIT, CharacterAbility,
+        CharacterAbilityType, ContextualIndex, Stance,
     },
     admin::{Admin, AdminRole},
     agent::{
@@ -82,9 +86,9 @@ pub use self::{
     inventory::{
         CollectFailedReason, Inventory, InventoryUpdateBuffer, InventoryUpdateEvent,
         item::{
-            self, FrontendItem, Item, ItemConfig, ItemDrops, PickupItem, ThrownItem,
+            self, FrontendItem, Item, ItemDrops, PickupItem, ThrownItem,
             item_key::ItemKey,
-            tool::{self, AbilityItem},
+            tool::{self},
         },
         recipe_book::RecipeBook,
         slot,
@@ -94,9 +98,12 @@ pub use self::{
     loot_owner::LootOwner,
     melee::{Melee, MeleeConstructor, MeleeConstructorKind},
     misc::Object,
-    ori::Ori,
+    ori::{Ori, look_toward},
     pet::Pet,
     phys::{
+        make_collider,
+        collider_of,
+        cylinder_of,
         CapsulePrism, Collider, Density, ForceUpdate, Immovable, Mass, PhysicsState, Pos,
         PosVelOriDefer, PreviousPhysCache, Scale, Sticky, Vel,
     },

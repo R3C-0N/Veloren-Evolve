@@ -1,0 +1,24 @@
+[package]
+name = "veloren-common-body"
+description = "Les corps du jeu : especes, morphologies, et leurs manifestes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+common-assets = { package = "veloren-common-assets", path = "../assets" }
+common-base = { package = "veloren-common-base", path = "../base" }
+common-i18n = { package = "veloren-common-i18n", path = "../i18n" }
+common-vocab = { package = "veloren-common-vocab", path = "../vocab" }
+
+serde = { workspace = true }
+tracing = { workspace = true }
+specs = { workspace = true, features = ["serde", "storage-event-control"] }
+strum = { workspace = true }
+rand = { workspace = true }
+vek = { workspace = true }
+lazy_static = { workspace = true }
+serde_repr = "0.1.6"

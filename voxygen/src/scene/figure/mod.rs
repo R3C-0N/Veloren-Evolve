@@ -3,6 +3,7 @@ pub mod load;
 mod volume;
 
 pub(super) use cache::FigureModelCache;
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use common_net::synced_components::Heads;
 pub use load::load_mesh; // TODO: Don't make this public.
 pub use volume::VolumeKey;
@@ -58,7 +59,7 @@ use common::{
         body::{self, parts::HeadState},
         inventory::slot::EquipSlot,
         item::{Hands, ItemKind, ToolKind, armor::ArmorKind},
-        ship::{self, figuredata::VOXEL_COLLIDER_MANIFEST},
+        ship::{self},
         slot::ArmorSlot,
     },
     interaction::InteractionKind,
@@ -1364,10 +1365,14 @@ impl FigureMgr {
         let second_tool_spec = second_tool_spec.as_deref();
         let hands = (active_tool_hand, second_tool_hand);
 
+        // L'identifiant renvoye pointe dans le manifeste : le garde doit vivre
+        // aussi longtemps que lui.
+        let ability_map = common::comp::ability::AbilityMap::load();
+        let ability_map = ability_map.read();
         let ability_id = character.and_then(|c| {
             c.ability_info()
                 .and_then(|a| a.ability)
-                .and_then(|a| a.ability_id(Some(c), inventory))
+                .and_then(|a| a.ability_id(Some(c), inventory, &ability_map))
         });
 
         let move_dir = {

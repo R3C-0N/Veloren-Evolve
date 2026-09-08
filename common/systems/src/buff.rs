@@ -275,7 +275,7 @@ impl<'a> System<'a> for Sys {
                 if matches!(
                     physics_state.on_ground.and_then(|b| b.get_sprite()),
                     Some(SpriteKind::HaniwaTrap)
-                ) && !body.immune_to(BuffKind::Bleeding)
+                ) && !BuffKind::Bleeding.is_immune(body)
                 {
                     // TODO: Determine a better place to emit sprite change events
                     if let Some(pos) = read_data.positions.get(entity) {
@@ -345,7 +345,7 @@ impl<'a> System<'a> for Sys {
                         kind: LiquidKind::Lava,
                         ..
                     })
-                ) && !body.negates_buff(BuffKind::Burning)
+                ) && !BuffKind::Burning.is_negated_by(body)
                 {
                     // If in lava fluid, apply burning debuff
                     emit_terrain_buff(&mut emitters, BuffKind::Burning, BuffData::new(20.0, None));

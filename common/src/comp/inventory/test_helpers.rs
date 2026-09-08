@@ -3,7 +3,6 @@ use crate::comp::{
     inventory::item::{
         ItemBase, ItemDef, ItemKind, MaterialStatManifest, Quality, armor,
         armor::{ArmorKind, Protection},
-        tool::AbilityMap,
     },
 };
 use std::sync::Arc;
@@ -24,7 +23,6 @@ pub(super) fn get_test_bag(slots: u16) -> Item {
     Item::new_from_item_base(
         ItemBase::Simple(Arc::new(item_def)),
         Vec::new(),
-        &AbilityMap::load().read(),
         &MaterialStatManifest::load().read(),
     )
 }

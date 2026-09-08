@@ -1,3 +1,4 @@
+pub mod mouvement;
 pub mod arthropod;
 pub mod biped_large;
 pub mod biped_small;
@@ -19,11 +20,9 @@ pub mod quadruped_small;
 pub mod ship;
 pub mod theropod;
 
-use crate::{
-    assets::{BoxedError, FileAsset, load_ron},
-    consts::{HUMAN_DENSITY, WATER_DENSITY},
-    npc::NpcKind,
-};
+use common_assets::{BoxedError, FileAsset, load_ron};
+use common_vocab::consts::{HUMAN_DENSITY, WATER_DENSITY};
+use crate::npc::NpcKind;
 use common_base::enum_iter;
 use common_i18n::Content;
 use serde::{Deserialize, Serialize};
@@ -31,7 +30,7 @@ use specs::{Component, DerefFlaggedStorage};
 use strum::{Display, IntoEnumIterator};
 use vek::*;
 
-use super::{BuffKind, CapsulePrism, Collider, Density, Mass, Scale};
+use common_vocab::phys::{Density, Mass, Scale};
 
 enum_iter! {
     #[derive(
@@ -902,23 +901,6 @@ impl Body {
         }
     }
 
-    /// Body collider
-    pub fn collider(&self) -> Collider {
-        if let Body::Ship(ship) = self {
-            ship.make_collider()
-        } else {
-            let (p0, p1, radius) = self.sausage();
-
-            Collider::CapsulePrism(CapsulePrism {
-                p0,
-                p1,
-                radius,
-                z_min: 0.0,
-                z_max: self.height(),
-            })
-        }
-    }
-
     /// How far away other entities should try to be. Will be added upon the
     /// other entity's spacing_radius. So an entity with 2.0 and an entity
     /// with 3.0 will lead to that both entities will try to keep 5.0 units
@@ -1271,146 +1253,8 @@ impl Body {
         }
     }
 
-    pub fn immune_to(&self, buff: BuffKind) -> bool {
-        match buff {
-            BuffKind::Bleeding => match self {
-                Body::Golem(_) | Body::Ship(_) => true,
-                Body::Object(object) => !matches!(object, object::Body::TrainingDummy),
-                Body::BipedSmall(b) => matches!(
-                    b.species,
-                    biped_small::Species::Husk
-                        | biped_small::Species::Boreal
-                        | biped_small::Species::IronDwarf
-                        | biped_small::Species::Haniwa
-                        | biped_small::Species::ShamanicSpirit
-                        | biped_small::Species::Jiangshi
-                ),
-                Body::BipedLarge(b) => matches!(
-                    b.species,
-                    biped_large::Species::Huskbrute
-                        | biped_large::Species::Gigasfrost
-                        | biped_large::Species::Gigasfire
-                        | biped_large::Species::Dullahan
-                        | biped_large::Species::HaniwaGeneral
-                        | biped_large::Species::TerracottaBesieger
-                        | biped_large::Species::TerracottaDemolisher
-                        | biped_large::Species::TerracottaPunisher
-                        | biped_large::Species::TerracottaPursuer
-                        | biped_large::Species::Cursekeeper
-                ),
-                Body::QuadrupedMedium(b) => {
-                    matches!(b.species, quadruped_medium::Species::ClaySteed)
-                },
-                _ => false,
-            },
-            BuffKind::Crippled => match self {
-                Body::Golem(_) | Body::Ship(_) => true,
-                Body::Object(object) => !matches!(object, object::Body::TrainingDummy),
-                Body::BipedLarge(b) => matches!(
-                    b.species,
-                    biped_large::Species::Dullahan | biped_large::Species::HaniwaGeneral
-                ),
-                Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Haniwa),
-                Body::QuadrupedMedium(b) => {
-                    matches!(b.species, quadruped_medium::Species::ClaySteed)
-                },
-                _ => false,
-            },
-            BuffKind::Burning => match self {
-                Body::Golem(g) => matches!(
-                    g.species,
-                    golem::Species::Gravewarden
-                        | golem::Species::AncientEffigy
-                        | golem::Species::IronGolem
-                ),
-                Body::BipedSmall(b) => matches!(
-                    b.species,
-                    biped_small::Species::Haniwa
-                        | biped_small::Species::Flamekeeper
-                        | biped_small::Species::IronDwarf
-                ),
-                Body::Object(object) => matches!(
-                    object,
-                    object::Body::HaniwaSentry
-                        | object::Body::Lavathrower
-                        | object::Body::Flamethrower
-                        | object::Body::TerracottaStatue
-                        | object::Body::Crux
-                ),
-                Body::QuadrupedLow(q) => matches!(
-                    q.species,
-                    quadruped_low::Species::Lavadrake | quadruped_low::Species::Salamander
-                ),
-                Body::BirdLarge(b) => matches!(
-                    b.species,
-                    bird_large::Species::Phoenix
-                        | bird_large::Species::Cockatrice
-                        | bird_large::Species::FlameWyvern
-                        | bird_large::Species::CloudWyvern
-                        | bird_large::Species::FrostWyvern
-                        | bird_large::Species::SeaWyvern
-                        | bird_large::Species::WealdWyvern
-                ),
-                Body::Arthropod(b) => matches!(b.species, arthropod::Species::Moltencrawler),
-                Body::BipedLarge(b) => matches!(
-                    b.species,
-                    biped_large::Species::Cyclops
-                        | biped_large::Species::Minotaur
-                        | biped_large::Species::Forgemaster
-                        | biped_large::Species::Gigasfire
-                ),
-                _ => false,
-            },
-            BuffKind::Ensnared => match self {
-                Body::BipedLarge(b) => matches!(b.species, biped_large::Species::Harvester),
-                Body::Arthropod(_) => true,
-                _ => false,
-            },
-            BuffKind::Regeneration => {
-                matches!(
-                    self,
-                    Body::Object(
-                        object::Body::GnarlingTotemRed
-                            | object::Body::GnarlingTotemGreen
-                            | object::Body::GnarlingTotemWhite
-                            | object::Body::Crux
-                    )
-                )
-            },
-            BuffKind::Frozen => match self {
-                Body::BipedLarge(b) => matches!(
-                    b.species,
-                    biped_large::Species::Yeti
-                        | biped_large::Species::Gigasfrost
-                        | biped_large::Species::Tursus
-                ),
-                Body::QuadrupedLow(q) => matches!(q.species, quadruped_low::Species::Icedrake),
-                Body::BirdLarge(b) => matches!(b.species, bird_large::Species::FrostWyvern),
-                Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Boreal),
-                Body::QuadrupedMedium(b) => matches!(
-                    b.species,
-                    quadruped_medium::Species::Roshwalr | quadruped_medium::Species::Frostfang
-                ),
-                _ => false,
-            },
-            BuffKind::ProtectingWard => matches!(self, Body::Object(object::Body::BarrelOrgan)),
-            _ => false,
-        }
-    }
-
     // Entity still recieves the buff to allow for particle rendering or other
     // secondary effects, but still removes any direct `BuffEffect`
-    pub fn negates_buff(&self, buff: BuffKind) -> bool {
-        self.immune_to(buff)
-            || match buff {
-                BuffKind::Burning => match self {
-                    Body::BipedSmall(b) => matches!(b.species, biped_small::Species::Ashen),
-                    _ => false,
-                },
-                _ => false,
-            }
-    }
-
     /// Returns a multiplier representing increased difficulty not accounted for
     /// due to AI or not using an actual weapon
     // TODO: Match on species

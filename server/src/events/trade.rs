@@ -5,7 +5,7 @@ use common::{
         agent::{Agent, AgentEvent},
         inventory::{
             Inventory,
-            item::{ItemDefinitionIdOwned, MaterialStatManifest, tool::AbilityMap},
+            item::{ItemDefinitionIdOwned, MaterialStatManifest},
         },
     },
     event::ProcessTradeActionEvent,
@@ -396,7 +396,6 @@ fn commit_trade(ecs: &specs::World, trade: &PendingTrade) -> TradeResult {
     }
 
     let mut items = [Vec::new(), Vec::new()];
-    let ability_map = ecs.read_resource::<AbilityMap>();
     let msm = ecs.read_resource::<MaterialStatManifest>();
     for who in [0, 1].iter().cloned() {
         for (slot, quantity) in trade.offers[who].iter() {
@@ -404,7 +403,7 @@ fn commit_trade(ecs: &specs::World, trade: &PendingTrade) -> TradeResult {
                 && let Some(item) = inventories
                     .get_mut(entities[who])
                     .expect(invmsg)
-                    .take_amount(*slot, quantity, &ability_map, &msm)
+                    .take_amount(*slot, quantity, &msm)
             {
                 items[who].push(item);
             }

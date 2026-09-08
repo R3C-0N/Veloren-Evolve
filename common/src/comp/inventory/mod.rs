@@ -14,7 +14,7 @@ use crate::{
         inventory::{
             item::{
                 ItemDef, ItemDefinitionIdOwned, ItemKind, MaterialStatManifest, TagExampleInfo,
-                item_key::ItemKey, tool::AbilityMap,
+                item_key::ItemKey,
             },
             loadout::Loadout,
             recipe_book::RecipeBook,
@@ -604,11 +604,10 @@ impl Inventory {
     pub fn take(
         &mut self,
         inv_slot_id: InvSlotId,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Item> {
         if let Some(Some(item)) = self.slot_mut(inv_slot_id) {
-            let mut return_item = item.duplicate(ability_map, msm);
+            let mut return_item = item.duplicate(msm);
 
             if item.is_stackable() && item.amount() > 1 {
                 item.decrease_amount(1).ok()?;
@@ -630,12 +629,11 @@ impl Inventory {
         &mut self,
         inv_slot_id: InvSlotId,
         amount: NonZeroU32,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Item> {
         if let Some(Some(item)) = self.slot_mut(inv_slot_id) {
             if item.is_stackable() && item.amount() > amount.get() {
-                let mut return_item = item.duplicate(ability_map, msm);
+                let mut return_item = item.duplicate(msm);
                 let return_amount = amount.get();
                 // Will never overflow since we know item.amount() > amount.get()
                 let new_amount = item.amount() - return_amount;
@@ -662,11 +660,10 @@ impl Inventory {
     pub fn take_half(
         &mut self,
         inv_slot_id: InvSlotId,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Item> {
         if let Some(Some(item)) = self.slot_mut(inv_slot_id) {
-            item.take_half(ability_map, msm)
+            item.take_half(msm)
                 .or_else(|| self.remove(inv_slot_id))
         } else {
             None
@@ -678,11 +675,10 @@ impl Inventory {
     pub fn overflow_take_half(
         &mut self,
         overflow_slot: usize,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Item> {
         if let Some(item) = self.overflow_items.get_mut(overflow_slot) {
-            item.take_half(ability_map, msm)
+            item.take_half(msm)
                 .or_else(|| self.overflow_remove(overflow_slot))
         } else {
             None
@@ -757,7 +753,6 @@ impl Inventory {
         &mut self,
         item_def: &ItemDef,
         amount: u32,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Option<Vec<Item>> {
         let mut amount = amount;
@@ -773,7 +768,7 @@ impl Inventory {
                     if amount < item.amount() {
                         // Remove just the amount we need to finish off
                         // Note: Unwrap is fine, we've already checked that amount > 0
-                        removed_items.push(item.take_amount(ability_map, msm, amount).unwrap());
+                        removed_items.push(item.take_amount(msm, amount).unwrap());
                         return Some(removed_items);
                     } else {
                         // Take the whole item and keep going
@@ -876,7 +871,6 @@ impl Inventory {
         &mut self,
         inv_slot: InvSlotId,
         time: Time,
-        ability_map: &AbilityMap,
         msm: &MaterialStatManifest,
     ) -> Result<Option<Vec<Item>>, SlotError> {
         let Some(item) = self.get(inv_slot) else {
@@ -888,7 +882,7 @@ impl Inventory {
         };
 
         let item = self
-            .take(inv_slot, ability_map, msm)
+            .take(inv_slot, msm)
             .expect("We got this successfully above");
 
         if let Some(mut unequipped_item) = self.replace_loadout_item(equip_slot, Some(item), time) {
@@ -1182,28 +1176,28 @@ impl Inventory {
     /// Used only when loading in persistence code.
     pub fn persistence_update_all_item_states(
         &mut self,
-        ability_map: &AbilityMap,
-        msm: &MaterialStatManifest,
+        // Ne sert plus : il ne reste ici que le recalcul des empreintes. Voir
+        // `Item::new_from_item_base` pour pourquoi le parametre subsiste.
+        _msm: &MaterialStatManifest,
     ) {
         self.slots_mut().for_each(|slot| {
             if let Some(item) = slot {
-                item.update_item_state(ability_map, msm);
+                item.update_hash();
             }
         });
         self.overflow_items
             .iter_mut()
-            .for_each(|item| item.update_item_state(ability_map, msm));
+            .for_each(|item| item.update_hash());
     }
 
     /// Increments durability lost for all valid items equipped in loadout and
     /// recently unequipped from loadout by 1
     pub fn damage_items(
         &mut self,
-        ability_map: &item::tool::AbilityMap,
         msm: &item::MaterialStatManifest,
         time: Time,
     ) {
-        self.loadout.damage_items(ability_map, msm);
+        self.loadout.damage_items(msm);
         self.loadout.cull_recently_unequipped_items(time);
 
         let (slots_mut, recently_unequipped_items) =
@@ -1217,7 +1211,7 @@ impl Inventory {
                 && *count > 0
             {
                 *count -= 1;
-                item.increment_damage(ability_map, msm);
+                item.increment_damage(msm);
             }
         });
     }
@@ -1226,18 +1220,17 @@ impl Inventory {
     pub fn repair_item_at_slot(
         &mut self,
         slot: Slot,
-        ability_map: &item::tool::AbilityMap,
         msm: &item::MaterialStatManifest,
     ) {
         match slot {
             Slot::Inventory(invslot) => {
                 if let Some(Some(item)) = self.slot_mut(invslot) {
-                    item.reset_durability(ability_map, msm);
+                    item.reset_durability(msm);
                 }
             },
             Slot::Equip(equip_slot) => {
                 self.loadout
-                    .repair_item_at_slot(equip_slot, ability_map, msm);
+                    .repair_item_at_slot(equip_slot, msm);
             },
             // Items in overflow slots cannot be repaired until they are moved to a real slot
             Slot::Overflow(_) => {},

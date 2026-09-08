@@ -1,4 +1,5 @@
 use crate::{
+    assets::{Asset, AssetCache, AssetExt, AssetHandle, BoxedError, Ron, SharedString},
     combat::{self, CombatEffect, DamageKind, Knockback, ScalingKind},
     comp::{
         self, Body, CharacterState, Combo, LightEmitter, StateUpdate, aura, beam,
@@ -7,8 +8,8 @@ use crate::{
         inventory::{
             Inventory,
             item::{
-                ItemDefinitionIdOwned, ItemKind, Tool,
-                tool::{AbilityItem, AbilityKind, ContextualIndex, Stats, ToolKind},
+                DurabilityMultiplier, Item, ItemDefinitionIdOwned, ItemKind, Tool,
+                tool::{AbilitySpec, Stats, ToolKind},
             },
             slot::EquipSlot,
         },
@@ -38,6 +39,7 @@ use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use specs::{Component, DerefFlaggedStorage};
 use std::{borrow::Cow, time::Duration};
+use tracing::warn;
 
 pub const BASE_ABILITY_LIMIT: usize = 5;
 
@@ -125,11 +127,11 @@ impl ActiveAbilities {
         new_ability: AuxiliaryAbility,
         inventory: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) {
-        let auxiliary_set = self
-            .auxiliary_sets
-            .entry(auxiliary_key)
-            .or_insert(Self::default_ability_set(inventory, skill_set, self.limit));
+        let auxiliary_set = self.auxiliary_sets.entry(auxiliary_key).or_insert(
+            Self::default_ability_set(inventory, skill_set, self.limit, ability_map),
+        );
         if let Some(ability) = auxiliary_set.get_mut(slot) {
             *ability = new_ability;
         }
@@ -151,13 +153,13 @@ impl ActiveAbilities {
         &self,
         inv: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) -> Cow<'_, Vec<AuxiliaryAbility>> {
         let aux_key = Self::active_auxiliary_key(inv);
 
-        self.auxiliary_sets
-            .get(&aux_key)
-            .map(Cow::Borrowed)
-            .unwrap_or_else(|| Cow::Owned(Self::default_ability_set(inv, skill_set, self.limit)))
+        self.auxiliary_sets.get(&aux_key).map(Cow::Borrowed).unwrap_or_else(|| {
+            Cow::Owned(Self::default_ability_set(inv, skill_set, self.limit, ability_map))
+        })
     }
 
     pub fn get_ability(
@@ -166,6 +168,7 @@ impl ActiveAbilities {
         inventory: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
         stats: Option<&comp::Stats>,
+        ability_map: &AbilityMap,
     ) -> Ability {
         match input {
             AbilityInput::Guard => self.guard.into(),
@@ -176,7 +179,7 @@ impl ActiveAbilities {
                 if stats.is_some_and(|s| s.disable_auxiliary_abilities) {
                     Ability::Empty
                 } else {
-                    self.auxiliary_set(inventory, skill_set)
+                    self.auxiliary_set(inventory, skill_set, ability_map)
                         .get(index)
                         .copied()
                         .map(|a| a.into())
@@ -199,18 +202,33 @@ impl ActiveAbilities {
         combo: Option<&Combo>,
         stats: Option<&comp::Stats>,
         buffs: Option<&Buffs>,
+        ability_map: &AbilityMap,
         // bool is from_offhand
     ) -> Option<(CharacterAbility, bool, SpecifiedAbility)> {
-        let ability = self.get_ability(input, inv, Some(skill_set), stats);
+        let ability = self.get_ability(input, inv, Some(skill_set), stats, ability_map);
 
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         let scale_ability = |ability: CharacterAbility, equip_slot| {
-            let tool_kind = inv
-                .and_then(|inv| inv.equipped(equip_slot))
+            let item = inv.and_then(|inv| inv.equipped(equip_slot));
+            // L'ajustement aux statistiques de l'outil se faisait autrefois a
+            // l'equipement, en recopiant tout l'ensemble ajuste dans l'objet
+            // (`AbilitySet::modified_by_tool`). On l'applique ici, sur la seule
+            // abilite retenue. L'ordre compte : les statistiques d'abord, les
+            // competences ensuite, comme avant.
+            let ability = match item {
+                Some(item) => match &*item.kind() {
+                    ItemKind::Tool(tool) => {
+                        ability.adjusted_by_stats(tool.stats(item.stats_durability_multiplier()))
+                    },
+                    _ => ability,
+                },
+                None => ability,
+            };
+            let tool_kind = item
                 .and_then(|item| match_some!(&*item.kind(), ItemKind::Tool(tool) => tool.kind));
             ability.adjusted_by_skills(skill_set, tool_kind)
         };
@@ -294,10 +312,12 @@ impl ActiveAbilities {
         inv: Option<&'a Inventory>,
         skill_set: Option<&'a SkillSet>,
         equip_slot: EquipSlot,
+        ability_map: &'a AbilityMap,
     ) -> impl Iterator<Item = usize> + 'a {
-        inv.and_then(|inv| inv.equipped(equip_slot).and_then(|i| i.item_config()))
+        inv.and_then(|inv| inv.equipped(equip_slot))
+            .and_then(|i| ability_map.item_ability_set(i))
             .into_iter()
-            .flat_map(|config| &config.abilities.abilities)
+            .flat_map(|set| &set.abilities)
             .enumerate()
             .filter_map(move |(i, a)| match a {
                 AbilityKind::Simple(skill, _) => skill
@@ -318,6 +338,7 @@ impl ActiveAbilities {
     pub fn all_available_abilities(
         inv: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
+        ability_map: &AbilityMap,
     ) -> Vec<AuxiliaryAbility> {
         let mut ability_buff = vec![];
         // Check if uses combo of two "equal" weapons
@@ -335,19 +356,19 @@ impl ActiveAbilities {
             .is_some_and(|(a_spec, a_kind, b_spec, b_kind)| (a_spec, a_kind) == (b_spec, b_kind));
 
         // Push main weapon abilities
-        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand)
+        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand, ability_map)
             .map(AuxiliaryAbility::MainWeapon)
             .for_each(|a| ability_buff.push(a));
 
         // Push secondary weapon abilities, if different
         // If equal, just take the first
         if !paired {
-            Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand)
+            Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand, ability_map)
                 .map(AuxiliaryAbility::OffWeapon)
                 .for_each(|a| ability_buff.push(a));
         }
         // Push glider abilities
-        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::Glider)
+        Self::iter_available_abilities_on(inv, skill_set, EquipSlot::Glider, ability_map)
             .map(AuxiliaryAbility::Glider)
             .for_each(|a| ability_buff.push(a));
 
@@ -358,11 +379,12 @@ impl ActiveAbilities {
         inv: Option<&'a Inventory>,
         skill_set: Option<&'a SkillSet>,
         limit: Option<usize>,
+        ability_map: &'a AbilityMap,
     ) -> Vec<AuxiliaryAbility> {
-        let mut iter = Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand)
+        let mut iter = Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveMainhand, ability_map)
             .map(AuxiliaryAbility::MainWeapon)
             .chain(
-                Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand)
+                Self::iter_available_abilities_on(inv, skill_set, EquipSlot::ActiveOffhand, ability_map)
                     .map(AuxiliaryAbility::OffWeapon),
             );
 
@@ -427,10 +449,11 @@ impl Ability {
         stance: Option<&Stance>,
         combo: Option<&Combo>,
         buffs: Option<&Buffs>,
+        ability_map: &'a AbilityMap,
     ) -> Option<&'a str> {
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         let contextual_id = |kind: Option<&'a AbilityKind<_>>| -> Option<&'a str> {
@@ -542,10 +565,11 @@ impl SpecifiedAbility {
         self,
         char_state: Option<&CharacterState>,
         inv: Option<&'a Inventory>,
+        ability_map: &'a AbilityMap,
     ) -> Option<&'a str> {
         let ability_set = |equip_slot| {
             inv.and_then(|inv| inv.equipped(equip_slot))
-                .and_then(|i| i.item_config().map(|c| &c.abilities))
+                .and_then(|i| ability_map.item_ability_set(i))
         };
 
         fn ability_id(spec_ability: SpecifiedAbility, ability: &AbilityKind<AbilityItem>) -> &str {
@@ -3729,4 +3753,461 @@ pub enum AbilityInitEvent {
 
 impl Component for Stance {
     type Storage = DerefFlaggedStorage<Self, specs::VecStorage<Self>>;
+}
+
+// --- Machinerie d'abilites, deplacee depuis `inventory::item::tool` ---
+//
+// Ces types decrivent quelles abilites un objet confere. Ils vivaient dans le
+// module des objets, ce qui l'obligeait a connaitre `CharacterAbility`,
+// `Stance`, `Buffs` et `SkillSet` — toute la couche haute. Ils sont ici.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilitySet<T> {
+    pub guard: Option<AbilityKind<T>>,
+    pub primary: AbilityKind<T>,
+    pub secondary: AbilityKind<T>,
+    pub abilities: Vec<AbilityKind<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AbilityKind<T> {
+    Simple(Option<Skill>, T),
+    Contextualized {
+        pseudo_id: String,
+        abilities: Vec<(AbilityContext, (Option<Skill>, T))>,
+    },
+}
+
+/// The contextual index indicates which entry in a contextual ability was used.
+/// This should only be necessary for the frontend to distinguish between the
+/// options when a contextual ability is used.
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, Eq, PartialEq)]
+pub struct ContextualIndex(pub usize);
+
+impl<T> AbilityKind<T> {
+    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> AbilityKind<U> {
+        match self {
+            Self::Simple(s, x) => AbilityKind::<U>::Simple(s, f(x)),
+            Self::Contextualized {
+                pseudo_id,
+                abilities,
+            } => AbilityKind::<U>::Contextualized {
+                pseudo_id,
+                abilities: abilities
+                    .into_iter()
+                    .map(|(c, (s, x))| (c, (s, f(x))))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilityKind<U> {
+        match self {
+            Self::Simple(s, x) => AbilityKind::<U>::Simple(*s, f(x)),
+            Self::Contextualized {
+                pseudo_id,
+                abilities,
+            } => AbilityKind::<U>::Contextualized {
+                pseudo_id: pseudo_id.clone(),
+                abilities: abilities
+                    .iter()
+                    .map(|(c, (s, x))| (*c, (*s, f(x))))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn ability(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        let unlocked = |s: Option<Skill>, a| {
+            // If there is a skill requirement and the skillset does not contain the
+            // required skill, return None
+            s.is_none_or(|s| skillset.is_some_and(|ss| ss.has_skill(s)))
+                .then_some(a)
+        };
+
+        match self {
+            AbilityKind::Simple(s, a) => unlocked(*s, a).map(|a| (a, None)),
+            AbilityKind::Contextualized {
+                pseudo_id: _,
+                abilities,
+            } => abilities
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (req_contexts, (s, a)))| {
+                    unlocked(*s, a).map(|a| (i, (req_contexts, a)))
+                })
+                .find_map(|(i, (req_context, a))| {
+                    req_context
+                        .fulfilled_by(stance, inv, combo, buffs)
+                        .then_some((a, Some(ContextualIndex(i))))
+                }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Copy, Eq, PartialEq, Hash, Default)]
+pub struct AbilityContext {
+    /// Note, in this context `Stance::None` isn't intended to be used. e.g. the
+    /// stance field should be `None` instead of `Some(Stance::None)` in the
+    /// ability map config files(s).
+    pub stance: Option<Stance>,
+    #[serde(default)]
+    pub dual_wielding_same_kind: bool,
+    pub combo: Option<u32>,
+    pub buff: Option<BuffKind>,
+}
+
+impl AbilityContext {
+    fn fulfilled_by(
+        &self,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> bool {
+        let dual_wielding_same_kind = if let Some(inv) = inv {
+            let tool_kind = |slot| {
+                inv.equipped(slot).and_then(|i| {
+                    if let ItemKind::Tool(tool) = &*i.kind() {
+                        Some(tool.kind)
+                    } else {
+                        None
+                    }
+                })
+            };
+            tool_kind(EquipSlot::ActiveMainhand) == tool_kind(EquipSlot::ActiveOffhand)
+        } else {
+            false
+        };
+
+        // Either stance not required or context is in the same stance
+        let stance_check = self.stance.is_none_or(|s| stance.copied() == Some(s));
+        // Either dual wield not required or context is dual wielding
+        let dual_wield_check = !self.dual_wielding_same_kind || dual_wielding_same_kind;
+        // Either no minimum combo needed or context has sufficient combo
+        let combo_check = self
+            .combo
+            .is_none_or(|c_req| combo.is_some_and(|c| c.counter() >= c_req));
+        // Either no buff requored or entity has buff present
+        let buff_check = self
+            .buff
+            .is_none_or(|b| buffs.is_some_and(|buffs| buffs.contains(b)));
+
+        stance_check && dual_wield_check && combo_check && buff_check
+    }
+}
+
+impl AbilitySet<AbilityItem> {
+    #[must_use]
+    pub fn modified_by_tool(
+        self,
+        tool: &Tool,
+        durability_multiplier: DurabilityMultiplier,
+    ) -> Self {
+        self.map(|a| AbilityItem {
+            id: a.id,
+            ability: a
+                .ability
+                .adjusted_by_stats(tool.stats(durability_multiplier)),
+        })
+    }
+}
+
+impl<T> AbilitySet<T> {
+    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> AbilitySet<U> {
+        AbilitySet {
+            guard: self.guard.map(|g| g.map(&mut f)),
+            primary: self.primary.map(&mut f),
+            secondary: self.secondary.map(&mut f),
+            abilities: self.abilities.into_iter().map(|x| x.map(&mut f)).collect(),
+        }
+    }
+
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilitySet<U> {
+        AbilitySet {
+            guard: self.guard.as_ref().map(|g| g.map_ref(&mut f)),
+            primary: self.primary.map_ref(&mut f),
+            secondary: self.secondary.map_ref(&mut f),
+            abilities: self.abilities.iter().map(|x| x.map_ref(&mut f)).collect(),
+        }
+    }
+
+    pub fn guard(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.guard
+            .as_ref()
+            .and_then(|g| g.ability(skillset, stance, inv, combo, buffs))
+    }
+
+    pub fn primary(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.primary.ability(skillset, stance, inv, combo, buffs)
+    }
+
+    pub fn secondary(
+        &self,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.secondary.ability(skillset, stance, inv, combo, buffs)
+    }
+
+    pub fn auxiliary(
+        &self,
+        index: usize,
+        skillset: Option<&SkillSet>,
+        stance: Option<&Stance>,
+        inv: Option<&Inventory>,
+        combo: Option<&Combo>,
+        buffs: Option<&Buffs>,
+    ) -> Option<(&T, Option<ContextualIndex>)> {
+        self.abilities
+            .get(index)
+            .and_then(|a| a.ability(skillset, stance, inv, combo, buffs))
+    }
+}
+
+impl Default for AbilitySet<AbilityItem> {
+    fn default() -> Self {
+        AbilitySet {
+            guard: None,
+            primary: AbilityKind::Simple(None, AbilityItem {
+                id: String::new(),
+                ability: CharacterAbility::default(),
+            }),
+            secondary: AbilityKind::Simple(None, AbilityItem {
+                id: String::new(),
+                ability: CharacterAbility::default(),
+            }),
+            abilities: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilityItem {
+    pub id: String,
+    pub ability: CharacterAbility,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AbilityMapEntry<T = AbilityItem> {
+    AbilitySet(AbilitySet<T>),
+    AbilitySetOverride {
+        parent: AbilitySpec,
+        guard: Option<AbilityKind<T>>,
+        primary: Option<AbilityKind<T>>,
+        secondary: Option<AbilityKind<T>>,
+        added_abilities: Vec<AbilityKind<T>>,
+        removed_abilities: Vec<AbilityKind<T>>,
+    },
+}
+
+impl<T: Clone + Eq> AbilityMapEntry<T> {
+    pub fn map_ref<U, F: FnMut(&T) -> U>(&self, mut f: F) -> AbilityMapEntry<U> {
+        match self {
+            AbilityMapEntry::AbilitySet(ability_set) => {
+                AbilityMapEntry::AbilitySet(ability_set.map_ref(f))
+            },
+            AbilityMapEntry::AbilitySetOverride {
+                parent,
+                guard,
+                primary,
+                secondary,
+                added_abilities,
+                removed_abilities,
+            } => AbilityMapEntry::AbilitySetOverride {
+                parent: parent.clone(),
+                guard: guard.as_ref().map(|g| g.map_ref(&mut f)),
+                primary: primary.as_ref().map(|p| p.map_ref(&mut f)),
+                secondary: secondary.as_ref().map(|s| s.map_ref(&mut f)),
+                added_abilities: added_abilities.iter().map(|x| x.map_ref(&mut f)).collect(),
+                removed_abilities: removed_abilities
+                    .iter()
+                    .map(|x| x.map_ref(&mut f))
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn inherit(self, parent: &Self) -> Self {
+        match self {
+            AbilityMapEntry::AbilitySet(_) => self,
+            AbilityMapEntry::AbilitySetOverride {
+                guard,
+                primary,
+                secondary,
+                mut added_abilities,
+                mut removed_abilities,
+                ..
+            } => match parent {
+                AbilityMapEntry::AbilitySet(parent) => {
+                    added_abilities.extend(
+                        parent
+                            .abilities
+                            .iter()
+                            .filter(|x| !removed_abilities.contains(x))
+                            .cloned(),
+                    );
+
+                    AbilityMapEntry::AbilitySet(AbilitySet {
+                        guard: guard.or(parent.guard.clone()),
+                        primary: primary.unwrap_or(parent.primary.clone()),
+                        secondary: secondary.unwrap_or(parent.secondary.clone()),
+                        abilities: added_abilities,
+                    })
+                },
+                AbilityMapEntry::AbilitySetOverride {
+                    parent: p_parent,
+                    guard: p_guard,
+                    primary: p_primary,
+                    secondary: p_secondary,
+                    added_abilities: p_added_abilities,
+                    removed_abilities: p_removed_abilities,
+                } => {
+                    added_abilities.extend(
+                        p_added_abilities
+                            .iter()
+                            .filter(|x| !removed_abilities.contains(x))
+                            .cloned(),
+                    );
+                    removed_abilities.extend(
+                        p_removed_abilities
+                            .iter()
+                            .filter(|x| !added_abilities.contains(x))
+                            .cloned(),
+                    );
+
+                    AbilityMapEntry::AbilitySetOverride {
+                        parent: p_parent.clone(),
+                        guard: guard.or(p_guard.clone()),
+                        primary: primary.or(p_primary.clone()),
+                        secondary: secondary.or(p_secondary.clone()),
+                        added_abilities,
+                        removed_abilities,
+                    }
+                },
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbilityMap<T = AbilityItem>(HashMap<AbilitySpec, AbilityMapEntry<T>>);
+
+impl AbilityMap {
+    pub fn load() -> AssetHandle<Self> {
+        Self::load_expect("common.abilities.ability_set_manifest")
+    }
+}
+
+impl<T> AbilityMap<T> {
+    pub fn get_ability_set(&self, key: &AbilitySpec) -> Option<&AbilitySet<T>> {
+        self.0.get(key).and_then(|entry| match entry {
+            AbilityMapEntry::AbilitySet(ability_set) => Some(ability_set),
+            AbilityMapEntry::AbilitySetOverride { .. } => None,
+        })
+    }
+}
+
+impl Asset for AbilityMap {
+    fn load(cache: &AssetCache, specifier: &SharedString) -> Result<Self, BoxedError> {
+        let mut ability_map = cache
+            .load::<Ron<AbilityMap<String>>>(specifier)?
+            .read()
+            .0
+            .0
+            .clone();
+
+        // Find child entries and inherit from their parent
+        while let Some((spec, mut entry)) = {
+            let spec = ability_map
+                .iter()
+                .find(|(_, entry)| matches!(entry, AbilityMapEntry::AbilitySetOverride { .. }))
+                .map(|(spec, _)| spec.clone());
+
+            spec.and_then(|spec| ability_map.remove_entry(&spec))
+        } {
+            let parent = if let AbilityMapEntry::AbilitySetOverride { parent, .. } = &entry {
+                Some(parent)
+            } else {
+                None
+            }
+            .and_then(|parent| ability_map.get(parent));
+
+            if let Some(parent) = parent {
+                entry = entry.inherit(parent);
+            }
+
+            ability_map.insert(spec, entry);
+        }
+
+        Ok(AbilityMap(
+            ability_map
+                .into_iter()
+                .map(|(kind, set)| {
+                    (
+                        kind.clone(),
+                        set.map_ref(|s| AbilityItem {
+                            id: s.clone(),
+                            ability: if let Ok(handle) = cache.load::<Ron<CharacterAbility>>(s) {
+                                handle.cloned().into_inner()
+                            } else {
+                                warn!(?s, "missing specified ability file");
+                                CharacterAbility::default()
+                            },
+                        }),
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
+        ))
+    }
+}
+
+impl AbilityMap {
+    /// L'ensemble d'abilites que confere un objet, ou `None` s'il n'en confere
+    /// aucun.
+    ///
+    /// Remplace l'ancien cache `Item::item_config`, qui recopiait dans chaque
+    /// objet l'ensemble de ses abilites deja ajustees. Ce cache obligeait
+    /// `Item` a contenir des `CharacterAbility`, donc le module des objets a
+    /// connaitre toute la couche haute, et il voyageait sur le reseau et
+    /// jusqu'en base a chaque objet transmis.
+    ///
+    /// La recherche est aussi moins de travail que la construction du cache :
+    /// un appel n'a besoin que d'une abilite, la ou `ItemConfig` les ajustait
+    /// toutes. L'ajustement aux statistiques de l'outil, qui se faisait a la
+    /// construction, se fait desormais sur la seule abilite retenue — voir
+    /// `ActiveAbilities::activate_ability`.
+    pub fn item_ability_set(&self, item: &Item) -> Option<&AbilitySet<AbilityItem>> {
+        let spec = item.ability_spec();
+        match &*item.kind() {
+            ItemKind::Tool(tool) => spec
+                .and_then(|key| self.get_ability_set(&key))
+                .or_else(|| self.get_ability_set(&AbilitySpec::Tool(tool.kind))),
+            ItemKind::Glider => spec.and_then(|key| self.get_ability_set(&key)),
+            _ => None,
+        }
+    }
 }

@@ -45,7 +45,6 @@ pub fn create_deposit<S: State, T: Action<S, bool>>(
                             inv.remove_item_amount(
                                 &item.to_equivalent_item_def(),
                                 amount.ceil() as u32,
-                                &ctx.system_data.ability_map,
                                 &ctx.system_data.msm,
                             )
                         })
@@ -91,7 +90,6 @@ pub fn resolve_take_deposit(
             let mut item = Item::new_from_item_base(
                 ItemBase::Simple(item_def.clone()),
                 Vec::new(),
-                &ctx.system_data.ability_map,
                 &ctx.system_data.msm,
             );
             item.set_amount(amount)
@@ -142,7 +140,6 @@ pub fn finalize_courier_task(ctx: &mut NpcCtx, quest_id: QuestId, read_only: boo
                 inv.remove_item_amount(
                     item_def,
                     required_count(*amount),
-                    &ctx.system_data.ability_map,
                     &ctx.system_data.msm,
                 )
                 .is_some()

@@ -1001,6 +1001,9 @@ impl<'a> Skillbar<'a> {
 
     fn show_slotbar(&mut self, state: &State, ui: &mut UiCell, slot_offset: f64) {
         let shortcuts = self.global_state.settings.interface.shortcut_numbers;
+        // Les abilites d'un objet se retrouvent par une recherche dans le
+        // manifeste, la ou l'objet en portait une copie.
+        let ability_map = &common::comp::ability::AbilityMap::load().read();
 
         // TODO: avoid this
         let content_source = (
@@ -1112,7 +1115,7 @@ impl<'a> Skillbar<'a> {
                 }),
                 hotbar::SlotContents::Ability(i) => active_abilities
                     .and_then(|a| {
-                        a.auxiliary_set(Some(inventory), Some(skill_set))
+                        a.auxiliary_set(Some(inventory), Some(skill_set), ability_map)
                             .get(i)
                             .and_then(|a| {
                                 Ability::from(*a).ability_id(
@@ -1122,6 +1125,7 @@ impl<'a> Skillbar<'a> {
                                     stance,
                                     combo,
                                     buffs,
+                                    ability_map,
                                 )
                             })
                     })
@@ -1270,6 +1274,7 @@ impl<'a> Skillbar<'a> {
                 self.stance,
                 self.combo,
                 self.buffs,
+                ability_map,
             )
         });
 
@@ -1303,6 +1308,7 @@ impl<'a> Skillbar<'a> {
                 self.stance,
                 self.combo,
                 self.buffs,
+                ability_map,
             )
         });
 
@@ -1328,6 +1334,7 @@ impl<'a> Skillbar<'a> {
                         self.combo,
                         self.stats,
                         self.buffs,
+                        ability_map,
                     )
                 })
                 .is_some_and(|(a, _, _)| {
