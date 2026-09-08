@@ -216,6 +216,93 @@ impl<V, S: VolSize, M> Chunk<V, S, M> {
         }
     }
 
+
+    /// La position, dans le chunk, du voxel `rel_idx` du groupe `grp_idx`.
+    ///
+    /// L'inverse exact de [`Chunk::grp_idx`] et [`Chunk::rel_idx`] : c'est ce
+    /// qui permet de parcourir `vox` dans son ordre de stockage et de retrouver
+    /// ou chaque voxel se trouve, plutot que de balayer le volume logique et
+    /// d'indexer a chaque pas.
+    #[inline(always)]
+    fn pos_depuis_indices(grp_idx: u32, rel_idx: u32) -> Vec3<i32> {
+        let grp_pos = Vec3::new(
+            grp_idx % Self::GROUP_COUNT.x,
+            (grp_idx / Self::GROUP_COUNT.x) % Self::GROUP_COUNT.y,
+            grp_idx / (Self::GROUP_COUNT.x * Self::GROUP_COUNT.y),
+        );
+        let rel_pos = Vec3::new(
+            rel_idx % Self::GROUP_SIZE.x,
+            (rel_idx / Self::GROUP_SIZE.x) % Self::GROUP_SIZE.y,
+            rel_idx / (Self::GROUP_SIZE.x * Self::GROUP_SIZE.y),
+        );
+        (grp_pos * Self::GROUP_SIZE + rel_pos).map(|e| e as i32)
+    }
+
+    /// Les voxels **reellement stockes**, groupe par groupe.
+    ///
+    /// Un chunk de `S::SIZE` voxels est decoupe en 256 groupes ; un groupe dont
+    /// tous les voxels valent `default` n'occupe aucune place dans `vox` et son
+    /// entree d'`indices` vaut une valeur hors bornes. Cet iterateur ne visite
+    /// que les autres — `num_groups() * GROUP_VOLUME` voxels au lieu du volume
+    /// entier.
+    ///
+    /// **C'est la difference avec `vol_iter`**, qui parcourt le volume
+    /// *logique* : sur un sous-chunk de terrain a peine entame, `vol_iter` rend
+    /// 16 384 positions la ou `iter_stored` en rend quelques milliers. Un
+    /// appelant qui cherche une propriete rare — les blocs lumineux, par
+    /// exemple — ne devrait jamais payer le volume logique.
+    ///
+    /// **Ne rend pas tout le contenu du chunk** : les groupes implicites en sont
+    /// absents. Voir [`Chunk::iter_implicit_groups`], son complement exact.
+    pub fn iter_stored(&self) -> impl Iterator<Item = (Vec3<i32>, &V)> + '_ {
+        let num_groups = self.num_groups() as u32;
+        self.indices
+            .iter()
+            .enumerate()
+            .filter_map(move |(grp_idx, &base)| {
+                let base = u32::from(base);
+                (base < num_groups).then_some((grp_idx as u32, base))
+            })
+            .flat_map(move |(grp_idx, base)| {
+                (0..Self::GROUP_VOLUME).map(move |rel_idx| {
+                    let pos = Self::pos_depuis_indices(grp_idx, rel_idx);
+                    (pos, &self.vox[(base * Self::GROUP_VOLUME + rel_idx) as usize])
+                })
+            })
+    }
+
+    /// Les groupes **implicites**, avec leur boite et le bloc dont ils sont
+    /// faits.
+    ///
+    /// Complement exact d'[`Chunk::iter_stored`], qui les saute — c'est tout son
+    /// interet. Un appelant qui cherche une propriete du *contenu* ne peut pas
+    /// s'en contenter : une nappe de lave assez large pour remplir un groupe
+    /// disparaitrait de son inventaire, et rien ne le signalerait.
+    ///
+    /// Rend `(coin, bloc)` : le coin de plus petite coordonnee du groupe, et son
+    /// remplissage. Le groupe s'etend sur `GROUP_SIZE` depuis la — a l'appelant
+    /// d'en faire ce qu'il veut ; les enumerer bloc par bloc n'est pas toujours
+    /// le bon choix.
+    pub fn iter_implicit_groups(&self) -> impl Iterator<Item = (Vec3<i32>, &V)> + '_ {
+        let num_groups = self.num_groups() as u32;
+        self.indices
+            .iter()
+            .enumerate()
+            .filter(move |&(_, &base)| u32::from(base) >= num_groups)
+            .map(move |(grp_idx, _)| {
+                (
+                    Self::pos_depuis_indices(grp_idx as u32, 0),
+                    &self.default,
+                )
+            })
+    }
+
+    /// Le cote d'un groupe, en voxels.
+    ///
+    /// Publique parce qu'un appelant d'[`Chunk::iter_implicit_groups`] a besoin
+    /// de savoir sur quelle etendue porte le coin qu'on lui rend.
+    pub const fn group_size() -> Vec3<u32> { Self::GROUP_SIZE }
+
     #[inline(always)]
     fn grp_idx(pos: Vec3<i32>) -> u32 {
         let grp_pos = pos.map2(Self::GROUP_SIZE, |e, s| e as u32 / s);

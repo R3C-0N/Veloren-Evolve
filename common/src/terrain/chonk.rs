@@ -88,6 +88,57 @@ impl<V, S: RectVolSize, M: Clone> Chonk<V, S, M> {
             })
     }
 
+    /// La hauteur d'un sous-chunk, en blocs.
+    ///
+    /// Elle vaut la **moitie** du cote horizontal, pas son egal : 16 pour un
+    /// chunk de 32.
+    pub const fn sub_chunk_height() -> u32 { SubChunkSize::<S>::SIZE.z }
+
+    /// Les blocs **reellement stockes** du chonk, en z absolu.
+    ///
+    /// Enveloppe de [`Chunk::iter_stored`] : elle saute les groupes de 64 voxels
+    /// entierement faits du bloc par defaut de leur sous-chunk, donc la majeure
+    /// partie d'une colonne de terrain.
+    ///
+    /// **A preferer a [`Chonk::iter_changed`]** des que l'appelant cherche une
+    /// propriete rare du contenu. `iter_changed` saute les sous-chunks
+    /// homogenes mais parcourt le volume *logique* des autres — 32 x 32 x 16
+    /// positions chacun, meme quand trois groupes sur quatre sont implicites.
+    ///
+    /// **Ne rend pas tout le contenu** : ni les groupes implicites, ni les
+    /// bandes `below` et `above`. Voir [`Chonk::iter_groupes_implicites`].
+    pub fn iter_stored(&self) -> impl Iterator<Item = (Vec3<i32>, &V)> + '_ {
+        self.sub_chunks.iter().enumerate().flat_map(move |(i, sc)| {
+            let z_offset = self.z_offset + i as i32 * SubChunkSize::<S>::SIZE.z as i32;
+            sc.iter_stored()
+                .map(move |(pos, vox)| (pos + Vec3::unit_z() * z_offset, vox))
+        })
+    }
+
+    /// Les groupes implicites du chonk : leur coin de plus petite coordonnee, en
+    /// z absolu, et le bloc dont ils sont faits.
+    ///
+    /// Complement exact d'[`Chonk::iter_stored`]. Ensemble ils couvrent
+    /// exactement `[get_min_z, get_max_z)`, sans recouvrement — c'est ce qui
+    /// autorise un appelant a les additionner pour reconstituer le contenu.
+    ///
+    /// Il faut les deux : une nappe de lave assez large pour remplir un groupe
+    /// n'apparait que dans celui-ci, et son absence ne se signalerait par rien
+    /// — une grotte restee noire ne saute pas aux yeux.
+    ///
+    /// Le groupe s'etend sur [`Chonk::group_size`] depuis le coin rendu.
+    pub fn iter_groupes_implicites(&self) -> impl Iterator<Item = (Vec3<i32>, &V)> + '_ {
+        self.sub_chunks.iter().enumerate().flat_map(move |(i, sc)| {
+            let z_offset = self.z_offset + i as i32 * SubChunkSize::<S>::SIZE.z as i32;
+            sc.iter_implicit_groups()
+                .map(move |(pos, vox)| (pos + Vec3::unit_z() * z_offset, vox))
+        })
+    }
+
+    /// Le cote d'un groupe, en blocs — l'etendue que couvre un coin rendu par
+    /// [`Chonk::iter_groupes_implicites`].
+    pub const fn group_size() -> Vec3<u32> { SubChunk::<V, S, M>::group_size() }
+
     // Returns the index (in self.sub_chunks) of the SubChunk that contains
     // layer z; note that this index changes when more SubChunks are prepended
     #[inline]
@@ -403,6 +454,99 @@ impl<'a, V, S: RectVolSize, M: Clone> IntoVolIterator<'a> for &'a Chonk<V, S, M>
                 phantom: PhantomData,
             },
             opt_inner: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terrain::{Block, BlockKind, TerrainChunk, TerrainChunkMeta};
+    use hashbrown::HashMap;
+
+    /// `iter_stored` et `iter_groupes_implicites` se partagent le chonk : aucun
+    /// bloc n'est rendu par les deux, aucun n'echappe aux deux.
+    ///
+    /// C'est la seule chose qui autorise un appelant a les additionner pour
+    /// reconstituer le contenu. Sans elle, l'inventaire des blocs lumineux du
+    /// client perdrait ou compterait deux fois une nappe de lave, et rien ne le
+    /// dirait — une grotte restee noire ne saute pas aux yeux.
+    #[test]
+    fn iter_stored_et_groupes_implicites_se_partagent_le_chonk() {
+        let roche = Block::new(BlockKind::Rock, Rgb::new(60, 60, 60));
+        let mut chonk = TerrainChunk::new(0, roche, Block::empty(), TerrainChunkMeta::void());
+
+        let cote = TerrainChunk::RECT_SIZE.x as i32;
+        let hauteur = TerrainChunk::sub_chunk_height() as i32;
+
+        // Trois sous-chunks : le premier troue (donc fragmente), le deuxieme
+        // plein de roche, le troisieme troue lui aussi. Le deuxieme n'est
+        // homogene qu'apres defragmentation — c'est ce que la reserve de
+        // `Chunk::homogeneous` dit, et ce que fait la generation du monde avant
+        // d'envoyer un chunk.
+        for x in 0..cote {
+            for y in 0..cote {
+                for z in 0..3 * hauteur {
+                    let troue = (z < hauteur || z >= 2 * hauteur) && (x + y + z) % 7 == 0;
+                    let bloc = if troue { Block::empty() } else { roche };
+                    chonk.set(Vec3::new(x, y, z), bloc).expect("dans le chonk");
+                }
+            }
+        }
+        chonk.defragment();
+
+        let groupe = TerrainChunk::group_size().map(|e| e as i32);
+        let mut vus: HashMap<Vec3<i32>, &Block> = HashMap::new();
+
+        for (pos, bloc) in chonk.iter_stored() {
+            assert!(
+                vus.insert(pos, bloc).is_none(),
+                "{pos:?} rendu deux fois par iter_stored"
+            );
+        }
+        let n_stockes = vus.len();
+
+        let mut n_groupes = 0;
+        for (coin, bloc) in chonk.iter_groupes_implicites() {
+            n_groupes += 1;
+            for dz in 0..groupe.z {
+                for dx in 0..groupe.x {
+                    for dy in 0..groupe.y {
+                        let pos = coin + Vec3::new(dx, dy, dz);
+                        assert!(
+                            vus.insert(pos, bloc).is_none(),
+                            "{pos:?} rendu par les deux iterateurs"
+                        );
+                    }
+                }
+            }
+        }
+
+        assert!(
+            n_groupes > 0,
+            "aucun groupe implicite : `defragment` n'a pas fait son travail, et le test              n'eprouve pas la moitie qui compte"
+        );
+        // Le gain, et non seulement la couverture : sans cette assertion, un
+        // `iter_stored` qui rendrait tout passerait en beneficiant d'une
+        // couverture rendue triviale.
+        let volume = (cote * cote * 3 * hauteur) as usize;
+        assert!(
+            n_stockes < volume,
+            "iter_stored rend tout le volume logique : il n'elague rien"
+        );
+
+        // Et couvrant : tout bloc du chonk est rendu par l'un des deux.
+        for z in chonk.get_min_z()..chonk.get_max_z() {
+            for x in 0..cote {
+                for y in 0..cote {
+                    let pos = Vec3::new(x, y, z);
+                    let attendu = chonk.get(pos).expect("dans le chonk");
+                    match vus.get(&pos) {
+                        Some(bloc) => assert_eq!(*bloc, attendu, "valeur divergente en {pos:?}"),
+                        None => panic!("{pos:?} n'est rendu par aucun des deux iterateurs"),
+                    }
+                }
+            }
         }
     }
 }
