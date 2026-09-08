@@ -599,6 +599,49 @@ pub fn repere(map: MapSizeLg, lieu: Lieu) -> (Vec3<f64>, Vec3<f64>, Vec3<f64>) {
     )
 }
 
+/// Le repère local **orthonormé** : verticale, est, nord.
+///
+/// [`repere`] rend les tangentes du paramétrage, qui ne sont pas orthogonales —
+/// et leur non-orthogonalité est le sujet dès qu'on range une orientation. Mais
+/// un observateur a besoin d'un repère de vue, pas du paramétrage : la caméra
+/// et la nappe lointaine orthogonalisent donc, et elles doivent le faire **au
+/// même endroit**. Deux orthogonalisations divergeraient, et l'image du
+/// lointain cesserait de se raccorder à celle du proche.
+///
+/// La verticale, elle, est exacte : c'est la normale de la sphère.
+pub fn repere_orthonorme(map: MapSizeLg, lieu: Lieu) -> (Vec3<f64>, Vec3<f64>, Vec3<f64>) {
+    let (haut, _, tv) = repere(map, lieu);
+    let nord = (tv - haut * tv.dot(haut)).normalized();
+    let est = nord.cross(haut);
+    (haut, est, nord)
+}
+
+/// L'angle au centre, en radians, au-delà duquel plus rien n'est visible.
+///
+/// Sur une planète le monde s'arrête pour de bon : un observateur à `h_cam`
+/// voit son horizon à `acos(R/(R+h_cam))`, et un sommet de hauteur `h_max`
+/// dépasse encore de `acos(R/(R+h_max))` derrière. La somme est l'angle total,
+/// et c'est **la borne du lointain** — au-delà, il y a du ciel, pas du
+/// brouillard.
+///
+/// À `x_lg = 10` le rayon vaut 5 036 blocs : l'horizon d'un joueur à cinquante
+/// blocs d'altitude est à 707 blocs. Ce n'est pas beaucoup, et ce n'est pas
+/// réglable — `R = arête/(4K)`, voir [`rayon`].
+///
+/// **Les deux gardes ne sont pas décoratives.** Une altitude négative — sous
+/// l'eau, dans une grotte — donne un argument supérieur à 1, donc un `NaN`, et
+/// un `NaN` ici fait disparaître tout le lointain d'un coup. Le plafond, lui,
+/// tient l'angle à l'écart de l'antipode, où la carte exponentielle dégénère.
+pub fn horizon(map: MapSizeLg, h_cam: f64, h_max: f64) -> f64 {
+    /// Au-delà, la calotte approche l'antipode et le paramétrage azimutal
+    /// perd son sens. Aucun monde jouable n'en approche.
+    const PLAFOND: f64 = 2.8;
+
+    let r = rayon(map);
+    let portee = |h: f64| (r / (r + h.max(0.0))).clamp(-1.0, 1.0).acos();
+    (portee(h_cam) + portee(h_max)).min(PLAFOND)
+}
+
 /// Le franchissement d'une arête par une entité.
 ///
 /// `depuis` est sa dernière position canonique, `vers` celle que la physique
@@ -723,6 +766,138 @@ mod tests {
     fn tourner_v(d: Vec2<i32>, k: u8) -> Vec2<i32> {
         let (cos, sin) = COS_SIN[k as usize];
         Vec2::new(d.x * cos - d.y * sin, d.x * sin + d.y * cos)
+    }
+
+
+    /// **Une boîte de chunk n'est pas sa boîte du patron.**
+    ///
+    /// Le terrain se projette sommet par sommet : ce qui est à l'écran vaut
+    /// `dir·(R + z) − origine`. Le tronc de vue du client, lui, testait la boîte
+    /// telle qu'elle est dans le patron, `[x·32, y·32, z]`, et rejetait ainsi
+    /// les cent quarante-cinq chunks chargés sans en garder un seul.
+    ///
+    /// Entre les deux il n'y a pas une translation mais la **rotation de la
+    /// face** : sur `+X`, le `z` du patron devient l'axe `x` du monde, et son
+    /// `x` devient `y`. On mesure donc l'écart des deux déplacements, foyer
+    /// retiré de chacun.
+    ///
+    /// **Témoin :** le même écart, mais après avoir appliqué au déplacement du
+    /// patron la base entière de la face, `x·r + y·h + z·n`. Il doit s'effondrer
+    /// — il ne reste alors que la flèche de la projection sur trente-deux blocs.
+    /// Sans ce témoin, la mesure ne dirait pas ce qu'elle compte : un grand
+    /// écart brut s'expliquerait aussi bien par une simple différence d'échelle.
+    #[test]
+    fn la_boite_rendue_n_est_pas_la_boite_du_patron() {
+        // **La taille compte, ici.** Le rayon vaut `arête/(4K)` : sur la carte
+        // menue des autres tests il ne ferait que trois cent quinze blocs, et
+        // la seule courbure écarterait déjà les deux boîtes. On prend la taille
+        // d'un vrai monde, `x_lg = 10`.
+        let map = MapSizeLg::nouvelle_cubique(Vec2::new(10, 10)).expect("carte cubique valide");
+        let r = rayon(map);
+        let f = face_blocs(map) as f64;
+
+        let mut pire_brut: f64 = 0.0;
+        let mut pire_corrige: f64 = 0.0;
+
+        for face in 0..6u8 {
+            let base = BASES[face as usize];
+            let v3 = |a: [i32; 3]| Vec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
+            let (est, nord, haut) = (v3(base.r), v3(base.h), v3(base.n));
+
+            let c = (f / 2.0) as i32;
+            let foyer = cle_de_bloc(map, face, c - 16, c).map(|e| e as f64);
+            let alt = 200.0;
+            let origine = direction(map, foyer).expect("foyer sur la carte") * (r + alt);
+
+            for i in 0..8 {
+                let coin = Vec3::new(
+                    foyer.x + 32.0 + (i & 1) as f64 * 32.0,
+                    foyer.y + (i >> 1 & 1) as f64 * 32.0,
+                    if i & 4 == 0 { alt - 64.0 } else { alt + 64.0 },
+                );
+                let rendu =
+                    direction(map, coin.xy()).expect("coin sur la carte") * (r + coin.z) - origine;
+                let patron = coin - Vec3::new(foyer.x, foyer.y, alt);
+                let tourne = est * patron.x + nord * patron.y + haut * patron.z;
+
+                pire_brut = pire_brut.max((rendu - patron).magnitude());
+                pire_corrige = pire_corrige.max((rendu - tourne).magnitude());
+            }
+        }
+
+        println!(
+            "boîte rendue contre boîte du patron : {pire_brut:.1} bloc ;              une fois la base de la face appliquée : {pire_corrige:.2} bloc"
+        );
+
+        assert!(
+            pire_brut > 64.0,
+            "la boîte rendue devrait s'éloigner de celle du patron d'au moins la              demi-hauteur du chunk ; écart mesuré {pire_brut:.1} bloc"
+        );
+        assert!(
+            pire_corrige < 8.0,
+            "après rotation, il ne devrait rester que la flèche de la projection ;              écart mesuré {pire_corrige:.2} bloc — la mesure ne compte donc pas la              rotation, et ne prouve rien"
+        );
+    }
+
+    /// **Le repère orthonormé l'est vraiment, et il regarde au bon endroit.**
+    ///
+    /// Trois choses à tenir partout, y compris aux coins où les tangentes du
+    /// paramétrage se coupent à 120° : les trois vecteurs sont unitaires, ils
+    /// sont deux à deux orthogonaux, et le trièdre est direct. Un trièdre
+    /// indirect retournerait l'est et le nord — la nappe se dessinerait en
+    /// miroir sans que rien ne plante.
+    #[test]
+    fn le_repere_orthonorme_est_orthonorme() {
+        let map = carte();
+        let f = face_blocs(map) as f64;
+        let mut pire: f64 = 0.0;
+        for face in 0..6u8 {
+            for i in 0..=8 {
+                for j in 0..=8 {
+                    // Jusqu'au bord de la face, coins compris.
+                    let lieu = Lieu {
+                        face,
+                        u: i as f64 / 8.0 * f,
+                        v: j as f64 / 8.0 * f,
+                    };
+                    let (haut, est, nord) = repere_orthonorme(map, lieu);
+                    for v in [haut, est, nord] {
+                        pire = pire.max((v.magnitude() - 1.0).abs());
+                    }
+                    pire = pire.max(haut.dot(est).abs());
+                    pire = pire.max(haut.dot(nord).abs());
+                    pire = pire.max(est.dot(nord).abs());
+                    // Direct : est × nord = haut.
+                    pire = pire.max((est.cross(nord) - haut).magnitude());
+                }
+            }
+        }
+        assert!(pire < 1e-6, "repère orthonormé : {pire} d'écart");
+    }
+
+    /// **L'horizon ne peut ni disparaître ni percer.**
+    ///
+    /// Le cas qui compte est `h_cam` négatif — sous l'eau, dans une grotte :
+    /// sans la garde, `acos` d'un argument supérieur à 1 rend `NaN`, et un
+    /// `NaN` fait disparaître tout le lointain d'un coup. Ce cas est le test,
+    /// pas le décor.
+    #[test]
+    fn l_horizon_ne_degenere_jamais() {
+        let map = carte();
+        for &h_cam in &[-1e6, -50.0, 0.0, 50.0, 500.0, 5000.0] {
+            for &h_max in &[0.0, 500.0, 5000.0, 1e6] {
+                let t = horizon(map, h_cam, h_max);
+                assert!(t.is_finite(), "horizon non fini en ({h_cam}, {h_max})");
+                assert!(
+                    (0.0..=2.8).contains(&t),
+                    "horizon hors bornes en ({h_cam}, {h_max}) : {t}"
+                );
+            }
+        }
+        // Et il croît bien avec l'altitude : un horizon qui ne bougerait pas ne
+        // mesurerait rien.
+        assert!(horizon(map, 500.0, 0.0) > horizon(map, 50.0, 0.0));
+        assert!(horizon(map, 50.0, 500.0) > horizon(map, 50.0, 0.0));
     }
 
     /// Les tailles se déduisent l'une de l'autre, et le patron tient dans la

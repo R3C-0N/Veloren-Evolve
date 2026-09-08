@@ -18,36 +18,56 @@ float billow_noise_2d(vec2 pos) {
 // Returns vec4(r, g, b, density)
 vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_underground) {
     #ifdef EXPERIMENTAL_CURVEDWORLD
-        pos.z += pow(distance(pos.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
+        // La fausse courbure de Veloren ne s'applique pas à un monde qui en a
+        // une vraie : les deux se cumuleraient.
+        if (!cube_actif()) {
+            pos.z += pow(distance(pos.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
+        }
     #endif
 
-    // Natural attenuation of air (air naturally attenuates light that passes through it)
-    // Simulate the atmosphere thinning as you get higher. Not physically accurate, but then
-    // it can't be since Veloren's world is flat, not spherical.
-    float atmosphere_alt = cloud_avg_alt() + 40000.0;
-    // Veloren's world is flat. This is, to put it mildly, somewhat non-physical. With the earth as an infinitely-big
-    // plane, the atmosphere is therefore capable of scattering 100% of any light source at the horizon, no matter how
-    // bright, because it has to travel through an infinite amount of atmosphere. This doesn't happen in reality
-    // because the earth has curvature and so there is an upper bound on the amount of atmosphere that a sunset must
-    // travel through. We 'simulate' this by fading out the atmosphere density with distance.
-    float flat_earth_hack = max(0.0, 1.0 - dist * 0.00003 * pow(max(0.0, dir.z), 0.2));
-    float air = 0.015 * clamp((atmosphere_alt - pos.z) / 20000, 0, 1) * flat_earth_hack;
+    // **La hauteur au-dessus de la sphère, et la place dans le patron.**
+    //
+    // Sur une planète, le `.z` d'un point ne dit rien de son altitude — il vit
+    // dans le repère 3D du cube. Ces deux quantités remplacent partout `pos.z`
+    // et `pos.xy` dans ce qui suit ; le monde plat y retrouve exactement ses
+    // anciennes valeurs.
+    float h_pos = hauteur_monde(pos);
+    vec2 pos_carte = cube_actif()
+        ? cube_wpos_de_direction(cube_direction_de_rendu(pos - focus_off.xyz))
+        : pos.xy;
 
-    float alt = alt_at(pos.xy - focus_off.xy);
+    // Natural attenuation of air (air naturally attenuates light that passes through it)
+    // Simulate the atmosphere thinning as you get higher.
+    float atmosphere_alt = cloud_avg_alt() + 40000.0;
+
+    // **Sur une planète, ce terme n'a plus d'objet, et il disparaît.**
+    //
+    // Il existait parce qu'un plan infini diffuse 100 % de n'importe quelle
+    // lumière à l'horizon : il faudrait traverser une épaisseur d'atmosphère
+    // infinie. Une sphère a une courbure, donc l'épaisseur traversée est bornée,
+    // et le correctif — que Veloren nomme lui-même `flat_earth_hack` — devient
+    // une erreur au lieu d'une approximation. C'est le grand disque jaune qu'on
+    // voyait depuis l'orbite.
+    float flat_earth_hack = cube_actif()
+        ? 1.0
+        : max(0.0, 1.0 - dist * 0.00003 * pow(max(0.0, dir.z), 0.2));
+    float air = 0.015 * clamp((atmosphere_alt - h_pos) / 20000, 0, 1) * flat_earth_hack;
+
+    float alt = alt_at_rendu(pos - focus_off.xyz);
 
     // Mist sits close to the ground in valleys (TODO: use base_alt to put it closer to water)
     float mist_min_alt = 0.5;
     #if (CLOUD_MODE >= CLOUD_MODE_MEDIUM)
-        mist_min_alt = (textureLod(sampler2D(t_noise, s_noise), pos.xy / 35000.0, 0).x - 0.5) * 1.5 + 0.5;
+        mist_min_alt = (textureLod(sampler2D(t_noise, s_noise), pos_carte / 35000.0, 0).x - 0.5) * 1.5 + 0.5;
     #endif
     mist_min_alt = view_distance.z * 1.5 * (1.0 + mist_min_alt * 0.5) + alt * 0.5 + 250;
     const float MIST_FADE_HEIGHT = 1000;
-    float mist = 0.01 * pow(clamp(1.0 - (pos.z - mist_min_alt) / MIST_FADE_HEIGHT, 0.0, 1), 10.0) * flat_earth_hack;
+    float mist = 0.01 * pow(clamp(1.0 - (h_pos - mist_min_alt) / MIST_FADE_HEIGHT, 0.0, 1), 10.0) * flat_earth_hack;
 
-    vec3 wind_pos = vec3(pos.xy + wind_offset(), pos.z + noise_2d(pos.xy / 20000) * 500);
+    vec3 wind_pos = vec3(pos_carte + wind_offset(), h_pos + noise_2d(pos_carte / 20000) * 500);
 
     // Clouds
-    float cloud_tendency = cloud_tendency_at(pos.xy);
+    float cloud_tendency = cloud_tendency_at(pos_carte);
     float cloud = 0;
 
     if (mist > 0.0) {
@@ -67,11 +87,11 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
     //vec2 cloud_attr = get_cloud_heights(wind_pos.xy);
     float sun_access = 0.0;
     float moon_access = 0.0;
-    float cloud_sun_access = clamp((pos.z - cloud_alt) / 1500 + 0.5, 0, 1);
+    float cloud_sun_access = clamp((h_pos - cloud_alt) / 1500 + 0.5, 0, 1);
     float cloud_moon_access = 0.0;
 
     // This is a silly optimisation but it actually nets us a fair few fps by skipping quite a few expensive calcs
-    if ((pos.z < cloud_avg_alt() + 8000.0 && cloud_tendency > 0.0)) {
+    if ((h_pos < cloud_avg_alt() + 8000.0 && cloud_tendency > 0.0)) {
         // Turbulence (small variations in clouds/mist)
         const float turb_speed = -1.0; // Turbulence goes the opposite way
         vec3 turb_offset = vec3(1, 1, 0) * time_of_day.x * turb_speed;
@@ -84,7 +104,7 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
         #if (CLOUD_MODE >= CLOUD_MODE_MEDIUM)
             - (billow_noise_3d((pos + turb_offset * 0.5) / 8000.0) - 0.5)
         #else
-            - (billow_noise_2d((pos.xy + turb_offset.xy * 0.5) / 8000.0) - 0.5)
+            - (billow_noise_2d((pos_carte + turb_offset.xy * 0.5) / 8000.0) - 0.5)
         #endif
         #if (CLOUD_MODE >= CLOUD_MODE_CLOUD_MODE_MINIMAL)
             - (noise_3d((pos - turb_offset * 0.1) / 750.0) - 0.5) * 0.25
@@ -104,7 +124,7 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
             + cloud_tendency * 0.5
             )
         , 0.0) * 120.0 * cloud_tendency, 5.0)
-            * falloff(abs(pos.z - cloud_alt) / CLOUD_DEPTH);
+            * falloff(abs(h_pos - cloud_alt) / CLOUD_DEPTH);
 
         cloud = cloud_factor * 5;
 
@@ -113,7 +133,7 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
         cloud_sun_access = clamp(
             0.8
                 + pow(abs(cloud_p1 - cloud_p0), 0.5) * sign(cloud_p1 - cloud_p0) * 0.5
-                + (pos.z - cloud_alt) / CLOUD_DEPTH * 0.2
+                + (h_pos - cloud_alt) / CLOUD_DEPTH * 0.2
                 - pow(cloud * 1000000.0, 0.25) * 0.0075
             ,
             0.2,
@@ -134,7 +154,7 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
     //moon_access *= suppress_mist;
 
     // Prevent clouds and mist appearing underground (but fade them out gently)
-    not_underground = clamp(1.0 - (alt - (pos.z - focus_off.z)) / 80.0 + dist * 0.001, 0, 1);
+    not_underground = clamp(1.0 - (alt - (h_pos - (cube_actif() ? 0.0 : focus_off.z))) / 80.0 + dist * 0.001, 0, 1);
     sun_access *= not_underground;
     moon_access *= not_underground;
     float vapor_density = (mist + cloud) * not_underground;
@@ -146,14 +166,14 @@ vec4 cloud_at(vec3 pos, float dist, vec3 dir, out vec3 emission, out float not_u
 
         float emission_alt = alt * 0.5 + 1000 + 1000 * nz;
         float emission_height = 1000.0;
-        float emission_factor = pow(max(0.0, 1.0 - abs((pos.z - emission_alt) / emission_height - 1.0))
+        float emission_factor = pow(max(0.0, 1.0 - abs((h_pos - emission_alt) / emission_height - 1.0))
             * max(0, 1.0 - abs(0.0
                 + textureLod(sampler2D(t_noise, s_noise), wind_pos.xy * 0.0001 + nz * 0.1, 0).x
                 + textureLod(sampler2D(t_noise, s_noise), wind_pos.xy * 0.0005 + nz * 0.5, 0).x * 0.3
                 - 0.5) * 2)
             * max(0, 1.0 - abs(textureLod(sampler2D(t_noise, s_noise), wind_pos.xy * 0.00001, 0).x - 0.5) * 4)
             , 2) * emission_strength();
-        float t = clamp((pos.z - emission_alt) / emission_height, 0, 1);
+        float t = clamp((h_pos - emission_alt) / emission_height, 0, 1);
         t = pow(t - 0.5, 2) * sign(t - 0.5) + 0.5;
         float top = pow(t, 2);
         float bot = pow(max(0.8 - t, 0), 2) * 2;
@@ -298,8 +318,11 @@ vec3 get_cloud_color(vec3 surf_color, vec3 dir, vec3 origin, float max_dist, con
                     vec3(1.0, 0.0, 0.0),
                     surf_color,
                 };
-                float h = max(0.0, min(pos.z, 900.0 - pos.z) / 450.0);
-                float rain = rain_density_at(pos.xy) * pow(h, 0.1);
+                float h_arc = hauteur_monde(pos);
+                float h = max(0.0, min(h_arc, 900.0 - h_arc) / 450.0);
+                float rain = rain_density_at(cube_actif()
+                    ? cube_wpos_de_direction(cube_direction_de_rendu(pos - focus_off.xyz))
+                    : pos.xy) * pow(h, 0.1);
 
                 float sun = sun_access * get_sun_brightness();
                 float energy = pow(rain * sun * min(cdist / 500.0, 1.0), 2.0) * 0.4;

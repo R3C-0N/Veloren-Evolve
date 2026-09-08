@@ -21,6 +21,7 @@
 
 // Currently, we only need globals for focus_off.
 #include <globals.glsl>
+#include <cube.glsl>
 
 layout (std140, set = 0, binding = 9)
 uniform u_light_shadows {
@@ -42,6 +43,19 @@ uniform u_locals {
     mat4 model_mat;
     ivec4 atlas_offs;
     float load_time;
+    // Le remplissage que Rust garde ici : il doit apparaitre, sinon ce qui suit
+    // tomberait au mauvais endroit.
+    float locals_dummy0;
+    float locals_dummy1;
+    float locals_dummy2;
+    // La base 3D de la face qui porte ce chunk, et l'origine de cette face dans
+    // le patron (D27). **Elle est deja dans ce tampon** : la passe d'ombre lie
+    // les memes `terrain::Locals` que la passe principale, elle n'en declarait
+    // simplement qu'une vue tronquee.
+    vec4 cube_r;
+    vec4 cube_h;
+    vec4 cube_n;
+    vec4 cube_face;
 };
 
 const float EXTRA_NEG_Z = 32768.0;
@@ -49,6 +63,20 @@ const float EXTRA_NEG_Z = 32768.0;
 void main() {
     vec3 f_chunk_pos = vec3(v_pos_norm & 0x3Fu, (v_pos_norm >> 6) & 0x3Fu, float((v_pos_norm >> 12) & 0xFFFFu) - EXTRA_NEG_Z);
     vec3 f_pos = (model_mat * vec4(f_chunk_pos, 1.0)).xyz - focus_off.xyz;
+
+    // La courbure du monde (D27), exactement comme la passe principale. Sans
+    // elle, la geometrie qui projette les ombres n'est pas celle qu'on voit :
+    // les ombres tombent a cote, et d'autant plus loin qu'on regarde loin.
+    if (cube.z > 0.5) {
+        vec3 absolu = f_pos + focus_off.xyz;
+        f_pos = cube_projeter(
+            absolu.xy - cube_face.xy,
+            absolu.z,
+            cube_r.xyz,
+            cube_h.xyz,
+            cube_n.xyz
+        );
+    }
 
     gl_Position = shadowMatrices * vec4(f_pos, 1.0);
 }

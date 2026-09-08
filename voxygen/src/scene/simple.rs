@@ -293,6 +293,7 @@ impl Scene {
             // La scène de l'écran-titre est plate : aucune planète à courber.
             (0.0, 0.0, false),
             Vec3::zero(),
+            (Vec3::zero(), 0.0),
         )]);
         renderer.update_clouds_locals(CloudsLocals::new(proj_mat_inv, view_mat_inv));
         renderer.update_postprocess_locals(PostProcessLocals::new(proj_mat_inv, view_mat_inv));

@@ -25,6 +25,7 @@
 layout(location = 0) in vec3 f_pos;
 layout(location = 1) flat in uint f_pos_norm;
 layout(location = 3) in vec2 f_uv_pos;
+layout(location = 4) in vec3 f_pos_patron;
 
 layout(set = 2, binding = 0)
 uniform texture2D t_col_light;
@@ -40,6 +41,18 @@ uniform u_locals {
     mat4 model_mat;
     ivec4 atlas_offs;
     float load_time;
+    // Le remplissage que Rust garde ici : il doit apparaître, sinon ce qui suit
+    // tomberait au mauvais endroit.
+    float locals_dummy0;
+    float locals_dummy1;
+    float locals_dummy2;
+    // La base 3D de la face qui porte ce chunk (D27). Le fragment en a besoin
+    // pour redresser sa normale : celle du maillage est dite dans les axes de
+    // la grille, et la grille n'est pas le monde.
+    vec4 cube_r;
+    vec4 cube_h;
+    vec4 cube_n;
+    vec4 cube_face;
 };
 
 layout(location = 0) out vec4 tgt_color;
@@ -222,11 +235,25 @@ void main() {
     tgt_color = vec4(simple_lighting(f_pos.xyz, f_col, f_light), 1);
 #else
 
-    vec3 face_norm = normals[(f_pos_norm >> 29) & 0x7u];
+    // La normale telle que la grille la dit, avant toute rotation : c'est elle
+    // qui désigne la face d'un bloc, donc elle qui sert à l'indexer.
+    vec3 norm_grille = normals[(f_pos_norm >> 29) & 0x7u];
+    vec3 face_norm = norm_grille;
+    // **La normale du maillage est dite dans les axes de la grille.** Sur la
+    // sphère, il faut la redire dans le repère du lieu. Le « haut » se lit à la
+    // position rendue ; le nord est la tangente `h` de la face, orthogonalisée
+    // contre lui — c'est exactement `tv` normalisée, la carte étant conforme —
+    // et l'est s'en déduit, dans le même ordre que `cube::pose`.
+    if (cube_actif()) {
+        vec3 haut = normalize(f_pos + cube_origine.xyz);
+        vec3 nord = normalize(cube_h.xyz - haut * dot(cube_h.xyz, haut));
+        vec3 est = cross(nord, haut);
+        face_norm = est * face_norm.x + nord * face_norm.y + haut * face_norm.z;
+    }
     vec3 f_norm = face_norm;
 
     #ifdef EXPERIMENTAL_BRICKLOREN
-        vec3 pos = f_pos + focus_off.xyz;
+        vec3 pos = f_pos_patron + focus_off.xyz;
         const vec3 bk_sz = vec3(2, 2, 2);
         vec3 sz = vec3(1.0 + mod(floor(pos.z * bk_sz.z + floor(pos.x) + floor(pos.y) - 0.01), 2.0) * (bk_sz.x - 1), 1.0 + mod(floor(pos.z * bk_sz.z + floor(pos.x) + floor(pos.y) + 0.99), 2.0) * (bk_sz.y - 1), bk_sz.z);
         vec3 fp = pos * sz;
@@ -243,9 +270,9 @@ void main() {
     vec3 view_dir = -cam_to_frag;
 
 #if (SHADOW_MODE == SHADOW_MODE_CHEAP || SHADOW_MODE == SHADOW_MODE_MAP || FLUID_MODE >= FLUID_MODE_MEDIUM)
-    float f_alt = alt_at(f_pos.xy);
+    float f_alt = alt_at_rendu(f_pos);
 #elif (SHADOW_MODE == SHADOW_MODE_NONE || FLUID_MODE == FLUID_MODE_LOW)
-    float f_alt = f_pos.z;
+    float f_alt = hauteur_rendu(f_pos);
 #endif
 
     float alpha = 1.0;
@@ -255,7 +282,7 @@ void main() {
     const float R_s1s0 = pow(abs((1.3325 - n2) / (1.3325 + n2)), 2);
     const float R_s2s1 = pow(abs((1.0 - 1.3325) / (1.0 + 1.3325)), 2);
     const float R_s1s2 = pow(abs((1.3325 - 1.0) / (1.3325 + 1.0)), 2);
-    float fluid_alt = max(f_pos.z + 1, floor(f_alt + 1));
+    float fluid_alt = max(hauteur_rendu(f_pos) + 1, floor(f_alt + 1));
     float R_s = faces_fluid ? mix(R_s2s1 * R_s1s0, R_s1s0, medium.x) : mix(R_s2s0, R_s1s2 * R_s2s0, medium.x);
 
     vec3 k_a = vec3(1.0);
@@ -266,7 +293,7 @@ void main() {
     #ifdef RAIN_ENABLED
         #if (REFLECTION_MODE >= REFLECTION_MODE_MEDIUM)
             if (rain_density > 0 && !faces_fluid && f_norm.z > 0.5) {
-                vec3 pos = f_pos + focus_off.xyz;
+                vec3 pos = f_pos_patron + focus_off.xyz;
                 vec3 drop_density = vec3(2, 2, 2);
                 vec3 drop_pos = pos + vec3(pos.zz, 0) + vec3(0, 0, -tick.x * 1.0);
                 drop_pos.z += noise_2d(floor(drop_pos.xy * drop_density.xy) * 13.1) * 10;
@@ -275,7 +302,7 @@ void main() {
                 vec3 cell = vec3(cell2d, floor(drop_pos.z * drop_density.z));
 
                 #if (REFLECTION_MODE >= REFLECTION_MODE_HIGH)
-                    float puddle = clamp((noise_2d((f_pos.xy + focus_off.xy + vec2(0.1, 0)) * 0.02) - 0.5) * 20.0, 0.0, 1.0)
+                    float puddle = clamp((noise_2d((f_pos_patron.xy + focus_off.xy + vec2(0.1, 0)) * 0.02) - 0.5) * 20.0, 0.0, 1.0)
                         * min(rain_density * 10.0, 1.0)
                         * clamp((f_sky_exposure - 0.95) * 50.0, 0.0, 1.0);
                 #else
@@ -286,14 +313,14 @@ void main() {
                     if (puddle > 0.0) {
                         f_alpha = puddle * 0.2 * max(1.0 + cam_to_frag.z, 0.3);
                         #ifdef EXPERIMENTAL_PUDDLEDETAILS
-                            float t0 = sin(tick_loop(2.0 * PI, 8.0, f_pos.x * 3));
-                            float t1 = sin(tick_loop(2.0 * PI, 3.5, -f_pos.x * 6));
-                            float h = (noise_2d((f_pos.xy + focus_off.xy) * 0.3) - 0.5) * t0
-                                + (noise_2d((f_pos.xy + focus_off.xy) * 0.6) - 0.5) * t1;
-                            float hx = (noise_2d((f_pos.xy + focus_off.xy + vec2(0.1, 0)) * 0.3) - 0.5) * t0
-                                + (noise_2d((f_pos.xy + focus_off.xy + vec2(0.1, 0)) * 0.6) - 0.5) * t1;
-                            float hy = (noise_2d((f_pos.xy + focus_off.xy + vec2(0, 0.1)) * 0.3) - 0.5) * t0
-                                + (noise_2d((f_pos.xy + focus_off.xy + vec2(0, 0.1)) * 0.6) - 0.5) * t1;
+                            float t0 = sin(tick_loop(2.0 * PI, 8.0, f_pos_patron.x * 3));
+                            float t1 = sin(tick_loop(2.0 * PI, 3.5, -f_pos_patron.x * 6));
+                            float h = (noise_2d((f_pos_patron.xy + focus_off.xy) * 0.3) - 0.5) * t0
+                                + (noise_2d((f_pos_patron.xy + focus_off.xy) * 0.6) - 0.5) * t1;
+                            float hx = (noise_2d((f_pos_patron.xy + focus_off.xy + vec2(0.1, 0)) * 0.3) - 0.5) * t0
+                                + (noise_2d((f_pos_patron.xy + focus_off.xy + vec2(0.1, 0)) * 0.6) - 0.5) * t1;
+                            float hy = (noise_2d((f_pos_patron.xy + focus_off.xy + vec2(0, 0.1)) * 0.3) - 0.5) * t0
+                                + (noise_2d((f_pos_patron.xy + focus_off.xy + vec2(0, 0.1)) * 0.6) - 0.5) * t1;
                             f_norm.xy += mix(vec2(0), vec2(h - hx, h - hy) / 0.1 * 0.03, puddle);
                         #endif
                         alpha = mix(1.0, 0.2, puddle);
@@ -336,7 +363,7 @@ void main() {
     #endif
 
 #if (SHADOW_MODE == SHADOW_MODE_CHEAP || SHADOW_MODE == SHADOW_MODE_MAP)
-    vec4 f_shadow = textureMaybeBicubic(t_horizon, s_horizon, pos_to_tex(f_pos.xy));
+    vec4 f_shadow = horizon_rendu(f_pos);
     float sun_shade_frac = horizon_at2(f_shadow, f_alt, f_pos, sun_dir);
 #elif (SHADOW_MODE == SHADOW_MODE_NONE)
     float sun_shade_frac = 1.0;
@@ -386,7 +413,7 @@ void main() {
     vec3 cam_attenuation = compute_attenuation_point(f_pos, -view_dir, mu, fluid_alt, cam_pos.xyz);
 
     // Prevent the sky affecting light when underground
-    float not_underground = clamp((f_pos.z - f_alt) / 128.0 + 1.0, 0.0, 1.0);
+    float not_underground = clamp((hauteur_rendu(f_pos) - f_alt) / 128.0 + 1.0, 0.0, 1.0);
 
     // To account for prior saturation
     #if (FLUID_MODE == FLUID_MODE_LOW)
@@ -421,7 +448,7 @@ void main() {
     #ifndef EXPERIMENTAL_NOCAUSTICS
         #if (FLUID_MODE >= FLUID_MODE_MEDIUM)
             if (faces_fluid) {
-                vec3 wpos = f_pos + vec3(focus_off.xy, 0);
+                vec3 wpos = f_pos_patron + vec3(focus_off.xy, 0);
                 vec3 spos = (wpos + (fluid_alt - wpos.z) * vec3(sun_dir.xy, 0)) * 0.25;
                 reflected_light += caustics(spos.xy * 1.0, tick.x * 0.5)
                     * 3
@@ -435,7 +462,7 @@ void main() {
         #endif
     #endif
 
-    vec3 f_chunk_pos = f_pos - (model_mat[3].xyz - focus_off.xyz);
+    vec3 f_chunk_pos = f_pos_patron - (model_mat[3].xyz - focus_off.xyz);
     #ifdef EXPERIMENTAL_NONOISE
         float noise = 0.0;
     #else
@@ -457,13 +484,13 @@ void main() {
         // d'une trentaine de blocs une face fait moins de quelques pixels, et le
         // motif ne ferait plus que scintiller.
         float grain_att = max(1.0 - distance(cam_pos.xyz, f_pos) / 80.0, 0.0);
-        col *= 1.0 + grain_materiau(f_pos + focus_off.xyz, f_norm, f_kind) * grain_att;
+        col *= 1.0 + grain_materiau(f_pos_patron + focus_off.xyz, cube_actif() ? norm_grille : f_norm, f_kind) * grain_att;
     #endif
     vec3 surf_color = illuminate(max_light, view_dir, col * emitted_light, col * reflected_light);
     #ifdef EXPERIMENTAL_SNOWGLITTER
     if (f_kind == BLOCK_SNOW || f_kind == BLOCK_ART_SNOW) {
         float cam_distance = distance(cam_pos.xyz, f_pos);
-        vec3 pos = f_pos + focus_off.xyz;
+        vec3 pos = f_pos_patron + focus_off.xyz;
 
         float map = max(noise_3d(pos), 0.0);
 
@@ -477,12 +504,14 @@ void main() {
     }
     #endif
 
-    float f_select = (select_pos.w > 0 && select_pos.xyz == floor(f_pos - f_norm * 0.5)) ? 1.0 : 0.0;
+    float f_select = (select_pos.w > 0
+        && select_pos.xyz
+            == floor(f_pos_patron - (cube_actif() ? norm_grille : f_norm) * 0.5)) ? 1.0 : 0.0;
     surf_color += f_select * (surf_color + 0.1) * vec3(0.5, 0.5, 0.5);
     
     #ifdef EXPERIMENTAL_SHOWCHUNKBORDERS
     float border_scale = 0.0001 * distance(cam_pos.xyz, f_pos);
-    if (vmin(fract((f_pos.xy + focus_off.xy) / 32.0 + 1024) - border_scale * 0.5) < border_scale && f_norm.z > 0.5) {
+    if (vmin(fract((f_pos_patron.xy + focus_off.xy) / 32.0 + 1024) - border_scale * 0.5) < border_scale && norm_grille.z > 0.5) {
         surf_color = vec3(1.0, 0.0, 0.0);
     }
     #endif

@@ -308,8 +308,15 @@ impl Server {
                 world_file: if let Some(ref opts) = settings.map_file {
                     opts.clone()
                 } else {
-                    // Load default map from assets.
-                    FileOpts::LoadAsset(DEFAULT_WORLD_MAP.into())
+                    // Sans consigne, le serveur engendre un patron de cube et
+                    // le garde (D27). La carte livrée avec Veloren ne peut pas
+                    // servir de défaut ici : elle est enregistrée plate (D37),
+                    // et la charger rendait le monde plat sans le dire.
+                    FileOpts::LoadOrGenerate {
+                        name: "cube".into(),
+                        opts: GenOpts::default(),
+                        overwrite: false,
+                    }
                 },
                 calendar: Some(settings.calendar_mode.calendar_now()),
             },

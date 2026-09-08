@@ -225,15 +225,28 @@ impl SingleplayerWorlds {
         self.current.and_then(|i| self.worlds.get(i))
     }
 
+    /// Un monde neuf est **engendré**, pas recopié.
+    ///
+    /// Veloren partait de `gen_opts: None`, ce qui recopiait la carte livrée
+    /// avec le jeu : tous les mondes étaient donc le même, et surtout tous
+    /// étaient plats — la topologie est une donnée de la carte enregistrée
+    /// (D37), et aucune carte d'avant le cube n'en porte une autre que
+    /// `Plate`. Poser des `GenOpts` d'office fait passer `singleplayer::init`
+    /// par `FileOpts::Save`, seul chemin qui atteigne `nouvelle_cubique`.
+    ///
+    /// **Contrepartie acceptée :** la création d'un monde coûte désormais une
+    /// génération complète — une à deux minutes — là où elle était instantanée.
     pub fn new_world(&mut self) {
+        use rand::RngExt as _;
+
         let folder_name = self.world_folder_name();
         let path = self.worlds_folder.join(folder_name);
 
         let new_world = SingleplayerWorld {
             name: "New World".to_string(),
-            gen_opts: None,
+            gen_opts: Some(GenOpts::default()),
             day_length: DAY_LENGTH_DEFAULT,
-            seed: DEFAULT_WORLD_SEED,
+            seed: rand::rng().random(),
             is_generated: false,
             map_path: path.join("map.bin"),
             path,

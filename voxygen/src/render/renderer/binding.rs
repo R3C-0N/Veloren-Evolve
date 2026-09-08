@@ -23,6 +23,7 @@ impl Renderer {
             lod_data,
             &self.noise_tex,
             &self.conforme_tex,
+            &self.inverse_tex,
         )
     }
 
@@ -38,6 +39,7 @@ impl Renderer {
             lod_data,
             &self.noise_tex,
             &self.conforme_tex,
+            &self.inverse_tex,
             sprite_verts,
         )
     }

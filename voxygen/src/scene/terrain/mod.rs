@@ -1283,6 +1283,24 @@ impl<V: RectRasterableVol> Terrain<V> {
         );
         drop(guard);
 
+        // **Le tronc de vue se teste sur le volume rendu, pas sur celui du
+        // patron.** Le terrain se projette sommet par sommet dans son shader
+        // (`cube_projeter`) : ce qui est à l'écran est `dir·(R + z) − origine`,
+        // pas la boîte du patron. Sur la face `+X`, les deux ne diffèrent pas
+        // d'une translation mais d'une **rotation** — le `z` du patron y devient
+        // l'axe `x` du rendu —, si bien que le test rejetait les cent
+        // quarante-cinq chunks chargés et n'en gardait aucun. Le sol qu'on
+        // voyait alors était la nappe du lointain, seule à passer.
+        //
+        // On borne donc les huit coins projetés. La flèche de la projection sur
+        // trente-deux blocs vaut `w²/8R`, soit un vingtième de bloc : la marge
+        // d'un bloc la couvre.
+        let pose = crate::scene::cube::PoseSpherique::nouvelle(
+            scene_data.state.terrain().map_size_lg(),
+            camera.cube_origine(),
+            focus_off,
+        );
+
         // Update chunk visibility
         span!(guard, "Update chunk visibility");
         let chunk_sz = V::RECT_SIZE.x as f32;
@@ -1300,12 +1318,39 @@ impl<V: RectRasterableVol> Terrain<V> {
             chunk.visible.in_range = in_range;
 
             // Ensure the chunk is within the view frustum
-            let chunk_min = [chunk_pos.x, chunk_pos.y, chunk.z_bounds.0];
-            let chunk_max = [
-                chunk_pos.x + chunk_sz,
-                chunk_pos.y + chunk_sz,
-                chunk.sun_occluder_z_bounds.1,
-            ];
+            let (chunk_min, chunk_max) = if let Some(pose) = &pose {
+                let mut min = Vec3::broadcast(f32::INFINITY);
+                let mut max = Vec3::broadcast(f32::NEG_INFINITY);
+                for i in 0..8 {
+                    let coin = Vec3::new(
+                        chunk_pos.x + (i & 1) as f32 * chunk_sz,
+                        chunk_pos.y + ((i >> 1) & 1) as f32 * chunk_sz,
+                        if i & 4 == 0 {
+                            chunk.z_bounds.0
+                        } else {
+                            chunk.sun_occluder_z_bounds.1
+                        },
+                    );
+                    // `place` rend la position de rendu ; le tronc de vue, lui,
+                    // retire le foyer entier de lui-même.
+                    let p = pose.place(coin) + focus_off;
+                    min = Vec3::partial_min(min, p);
+                    max = Vec3::partial_max(max, p);
+                }
+                (
+                    [min.x - 1.0, min.y - 1.0, min.z - 1.0],
+                    [max.x + 1.0, max.y + 1.0, max.z + 1.0],
+                )
+            } else {
+                (
+                    [chunk_pos.x, chunk_pos.y, chunk.z_bounds.0],
+                    [
+                        chunk_pos.x + chunk_sz,
+                        chunk_pos.y + chunk_sz,
+                        chunk.sun_occluder_z_bounds.1,
+                    ],
+                )
+            };
 
             let (in_frustum, last_plane_index) = AABB::new(chunk_min, chunk_max)
                 .coherent_test_against_frustum(&frustum, chunk.frustum_last_plane_index);
@@ -1318,9 +1363,19 @@ impl<V: RectRasterableVol> Terrain<V> {
             };
 
             if in_frustum {
-                let visible_box = Aabb {
-                    min: chunk_area.min.with_z(chunk.sun_occluder_z_bounds.0),
-                    max: chunk_area.max.with_z(chunk.sun_occluder_z_bounds.1),
+                // Le volume des receveurs d'ombre vit dans le même repère que
+                // le tronc de vue qui vient de le retenir : sous cube, c'est
+                // celui du rendu.
+                let visible_box = if pose.is_some() {
+                    Aabb {
+                        min: Vec3::from(chunk_min),
+                        max: Vec3::from(chunk_max),
+                    }
+                } else {
+                    Aabb {
+                        min: chunk_area.min.with_z(chunk.sun_occluder_z_bounds.0),
+                        max: chunk_area.max.with_z(chunk.sun_occluder_z_bounds.1),
+                    }
                 };
                 visible_bounding_box = visible_bounding_box
                     .map(|e| e.union(visible_box))
@@ -1354,7 +1409,14 @@ impl<V: RectRasterableVol> Terrain<V> {
             return min.partial_cmple(&max).reduce_and();
         };
 
-        let (visible_light_volume, visible_psr_bounds) = if ray_direction.z < 0.0
+        // **« Le soleil est-il au-dessus ? » ne se lit pas dans `z`.** Sur la
+        // face `+X`, l'axe `z` du monde est une direction horizontale : au
+        // midi local, `sun_dir.z` vaut zéro et la carte d'ombres ne se
+        // calculait jamais — d'où `0 (shadow)` et un terrain sans une seule
+        // ombre portée. C'est l'élévation locale qui décide, exactement comme
+        // `elevation()` le fait déjà côté shader (D48).
+        let soleil_leve = ray_direction.dot(camera.verticale()) < 0.0;
+        let (visible_light_volume, visible_psr_bounds) = if soleil_leve
             && renderer.pipeline_modes().shadow.is_map()
         {
             let visible_bounding_box = math::Aabb::<f32> {
@@ -1387,13 +1449,41 @@ impl<V: RectRasterableVol> Terrain<V> {
                 let chunk_pos = pos.as_::<f32>() * chunk_sz;
 
                 // Ensure the chunk is within the PSR set.
-                let chunk_box = math::Aabb {
-                    min: math::Vec3::new(chunk_pos.x, chunk_pos.y, chunk.z_bounds.0),
-                    max: math::Vec3::new(
-                        chunk_pos.x + chunk_sz,
-                        chunk_pos.y + chunk_sz,
-                        chunk.z_bounds.1,
-                    ),
+                //
+                // La boîte vit dans le même repère que `ray_mat`, qui est bâtie
+                // sur `cam_pos` : celui du rendu. La prendre dans le patron
+                // faisait ici la même faute que le tronc de vue.
+                let chunk_box = match &pose {
+                    Some(pose) => {
+                        let mut min = Vec3::broadcast(f32::INFINITY);
+                        let mut max = Vec3::broadcast(f32::NEG_INFINITY);
+                        for i in 0..8 {
+                            let coin = Vec3::new(
+                                chunk_pos.x + (i & 1) as f32 * chunk_sz,
+                                chunk_pos.y + ((i >> 1) & 1) as f32 * chunk_sz,
+                                if i & 4 == 0 {
+                                    chunk.z_bounds.0
+                                } else {
+                                    chunk.z_bounds.1
+                                },
+                            );
+                            let p = pose.place(coin) + focus_off;
+                            min = Vec3::partial_min(min, p);
+                            max = Vec3::partial_max(max, p);
+                        }
+                        math::Aabb {
+                            min: math::Vec3::new(min.x - 1.0, min.y - 1.0, min.z - 1.0),
+                            max: math::Vec3::new(max.x + 1.0, max.y + 1.0, max.z + 1.0),
+                        }
+                    },
+                    None => math::Aabb {
+                        min: math::Vec3::new(chunk_pos.x, chunk_pos.y, chunk.z_bounds.0),
+                        max: math::Vec3::new(
+                            chunk_pos.x + chunk_sz,
+                            chunk_pos.y + chunk_sz,
+                            chunk.z_bounds.1,
+                        ),
+                    },
                 };
 
                 let chunk_from_light = math::fit_psr(

@@ -34,16 +34,52 @@ layout(location = 2) out vec3 m_pos;
 void main() {
     m_pos = v_pos;
 
-    vec3 rz = normalize(pos_b.xyz - pos_a.xyz);
-    vec3 rx = normalize(cross(vec3(0, 0, 1), rz));
-    vec3 ry = normalize(cross(rz, rx));
-    float dist = distance(pos_a.xyz, pos_b.xyz);
-    vec3 pos = pos_a.xyz + (rx * v_pos.x + ry * v_pos.y) * 0.1 + rz * v_pos.z * dist;
+    // Une longe est un cylindre bâti entre deux bouts, et tout y supposait un
+    // monde plat : le repère se prenait sur `vec3(0, 0, 1)` et le ventre
+    // pendait le long de `−Z`. Sur la face `+X`, ça le fait pendre de côté.
+    vec3 rx, ry, rz, pos;
+    float dist;
+    float dip;
+
+    if (cube_actif()) {
+        // Les deux bouts arrivent déjà décalés du foyer : on leur rend le
+        // décalage pour les projeter, et le repère se construit sur la
+        // verticale **du lieu**.
+        vec3 place_a = cube_poser(pos_a.xyz + focus_off.xyz, pos_a.xyz);
+        vec3 place_b = cube_poser(pos_b.xyz + focus_off.xyz, pos_b.xyz);
+        vec3 haut = cube_direction_de_rendu(place_a);
+
+        rz = normalize(place_b - place_a);
+        rx = normalize(cross(haut, rz));
+        ry = normalize(cross(rz, rx));
+        dist = distance(place_a, place_b);
+        pos = place_a + (rx * v_pos.x + ry * v_pos.y) * 0.1 + rz * v_pos.z * dist;
+
+        vec2 ideal_wind_sway = wind_vel * vec2(
+            wind_wave(pos.y * 1.5, 1.9, wind_vel.x, wind_vel.y),
+            wind_wave(pos.x * 1.5, 2.1, wind_vel.y, wind_vel.x)
+        );
+        dip = (1 - pow(abs(v_pos.z - 0.5) * 2.0, 2)) * max(rope_length - dist, 0.0);
+
+        // Le balancement dans le plan tangent, le ventre le long de la
+        // verticale du lieu.
+        vec3 est_l, nord_l;
+        cube_exp(cube_log(haut), est_l, nord_l);
+        vec2 sway = ideal_wind_sway * min(pow(dip, 2), 0.005);
+        pos += est_l * sway.x + nord_l * sway.y - haut * (0.5 * dip);
+
+        f_pos = pos;
+    } else {
+    rz = normalize(pos_b.xyz - pos_a.xyz);
+    rx = normalize(cross(vec3(0, 0, 1), rz));
+    ry = normalize(cross(rz, rx));
+    dist = distance(pos_a.xyz, pos_b.xyz);
+    pos = pos_a.xyz + (rx * v_pos.x + ry * v_pos.y) * 0.1 + rz * v_pos.z * dist;
     vec2 ideal_wind_sway = wind_vel * vec2(
         wind_wave(pos.y * 1.5, 1.9, wind_vel.x, wind_vel.y),
         wind_wave(pos.x * 1.5, 2.1, wind_vel.y, wind_vel.x)
     );
-    float dip = (1 - pow(abs(v_pos.z - 0.5) * 2.0, 2)) * max(rope_length - dist, 0.0);
+    dip = (1 - pow(abs(v_pos.z - 0.5) * 2.0, 2)) * max(rope_length - dist, 0.0);
     pos += vec3(ideal_wind_sway * min(pow(dip, 2), 0.005), -0.5 * dip);
 
     f_pos = pos + focus_pos.xyz;
@@ -51,6 +87,7 @@ void main() {
     #ifdef EXPERIMENTAL_CURVEDWORLD
         f_pos.z -= pow(distance(f_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
     #endif
+    }
 
     f_norm = rx * v_norm.x + ry * v_norm.y + rz * v_norm.z;
 

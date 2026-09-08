@@ -6,14 +6,16 @@
 //! géométrie** : chaque pixel de l'écran remonte à une direction, la direction
 //! à une face, et la face à un pixel du patron.
 //!
-//! Trois choses vivent ici :
+//! Deux choses vivent ici :
 //!
 //! - [`Vue`] — le repère orthonormé sous lequel on regarde la planète, et les
 //!   deux sens de passage entre une direction du monde et un point de l'écran ;
-//! - [`Inverse`] — l'inverse de la projection conforme, tabulé une fois, parce
-//!   qu'un Newton par pixel n'est pas payable ;
 //! - [`Globe`] — le tampon rastérisé, refait **uniquement** quand la vue
 //!   change, et échangé dans l'interface par `Ui::replace_graphic`.
+//!
+//! L'inverse de la projection, lui, a quitté ce fichier : il est tabulé dans
+//! `common::terrain::conforme`, parce que la nappe lointaine le lit aussi. Deux
+//! tables inverses, ce seraient deux planètes.
 //!
 //! **Aucune étape n'a de pôle, et c'est délibéré.** Une première version
 //! passait par une nappe équirectangulaire ; ses colonnes s'effondrent aux
@@ -244,87 +246,6 @@ pub fn rayon_mini(planete: &Planete, zoom: f64, taille: Vec2<u16>) -> f64 {
 }
 
 // --------------------------------------------------------------------------
-// L'inverse de la projection, tabulé
-// --------------------------------------------------------------------------
-
-/// Côté de la table inverse. Même finesse que la table conforme : rien ne
-/// justifierait d'en avoir moins, et la fonction y est lisse.
-const COTE_INVERSE: usize = 513;
-
-/// L'inverse de la projection conforme, tabulé sur le carré gnomonique.
-///
-/// `conforme::Table::depuis_locale` fait un Newton de douze itérations : c'est
-/// le bon prix pour un clic, jamais pour un demi-million de pixels à chaque
-/// image. On le paie donc une fois, sur une grille régulière de `(a, b)`.
-///
-/// Le domaine est exactement `[-1, 1]²` : dans ces coordonnées le bord d'une
-/// face vaut `a = ±1` (`conforme.rs`), si bien qu'il n'y a ni coin perdu ni
-/// bord à deviner.
-///
-/// **C'est ce qui remplace la nappe équirectangulaire, et pour une raison de
-/// forme, pas de vitesse.** Une nappe a des pôles — ses colonnes s'y
-/// effondrent, des dizaines d'entre elles retombent sur le même pixel du
-/// patron, et le plus proche voisin en fait une rosace de secteurs, bien
-/// visible dès qu'on zoome. Un cube n'a pas de pôle : les six faces sont
-/// équivalentes, et le défaut n'a nulle part où naître.
-struct Inverse {
-    st: Vec<[f32; 2]>,
-}
-
-static INVERSE: std::sync::OnceLock<Inverse> = std::sync::OnceLock::new();
-
-fn inverse() -> &'static Inverse { INVERSE.get_or_init(Inverse::construire) }
-
-impl Inverse {
-    fn construire() -> Self {
-        let n = COTE_INVERSE;
-        let table = conforme::table();
-        let mut st = vec![[0.0f32; 2]; n * n];
-        st.par_chunks_mut(n).enumerate().for_each(|(j, ligne)| {
-            let b = 2.0 * j as f64 / (n - 1) as f64 - 1.0;
-            for (i, sortie) in ligne.iter_mut().enumerate() {
-                let a = 2.0 * i as f64 / (n - 1) as f64 - 1.0;
-                // La direction locale dont `(a, b)` est la gnomonique : le
-                // troisième terme vaut 1 par définition du plan tangent.
-                let l = (1.0 + a * a + b * b).sqrt();
-                let (s, t) = table.depuis_locale([a / l, b / l, 1.0 / l]);
-                *sortie = [s as f32, t as f32];
-            }
-        });
-        Self { st }
-    }
-
-    /// Bilinéaire sur la grille. La fonction est lisse — pas de couture ici,
-    /// contrairement au patron : on peut filtrer sans rien mélanger.
-    #[inline]
-    fn lire(&self, a: f64, b: f64) -> (f64, f64) {
-        let n = COTE_INVERSE;
-        let m = (n - 1) as f64;
-        let x = ((a + 1.0) * 0.5 * m).clamp(0.0, m);
-        let y = ((b + 1.0) * 0.5 * m).clamp(0.0, m);
-        let (x0, y0) = (x.floor(), y.floor());
-        let (fx, fy) = (x - x0, y - y0);
-        let (x0, y0) = (x0 as usize, y0 as usize);
-        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
-        let p = |i: usize, j: usize| self.st[j * n + i];
-        let (c00, c10, c01, c11) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
-        let mel = |a: f32, b: f32, f: f64| a as f64 * (1.0 - f) + b as f64 * f;
-        (
-            mel(
-                mel(c00[0], c10[0], fx) as f32,
-                mel(c01[0], c11[0], fx) as f32,
-                fy,
-            ),
-            mel(
-                mel(c00[1], c10[1], fx) as f32,
-                mel(c01[1], c11[1], fx) as f32,
-                fy,
-            ),
-        )
-    }
-}
-
-// --------------------------------------------------------------------------
 // L'échantillonnage du patron
 // --------------------------------------------------------------------------
 
@@ -357,7 +278,7 @@ fn echantillon(patron: &RgbaImage, planete: &Planete, d: Vec3<f64>) -> [u8; 4] {
     let base = cube::BASES[face];
     let proj = |v: [i32; 3]| d.x * v[0] as f64 + d.y * v[1] as f64 + d.z * v[2] as f64;
     let z = meilleur;
-    let (s, t) = inverse().lire(proj(base.r) / z, proj(base.h) / z);
+    let (s, t) = conforme::inverse().lire(proj(base.r) / z, proj(base.h) / z);
 
     let fc = planete.face_chunks as f64;
     let (col, ligne) = cube::PATRON[face];
@@ -534,33 +455,6 @@ mod tests {
     use super::*;
 
     fn carte() -> MapSizeLg { MapSizeLg::nouvelle_cubique(Vec2::new(6, 6)).unwrap() }
-
-    /// **La table inverse dit la même chose que le Newton qu'elle remplace.**
-    ///
-    /// C'est le seul endroit où le raccourci pourrait mentir : `depuis_locale`
-    /// reste la définition, la table n'en est qu'un cache. On balaie le carré
-    /// gnomonique et on compare, en **chunks du patron** — l'unité dans
-    /// laquelle l'erreur se verrait à l'écran.
-    #[test]
-    fn la_table_inverse_suit_le_newton() {
-        let map = carte();
-        let fc = cube::face_chunks(map) as f64;
-        let table = conforme::table();
-        let inv = inverse();
-        let mut pire: f64 = 0.0;
-        for i in 0..=200 {
-            for j in 0..=200 {
-                let a = 2.0 * i as f64 / 200.0 - 1.0;
-                let b = 2.0 * j as f64 / 200.0 - 1.0;
-                let l = (1.0 + a * a + b * b).sqrt();
-                let (s0, t0) = table.depuis_locale([a / l, b / l, 1.0 / l]);
-                let (s1, t1) = inv.lire(a, b);
-                // De `[-1, 1]` vers des chunks : une demi-face par unité.
-                pire = pire.max(((s1 - s0).abs()).max((t1 - t0).abs()) * fc / 2.0);
-            }
-        }
-        assert!(pire < 0.05, "table inverse : {pire} chunk d'écart");
-    }
 
     /// **Aucune direction ne tombe sur un emplacement mort.**
     ///

@@ -6,6 +6,45 @@
 #include <shadows.glsl>
 #include <globals.glsl>
 #include <rain_occlusion.glsl>
+#include <cube.glsl>
+
+// --------------------------------------------------------------------------
+// La verticale, l'élévation et la hauteur (D27)
+// --------------------------------------------------------------------------
+//
+// Ce fichier a été écrit pour un monde plat, et il le dit lui-même : le haut y
+// est `+Z`, l'altitude est un `.z`, et l'élévation du soleil au-dessus de
+// l'horizon est `sun_dir.z`. Sur une planète, aucune des trois n'est vraie —
+// sur la face `+X`, le haut est `+X`.
+//
+// Les trois enveloppes ci-dessous portent la correction, et le monde plat y
+// retrouve mot pour mot son ancienne expression.
+
+// La verticale de l'observateur.
+vec3 zenith() { return cube_actif() ? cube_haut() : vec3(0.0, 0.0, 1.0); }
+
+// L'élévation d'une direction du monde au-dessus de l'horizon de l'observateur.
+//
+// **Le soleil garde une direction unique** — il est loin, et c'est la bonne
+// physique. Ce qui devient local, c'est sa hauteur au-dessus de l'horizon ;
+// d'où le jour et la nuit en même temps sur la planète, sans une ligne côté
+// serveur.
+float elevation(vec3 d) { return cube_actif() ? dot(d, cube_haut()) : d.z; }
+
+// La même, à la verticale d'un **point** plutôt que de l'observateur.
+float elevation_en(vec3 d, vec3 f_pos) {
+    return cube_actif() ? dot(d, cube_direction_de_rendu(f_pos)) : d.z;
+}
+
+// La hauteur au-dessus de la sphère de référence, pour une position de rendu.
+float hauteur_rendu(vec3 f_pos) {
+    return cube_actif() ? cube_hauteur_rendu(f_pos) : f_pos.z;
+}
+
+// La même, pour une position **absolue** du monde.
+float hauteur_monde(vec3 wpos) {
+    return cube_actif() ? cube_hauteur_rendu(wpos - focus_off.xyz) : wpos.z;
+}
 
 // Information about an approximately directional light, like the sun or moon.
 struct DirectionalLight {
@@ -103,12 +142,37 @@ float cloud_shadow(vec3 pos, vec3 light_dir) {
     #if (CLOUD_MODE <= CLOUD_MODE_MINIMAL)
         return 1.0;
     #else
+        const vec2 FADE_RANGE = vec2(1500, 10000);
+        float fade;
+        float cloud;
+
+        if (cube_actif()) {
+            // **Le rayon ne remonte pas dans un plan, il remonte le long de la
+            // sphère.** On projette la lumière sur le plan tangent du lieu, on
+            // parcourt la distance voulue *sur la surface* — une rotation, pas
+            // une translation —, et on redemande la position du patron à
+            // l'arrivée. Sans quoi l'ombre des nuages se décale d'autant plus
+            // qu'on s'éloigne du sommet de sa face.
+            vec3 haut = cube_direction_de_rendu(pos - focus_off.xyz);
+            float montee = -dot(light_dir, haut);
+            vec3 t = light_dir - haut * dot(light_dir, haut);
+            float lt = length(t);
+            float portee = (cloud_avg_alt() - hauteur_monde(pos)) / max(montee, 0.0001);
+            fade = 1.0 - clamp((abs(portee) * lt - FADE_RANGE.x) / (FADE_RANGE.y - FADE_RANGE.x), 0, 1);
+            if (lt < 1e-5) {
+                cloud = cloud_tendency_at(cube_wpos_de_direction(haut));
+            } else {
+                float a = -portee * lt / cube.x;
+                vec3 cible = normalize(haut * cos(a) + (t / lt) * sin(a));
+                cloud = cloud_tendency_at(cube_wpos_de_direction(cible));
+            }
+        } else {
         vec2 xy_offset = light_dir.xy * ((cloud_avg_alt() - pos.z) / -light_dir.z);
 
         // Fade out shadow if the sun angle is too steep (simulates a widening penumbra with distance)
-        const vec2 FADE_RANGE = vec2(1500, 10000);
-        float fade = 1.0 - clamp((length(xy_offset) - FADE_RANGE.x) / (FADE_RANGE.y - FADE_RANGE.x), 0, 1);
-        float cloud = cloud_tendency_at(pos.xy + focus_off.xy - xy_offset);
+        fade = 1.0 - clamp((length(xy_offset) - FADE_RANGE.x) / (FADE_RANGE.y - FADE_RANGE.x), 0, 1);
+        cloud = cloud_tendency_at(pos.xy + focus_off.xy - xy_offset);
+        }
 
         return clamp(1 - fade * cloud * 16.0, 0, 1);
     #endif
@@ -134,7 +198,7 @@ vec3 magnetosphere_tint() {
 
 #if (CLOUD_MODE > CLOUD_MODE_FLAT)
 float emission_strength() {
-    return clamp((magnetosphere() - 0.3) * 1.3, 0, 1) * max(sun_dir.z, 0);
+    return clamp((magnetosphere() - 0.3) * 1.3, 0, 1) * max(elevation(sun_dir.xyz), 0);
 }
 
 float emission_br() {
@@ -148,11 +212,11 @@ float emission_br() {
 
 
 float get_sun_brightness() {
-    return max(-sun_dir.z + 0.5, 0.0);
+    return max(-elevation(sun_dir.xyz) + 0.5, 0.0);
 }
 
 float get_moon_brightness() {
-    return max(sun_dir.z + 0.6, 0.0) * 0.1;
+    return max(elevation(sun_dir.xyz) + 0.6, 0.0) * 0.1;
 }
 
 vec3 get_sun_color() {
@@ -162,10 +226,10 @@ vec3 get_sun_color() {
         mix(
             light * magnetosphere_tint(),
             NIGHT_LIGHT,
-            max(sun_dir.z, 0)
+            max(elevation(sun_dir.xyz), 0)
         ),
         DAY_LIGHT,
-        max(-sun_dir.z, 0)
+        max(-elevation(sun_dir.xyz), 0)
     );
 }
 
@@ -175,10 +239,10 @@ vec3 get_sky_color() {
         mix(
             (SKY_DUSK_TOP + SKY_DUSK_MID) / 2 * magnetosphere_tint(),
             (SKY_NIGHT_TOP + SKY_NIGHT_MID) / 2,
-            max(sun_dir.z, 0)
+            max(elevation(sun_dir.xyz), 0)
         ),
         (SKY_DAY_TOP + SKY_DAY_MID) / 2,
-        max(-sun_dir.z, 0)
+        max(-elevation(sun_dir.xyz), 0)
     );
 }
 
@@ -191,7 +255,7 @@ DirectionalLight get_sun_info(vec4 _dir, float shade_frac, vec3 f_pos) {
     float block = 1.0;
 #ifdef HAS_SHADOW_MAPS
     #if (SHADOW_MODE == SHADOW_MODE_MAP)
-        if (sun_dir.z < 0.0) {
+        if (elevation(sun_dir.xyz) < 0.0) {
             shadow = min(shadow, ShadowCalculationDirected(f_pos));
         }
     #endif
@@ -360,7 +424,15 @@ float get_sun_diffuse2(
     // R_r = ζ (1 - cos β) / 2
     //
     // H_t = H_b R_b + H_d R_d + (H_b + H_d) R_r
-    float sin_beta = dot(vec3(0, 1, 0), norm);
+    // **C'est le nord, pas la verticale**, et la dérivation ci-dessus le dit :
+    // `sin β = (north ⋅ norm)`. Les confondre inverse la quantité — sur un sol
+    // plat `sin β` passerait de 0 à 1, donc `R_b` de 1 à 0, et l'ambiante
+    // `R_t_b` de 1,00 à 0,10. Tout le terrain s'éteignait.
+    //
+    // Le nord local vaut `+Y` sur une carte plate : le chemin plat ne bouge pas.
+    float sin_beta = cube_actif()
+        ? dot(cube_nord_en(wpos), norm)
+        : dot(vec3(0, 1, 0), norm);
     float R_b = sqrt(max(0.0, 1.0 - sin_beta * sin_beta));
     // Rough estimate of diffuse reflectance of rest of ground.
     // NOTE: zeta should be close to 0.7 with snow cover, 0.2 normally?  Maybe?
@@ -379,7 +451,7 @@ float get_sun_diffuse2(
     #else
         // In practice, for gameplay purposes, we often want extra light at earlier and later times, so we use a
         // non-physical LRF to boost light during dawn and dusk.
-        float lrf = pow(dot(norm, vec3(0, 0, 1)) + 1, 2) * 0.25;
+        float lrf = pow(elevation_en(norm, wpos) + 1, 2) * 0.25;
     #endif
     vec3 light_frac = R_t_b * (sun_chroma * SUN_AMBIANCE + moon_chroma * MOON_AMBIANCE) * lrf;
 
@@ -425,7 +497,7 @@ float is_star_at(vec3 dir) {
     #else
         const float power = 50.0;
     #endif
-    return power * max(sun_dir.z, 0.1) / (1.0 + pow(dist * 750, 8));
+    return power * max(elevation(sun_dir.xyz), 0.1) / (1.0 + pow(dist * 750, 8));
 }
 
 vec3 get_sky_light(vec3 dir, bool with_stars, float is_moon) {
@@ -453,40 +525,40 @@ vec3 get_sky_light(vec3 dir, bool with_stars, float is_moon) {
         mix(
             sky_twilight_top * magnetosphere_tint(),
             SKY_NIGHT_TOP,
-            pow(max(sun_dir.z, 0.0), 0.2)
+            pow(max(elevation(sun_dir.xyz), 0.0), 0.2)
         ) + star,
         SKY_DAY_TOP,
-        max(-sun_dir.z, 0)
+        max(-elevation(sun_dir.xyz), 0)
     );
 
     vec3 sky_mid = mix(
         mix(
             sky_twilight_mid * magnetosphere_tint(),
             SKY_NIGHT_MID,
-            pow(max(sun_dir.z, 0.0), 0.1)
+            pow(max(elevation(sun_dir.xyz), 0.0), 0.1)
         ),
         SKY_DAY_MID,
-        max(-sun_dir.z, 0)
+        max(-elevation(sun_dir.xyz), 0)
     );
 
     vec3 sky_bot = mix(
         mix(
             sky_twilight_bot * magnetosphere_tint(),
             SKY_NIGHT_BOT,
-            pow(max(sun_dir.z, 0.0), 0.2)
+            pow(max(elevation(sun_dir.xyz), 0.0), 0.2)
         ),
         SKY_DAY_BOT,
-        max(-sun_dir.z, 0)
+        max(-elevation(sun_dir.xyz), 0)
     );
 
     vec3 sky_color = mix(
         mix(
             sky_mid,
             sky_bot,
-            max(-dir.z, 0)
+            max(-elevation(dir), 0)
         ),
         sky_top,
-        max(dir.z, 0)
+        max(elevation(dir), 0)
     );
 
     return sky_color * magnetosphere_tint();
@@ -504,7 +576,7 @@ vec3 get_sky_color(vec3 dir, vec3 origin, vec3 f_pos, float quality, bool with_f
     vec3 sun_halo_color = mix(
         (sun_dir.x > 0 ? SUN_HALO_DUSK : SUN_HALO_DAWN)* magnetosphere_tint(),
         SUN_HALO_DAY,
-        pow(max(-sun_dir.z, 0.0), 0.5)
+        pow(max(-elevation(sun_dir.xyz), 0.0), 0.5)
     );
 
     float sun_halo_power = 20.0;
@@ -618,7 +690,10 @@ vec3 get_sky_color(vec3 dir, vec3 origin, vec3 f_pos, float quality, bool with_f
 }
 
 float fog(vec3 f_pos, vec3 focus_pos, uint medium) {
-    return max(1.0 - 5000.0 / (1.0 + distance(f_pos.xy, focus_pos.xy)), 0.0);
+    // Sur une planète, une distance plane `xy` ne veut rien dire : elle mélange
+    // la verticale à l'horizontale sur quatre faces sur six.
+    float d = cube_actif() ? distance(f_pos, focus_pos) : distance(f_pos.xy, focus_pos.xy);
+    return max(1.0 - 5000.0 / (1.0 + d), 0.0);
 }
 
 vec3 illuminate(float max_light, vec3 view_dir, vec3 emitted, vec3 reflected) {

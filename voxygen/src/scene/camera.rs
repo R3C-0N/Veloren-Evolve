@@ -393,12 +393,72 @@ impl Camera {
         self.cube.map_or_else(Vec3::zero, |(_, origine)| origine)
     }
 
+    /// Le monde est-il un patron de cube ?
+    pub fn est_cubique(&self) -> bool { self.cube.is_some() }
+
+    /// La verticale du lieu, celle que le rendu emploie partout ailleurs.
+    ///
+    /// `+Z` sur une carte plate, `normalize(cube_origine)` sur une planète.
+    /// Tout ce qui demandait « le soleil est-il au-dessus ? » en lisant
+    /// `sun_dir.z` doit passer par elle : sur la face `+X`, `z` est une
+    /// direction **horizontale**.
+    pub fn verticale(&self) -> Vec3<f32> {
+        self.cube
+            .map_or(Vec3::unit_z(), |(_, origine)| origine.normalized())
+    }
+
     /// La forme du monde, telle que le rendu doit la déclarer : rayon, arête
     /// d'une face, et si le monde est un patron de cube.
     pub fn cube_params(&self) -> (f32, f32, bool) {
         self.cube.map_or((0.0, 0.0, false), |(map, _)| {
             (cube::rayon(map) as f32, cube::face_blocs(map) as f32, true)
         })
+    }
+
+    /// Le repère de la nappe lointaine : l'est du lieu, et l'angle au centre
+    /// au-delà duquel il n'y a plus rien à dessiner.
+    ///
+    /// **Le « haut » ne voyage pas :** il vaut `normalize(cube_origine)`, que
+    /// le shader a déjà. Et le nord se retrouve par `haut × est`. Un seul
+    /// vecteur suffit donc à transporter tout le repère.
+    ///
+    /// `map_bounds` est `(niveau de la mer, hauteur maximale au-dessus)` — leur
+    /// somme est l'altitude du plus haut sommet possible, celui qui dépasse le
+    /// plus longtemps derrière l'horizon.
+    ///
+    /// **Le plancher n'est pas décoratif.** Si la calotte s'arrêtait en deçà
+    /// des chunks chargés, la nappe passerait sous eux et l'on gagnerait un
+    /// combat de profondeur en anneau, exactement à la distance de vue.
+    pub fn cube_repere(&self, map_bounds: Vec2<f32>, portee: f32) -> (Vec3<f32>, f32) {
+        let Some((map, origine)) = self.cube else {
+            return (Vec3::zero(), 0.0);
+        };
+        // **Au même endroit que `cube_origine`**, c'est-à-dire sur la partie
+        // entière du foyer : le shader tire son « haut » de `cube_origine`, et
+        // un repère pris ailleurs ne lui serait plus tout à fait perpendiculaire.
+        let entier = self.focus.map(|e| e.trunc());
+        let Some(lieu) = cube::lieu_de(map, entier.xy().map(|e| e as f64)) else {
+            return (Vec3::zero(), 0.0);
+        };
+        let (_, est, _) = cube::repere_orthonorme(map, lieu);
+        let rayon = cube::rayon(map);
+        let h_max = (map_bounds.x + map_bounds.y) as f64;
+
+        // **L'observateur est la caméra, pas le joueur.** Le foyer reste au sol
+        // pendant que la caméra recule ; taillée sur l'altitude du foyer, la
+        // calotte gardait la portée d'un observateur au sol, et la planète
+        // apparaissait tronquée dès qu'on prenait du recul. `cam_pos` est déjà
+        // en espace de rendu, donc sa distance au centre s'obtient en lui
+        // rendant le point de convergence.
+        //
+        // `horizon` sature d'elle-même — `acos(R/(R+h)) → π/2` — donc de très
+        // loin la calotte couvre l'hémisphère visible, sans cas particulier.
+        let h_cam = ((self.dependents.cam_pos + origine).magnitude() as f64 - rayon).max(0.0);
+
+        let theta = cube::horizon(map, h_cam, h_max)
+            .max(1.05 * portee as f64 / rayon)
+            .min(2.8);
+        (est.map(|e| e as f32), theta as f32)
     }
 
     /// The is_fluid argument should return true for transparent voxels.
@@ -566,13 +626,12 @@ impl Camera {
         let Some(lieu) = cube::lieu_de(map, self.focus.xy().map(|e| e as f64)) else {
             return Mat4::identity();
         };
-        let (haut, _, tv) = cube::repere(map, lieu);
-        let haut = haut.map(|e| e as f32);
-        let nord = {
-            let t = tv.map(|e| e as f32);
-            (t - haut * t.dot(haut)).normalized()
-        };
-        let est = nord.cross(haut);
+        let (haut, est, nord) = cube::repere_orthonorme(map, lieu);
+        let (haut, est, nord) = (
+            haut.map(|e| e as f32),
+            est.map(|e| e as f32),
+            nord.map(|e| e as f32),
+        );
 
         // Le regard, tel que la caméra plate le donne, reposé sur le repère
         // local : `x` vers l'est, `y` vers le nord, `z` vers le haut.

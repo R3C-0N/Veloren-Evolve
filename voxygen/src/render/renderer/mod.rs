@@ -155,6 +155,7 @@ pub struct Renderer {
     noise_tex: Texture,
     /// La table conforme (D27), partagée avec le CPU.
     conforme_tex: Texture,
+    inverse_tex: Texture,
 
     quad_index_buffer_u16: Buffer<u16>,
     quad_index_buffer_u32: Buffer<u32>,
@@ -547,16 +548,16 @@ impl Renderer {
             Some(AddressMode::Repeat),
         )?;
 
-        // La table conforme (D27), montée telle quelle : le shader la lira au
-        // texel près et refera la bilinéaire à la main, exactement comme le CPU.
-        let conforme_tex = {
-            use common::terrain::conforme;
-            let cote = conforme::N as u32;
-            let octets = conforme::table().octets_serres();
+        // Les deux tables de la projection (D27), montées telles quelles : le
+        // shader les lira au texel près et refera la bilinéaire à la main,
+        // exactement comme le CPU. Aucune des deux n'est filtrable — un
+        // échantillonneur matériel n'offre aucune garantie d'arrondi, et c'est
+        // l'égalité au bit près qui est le sujet.
+        let table_tex = |nom: &str, cote: u32, octets: &[u8]| {
             let tex = Texture::new_raw(
                 &device,
                 &wgpu::TextureDescriptor {
-                    label: Some("table conforme"),
+                    label: Some(nom),
                     size: wgpu::Extent3d {
                         width: cote,
                         height: cote,
@@ -572,8 +573,24 @@ impl Renderer {
                 &wgpu::TextureViewDescriptor::default(),
                 &wgpu::SamplerDescriptor::default(),
             );
-            tex.update(&queue, [0, 0], [cote, cote], &octets);
+            tex.update(&queue, [0, 0], [cote, cote], octets);
             tex
+        };
+        let (conforme_tex, inverse_tex) = {
+            use common::terrain::conforme;
+            // Les deux constructions sont indépendantes, et l'inverse coûte
+            // 513² Newton : on ne les enchaîne pas sur le chemin critique.
+            let (directe, inverse) = rayon::join(
+                || (conforme::N as u32, conforme::table().octets_serres()),
+                || {
+                    let inv = conforme::inverse();
+                    (inv.cote() as u32, inv.octets_serres())
+                },
+            );
+            (
+                table_tex("table conforme", directe.0, &directe.1),
+                table_tex("table conforme inverse", inverse.0, &inverse.1),
+            )
         };
 
         let clouds_locals =
@@ -654,6 +671,7 @@ impl Renderer {
             depth_sampler,
             noise_tex,
             conforme_tex,
+            inverse_tex,
 
             quad_index_buffer_u16,
             quad_index_buffer_u32,

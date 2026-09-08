@@ -16,6 +16,34 @@ vec3 get_cloud_color(vec3 surf_color, vec3 dir, vec3 origin, float max_dist, flo
     
     // This is rubbish... but fast
     float cloud_alt = cloud_avg_alt();
+
+    if (cube_actif()) {
+        // **Le pont de nuages est une coquille, pas une dalle.** L'intersection
+        // rayon-plan de la version plate donne, vue de haut, un disque infini
+        // qui n'a rien à voir avec la planète : c'est elle qu'on voyait barrer
+        // le ciel depuis l'orbite. Ici c'est une intersection rayon-sphère, de
+        // rayon `R + altitude des nuages`.
+        vec3 c = origin + cube_origine.xyz;   // la caméra, depuis le centre
+        float rc = cube.x + cloud_alt;
+        float b = dot(c, dir);
+        float disc = b * b - (dot(c, c) - rc * rc);
+        if (disc > 0.0) {
+            float racine = sqrt(disc);
+            // La première intersection **devant** la caméra.
+            float dist = -b - racine;
+            if (dist <= 0.0) { dist = -b + racine; }
+            if (dist > 0.0 && dist < max_dist) {
+                vec2 cloud_intersect = cube_wpos_de_direction(normalize(c + dir * dist));
+                surf_color = mix(
+                    surf_color,
+                    vec3(1 + noise_3d(vec3(cloud_intersect * 0.0001, time_of_day.x * 0.001)) * 2.0) * haze_color,
+                    min(cloud_tendency_at(cloud_intersect) * 30000 / dist, 1)
+                );
+            }
+        }
+        return surf_color;
+    }
+
     if (dir.z * (cloud_alt - origin.z) > 0.0) {
         float dist = (cloud_alt - origin.z) / dir.z;
         if (dist < max_dist) {

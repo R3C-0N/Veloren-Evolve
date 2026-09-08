@@ -59,6 +59,11 @@ uniform u_locals {
 //};
 
 layout(location = 0) out vec3 f_pos;
+// **La place dans le patron, pour ce qui n'a de sens que là.** Le bloc visé, la
+// trame des flaques, le grain d'un matériau : tout cela s'indexe sur la grille,
+// pas sur la sphère. Le reste — l'éclairage, la vue, l'horizon — vit dans le
+// repère du rendu, et c'est `f_pos` qui le porte.
+layout(location = 4) out vec3 f_pos_patron;
 // #ifdef FLUID_MODE_SHINY
 layout(location = 1) flat out uint f_pos_norm;
 
@@ -113,8 +118,21 @@ void main() {
     }
 
     #ifdef EXPERIMENTAL_CURVEDWORLD
-        v_pos.z -= pow(distance(v_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
+        // La fausse courbure ne s'ajoute pas à la vraie.
+        if (!cube_actif()) {
+            v_pos.z -= pow(distance(v_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
+        }
     #endif
+
+    // **Le fragment vit là où le sommet est dessiné.** Laisser `f_pos` dans le
+    // patron revenait à éclairer une planète comme une carte plate : la normale
+    // y pointait vers le `+Z` de la grille, et sur la face `+X` la verticale du
+    // monde est `+X`. La direction de vue elle-même, `f_pos - cam_pos`,
+    // retranchait une caméra du rendu d'un fragment du patron.
+    f_pos_patron = f_pos;
+    if (cube_actif()) {
+        f_pos = v_pos;
+    }
 
     // vec3 light_col = vec3(
     //          hash(floor(vec4(f_chunk_pos.x, 0, 0, 0))),

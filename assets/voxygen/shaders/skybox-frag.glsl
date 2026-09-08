@@ -31,7 +31,7 @@ void main() {
 #else
     vec3 cam_dir = normalize(f_pos - cam_pos.xyz);
 
-    float cam_alt = alt_at(cam_pos.xy);
+    float cam_alt = alt_at_rendu(cam_pos.xyz);
     float fluid_alt = medium.x == MEDIUM_WATER ? floor(cam_alt + 1) : view_distance.w;
     vec3 mu = medium.x == MEDIUM_WATER ? MU_WATER : vec3(0.0);
 
