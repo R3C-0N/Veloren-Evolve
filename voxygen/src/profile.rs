@@ -13,7 +13,15 @@ use tracing::warn;
 #[serde(default)]
 pub struct CharacterProfile {
     /// Array representing a character's hotbar.
+    ///
+    /// Celle de l'aventure. Le nom ne change pas : un profil existant garde sa
+    /// barre, et n'a rien a migrer.
     pub hotbar_slots: [Option<hud::HotbarSlotContents>; 10],
+    /// La barre du combat — potions et capacites.
+    ///
+    /// Champ neuf, donc absent des profils ecrits avant : `serde(default)` la
+    /// rend vide plutot que d'echouer.
+    pub hotbar_slots_combat: [Option<hud::HotbarSlotContents>; 10],
 }
 
 const fn default_slots() -> [Option<hud::HotbarSlotContents>; 10] {
@@ -24,6 +32,7 @@ impl Default for CharacterProfile {
     fn default() -> Self {
         CharacterProfile {
             hotbar_slots: default_slots(),
+            hotbar_slots_combat: default_slots(),
         }
     }
 }
@@ -102,7 +111,10 @@ impl Profile {
         &self,
         server: &str,
         character_id: Option<CharacterId>,
-    ) -> [Option<hud::HotbarSlotContents>; 10] {
+    ) -> (
+        [Option<hud::HotbarSlotContents>; 10],
+        [Option<hud::HotbarSlotContents>; 10],
+    ) {
         match character_id {
             Some(character_id) => self
                 .servers
@@ -110,8 +122,8 @@ impl Profile {
                 .and_then(|s| s.characters.get(&character_id)),
             None => self.transient_character.as_ref(),
         }
-        .map(|c| c.hotbar_slots.clone())
-        .unwrap_or_else(default_slots)
+        .map(|c| (c.hotbar_slots.clone(), c.hotbar_slots_combat.clone()))
+        .unwrap_or_else(|| (default_slots(), default_slots()))
     }
 
     /// Set the hotbar_slots for the requested character_id.
@@ -124,14 +136,16 @@ impl Profile {
     /// * server - current server the character is on.
     /// * character_id - id of the character, passing `None` indicates the
     ///   transient character profile should be used.
-    /// * slots - array of hotbar_slots to save.
+    /// * aventure - la barre de l'aventure.
+    /// * combat - la barre du combat.
     pub fn set_hotbar_slots(
         &mut self,
         server: &str,
         character_id: Option<CharacterId>,
-        slots: [Option<hud::HotbarSlotContents>; 10],
+        aventure: [Option<hud::HotbarSlotContents>; 10],
+        combat: [Option<hud::HotbarSlotContents>; 10],
     ) {
-        match character_id {
+        let profil = match character_id {
             Some(character_id) => self.servers
               .entry(server.to_string())
               .or_default()
@@ -140,8 +154,9 @@ impl Profile {
               .entry(character_id)
               .or_default(),
             None => self.transient_character.get_or_insert_default(),
-        }
-        .hotbar_slots = slots;
+        };
+        profil.hotbar_slots = aventure;
+        profil.hotbar_slots_combat = combat;
     }
 
     /// Get the selected_character for the provided server.
@@ -235,14 +250,20 @@ mod tests {
     #[test]
     fn test_get_slots_with_empty_profile() {
         let profile = Profile::default();
-        let slots = profile.get_hotbar_slots("TestServer", Some(CharacterId(12345)));
-        assert_eq!(slots, [(); 10].map(|()| None))
+        let (aventure, combat) = profile.get_hotbar_slots("TestServer", Some(CharacterId(12345)));
+        assert_eq!(aventure, [(); 10].map(|()| None));
+        assert_eq!(combat, [(); 10].map(|()| None))
     }
 
     #[test]
     fn test_set_slots_with_empty_profile() {
         let mut profile = Profile::default();
         let slots = [(); 10].map(|()| None);
-        profile.set_hotbar_slots("TestServer", Some(CharacterId(12345)), slots);
+        profile.set_hotbar_slots(
+            "TestServer",
+            Some(CharacterId(12345)),
+            slots.clone(),
+            slots,
+        );
     }
 }

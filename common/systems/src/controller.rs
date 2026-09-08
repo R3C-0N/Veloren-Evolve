@@ -178,12 +178,13 @@ impl<'a> System<'a> for Sys {
                                 new_ability,
                             });
                         },
-                        ControlEvent::BasculerCombat => {
-                            // Degainer et ranger, dans les deux sens. Le retour
-                            // au combat sur coup recu se decide ailleurs, a la
-                            // source du coup — ici c'est la volonte du joueur.
+                        ControlEvent::DefinirMode(combat) => {
+                            // Le retour au combat sur coup recu se decide
+                            // ailleurs, a la source du coup — ici c'est la
+                            // volonte du joueur, et elle dit lequel des deux
+                            // modes elle veut, pas « l'autre ».
                             if let Some(mut mode) = modes.get_mut(entity) {
-                                mode.combat = !mode.combat;
+                                mode.combat = combat;
                             }
                         },
                         ControlEvent::LeaveStance => {

@@ -6,11 +6,11 @@
   capturer le rectangle de fenetre au lieu de l'aire client decale tout de
   la hauteur de la barre de titre, et les clics ratent leur cible.
 
-  pwsh -File driver.ps1 -Action <launch|rapide|fit|shot|click|key|text|look|zoom|walk|state|stop>
+  pwsh -File driver.ps1 -Action <launch|rapide|fit|shot|click|key|text|look|zoom|molette|mode|walk|state|stop>
 #>
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('launch','rapide','fit','shot','click','drag','press','key','text','look','zoom','walk','state','stop')]
+  [ValidateSet('launch','rapide','fit','shot','click','drag','press','key','text','look','zoom','molette','mode','walk','state','stop')]
   [string]$Action,
   [ValidateSet('left','right','middle')]
   [string]$Button = 'left',
@@ -110,7 +110,9 @@ function Release-Focus {
 # que le jeu ignore en silence — la touche semble alors perdue.
 function Get-Vk([string]$name) {
   $m = @{ enter = 0x0D; esc = 0x1B; space = 0x20; tab = 0x09; back = 0x08; del = 0x2E;
-          f1 = 0x70; f4 = 0x73; f11 = 0x7A; up = 0x26; down = 0x28; left = 0x25; right = 0x27 }
+          f1 = 0x70; f2 = 0x71; f3 = 0x72; f4 = 0x73; f5 = 0x74; f6 = 0x75; f7 = 0x76;
+          f8 = 0x77; f9 = 0x78; f10 = 0x79; f11 = 0x7A; f12 = 0x7B;
+          up = 0x26; down = 0x28; left = 0x25; right = 0x27 }
   $v = $m[$name.ToLower()]
   if ($v) { return @{ Vk = [byte]$v; Shift = $false } }
   if ($name.Length -ne 1) { throw "touche inconnue : $name" }
@@ -160,6 +162,30 @@ function Save-Shot($h, $path) {
   $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose(); $plein.Dispose()
   return "$path ($($c.W)x$($c.H))"
+}
+
+# Un cran de molette, eventuellement sous un modificateur tenu.
+#
+# Ticks negatif = molette vers le bas. -120 ne rentre pas dans un uint32 : il
+# faut passer son equivalent non signe, sinon PowerShell leve.
+function Envoyer-Molette([int]$Crans, [int]$Modificateur) {
+  $h = (Get-Game).MainWindowHandle; Grab-Focus $h
+  $n = [Math]::Abs($Crans)
+  if ($n -eq 0) { throw "-Ticks requis (negatif = vers le bas)" }
+  $delta = if ($Crans -lt 0) { [uint32]4294967176 } else { [uint32]120 }
+  if ($Modificateur -ne 0) {
+    [Vx]::keybd_event($Modificateur, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 40
+  }
+  foreach ($i in 1..$n) {
+    [Vx]::mouse_event(0x0800, 0, 0, $delta, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 90
+  }
+  if ($Modificateur -ne 0) {
+    Start-Sleep -Milliseconds 40
+    [Vx]::keybd_event($Modificateur, 0, 2, [IntPtr]::Zero)
+  }
+  Release-Focus
 }
 
 switch ($Action) {
@@ -358,19 +384,25 @@ switch ($Action) {
     "camera dx=$Dx dy=$Dy"
   }
 
+  # Depuis D50, la molette nue ne zoome plus : elle choisit la case de la barre.
+  # Le zoom est sous Alt, le mode sous Ctrl. `Envoyer-Molette` porte les trois.
   'zoom' {
-    # Ticks negatif = reculer la camera. -120 ne rentre pas dans un uint32 :
-    # il faut passer son equivalent non signe, sinon PowerShell leve.
-    $h = (Get-Game).MainWindowHandle; Grab-Focus $h
-    $n = [Math]::Abs($Ticks)
-    if ($n -eq 0) { throw "-Ticks requis (negatif = reculer)" }
-    $delta = if ($Ticks -lt 0) { [uint32]4294967176 } else { [uint32]120 }
-    foreach ($i in 1..$n) {
-      [Vx]::mouse_event(0x0800, 0, 0, $delta, [IntPtr]::Zero)
-      Start-Sleep -Milliseconds 90
-    }
-    Release-Focus
+    Envoyer-Molette $Ticks 0x12   # Alt
     "zoom $Ticks crans"
+  }
+
+  'molette' {
+    Envoyer-Molette $Ticks 0
+    "molette $Ticks crans (choix de case)"
+  }
+
+  'mode' {
+    # Haut = aventure, bas = combat. Une affectation : repeter ne fait rien.
+    $vers = if ($Value) { $Value } else { 'combat' }
+    if ($vers -notin @('aventure','combat')) { throw "-Value aventure|combat" }
+    $crans = if ($vers -eq 'aventure') { 1 } else { -1 }
+    Envoyer-Molette $crans 0x11   # Ctrl
+    "mode $vers"
   }
 
   'walk' {

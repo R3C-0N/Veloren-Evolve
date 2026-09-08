@@ -110,7 +110,9 @@ pwsh -File $d -Action key   -Value esc      # nommées : enter esc space tab f1 
 pwsh -File $d -Action key   -Value 1        # tout le reste : un caractère, pris dans la disposition
 pwsh -File $d -Action text  -Value "Evolve"
 pwsh -File $d -Action look  -Dx 500 -Dy 60  # caméra, mouvement relatif
-pwsh -File $d -Action zoom  -Ticks -6       # négatif = reculer la caméra
+pwsh -File $d -Action zoom    -Ticks -6     # négatif = reculer la caméra (Alt + molette)
+pwsh -File $d -Action molette -Ticks 3      # molette nue : choisit la case de la barre
+pwsh -File $d -Action mode    -Value combat # Ctrl + molette : aventure | combat
 pwsh -File $d -Action walk  -Value w -Seconds 4
 pwsh -File $d -Action fit                   # replace la fenêtre si elle a bougé
 ```
@@ -156,17 +158,37 @@ pilote ne l'atteint pas — cliquer en coordonnées écran absolues.
 
 ### Éprouver la construction
 
-Casser et poser sont derrière le mode construction, et rien d'autre — ni zone à
-déclarer ni permission à accorder, depuis D32. Une seule commande en chat
-(`enter`, puis `text`, puis `enter`) :
+**Il n'y a plus de mode construction ni de `/build`** (D35), et plus aucune zone
+ni permission à accorder (D32). L'aventure *est* le mode normal : on y arrive en
+creusant et en posant, sans une commande.
 
-```
-/build
+Viser au réticule : `left` maintenu creuse, `right` pose, `middle` est la
+pipette. La matière posée est celle de la case **sélectionnée** dans la barre
+d'objets, que `drag` a garnie. Depuis D50, deux gestes la choisissent :
+
+```powershell
+pwsh -File $d -Action molette -Ticks 3   # trois cases vers la droite
+pwsh -File $d -Action key -Value 1       # la première case, directement
 ```
 
-Ensuite, viser au réticule : `right` pose, `middle` est la pipette. La matière
-posée est celle de l'emplacement **sélectionné** dans la barre d'objets —
-`key -Value 1` le choisit, et `drag` l'y a mis.
+**Un liseré entoure la case choisie** — c'est le seul retour visuel du choix, et
+il est désormais dessiné sans condition. Un `shot` recadré sur la barre le
+montre.
+
+**La molette nue ne zoome plus.** `-Action zoom` tient `Alt` pour retrouver la
+caméra ; `-Action mode` tient `Ctrl` pour passer d'un mode à l'autre. Un cran de
+`mode` est une **affectation** : le répéter ne fait rien, et c'est voulu.
+
+### Éprouver le combat
+
+`-Action mode -Value combat` arme le combat, et **la barre change de contenu** :
+elle passe de la matière aux potions et aux capacités. Les deux clics reviennent
+alors à l'arme — `right` ne pose plus rien, même en visant un mur à portée, et
+le réticule cesse d'accrocher un bloc. `-Value aventure` revient en arrière.
+
+Prendre un coup arme le combat tout seul, sans passer par le pilote : c'est le
+serveur qui l'écrit. Si la barre change sans qu'on ait rien demandé, ce n'est
+pas une panne.
 
 **Casser se maintient, depuis D34.** Un `press -Button left` nu dure 110 ms et
 n'entame plus rien : il faut `-Seconds`, et assez longtemps pour la dureté du
@@ -206,6 +228,30 @@ on joue. `Échap` ouvre le menu, `F4` prend une capture, `F11` bascule le plein
 écran. Inutile pour un agent : rien n'est observable sans le pilote.
 
 ## Pièges
+
+- **`fit` rend la molette et la souris muettes.** Il déplace la fenêtre, et
+  Veloren relâche le curseur sur `WindowEvent::Moved` — l'amont le sait et le
+  commente dans son propre code : « if you move the window then you need to
+  close a menu to re-grab the mouse ». Tant que le curseur n'est pas repris,
+  `molette`, `zoom`, `mode` et `look` **ne font rien du tout**, sans le moindre
+  message. Le remède est d'ouvrir puis de refermer un menu :
+
+  ```powershell
+  pwsh -File $d -Action key -Value esc ; pwsh -File $d -Action key -Value esc
+  ```
+
+  **Le vérifier avant de conclure quoi que ce soit d'un essai d'entrée** : un
+  `look -Dx 600` doit changer `Look Direction` dans le débogueur. S'il ne le
+  change pas, ce n'est pas le jeu qui est en cause.
+- **Les clics ne portent pas sur un bureau multi-écrans.** Le pilote a été
+  réglé sur un écran unique de 1920×1080 à 125 %. Sur un bureau virtuel qui
+  s'étend en coordonnées négatives — un second moniteur à gauche —, `click` et
+  `press` posent le curseur hors de la fenêtre : le clic va au terminal, qui
+  reprend le premier plan, et **la capture suivante montre le terminal au lieu
+  du jeu**. Molette, clavier et `look` continuent de marcher, eux, parce qu'ils
+  vont à la fenêtre *active* et non sous le curseur. Symptôme à reconnaître :
+  tout répond sauf les clics. À reprendre dans `driver.ps1` avec
+  `MOUSEEVENTF_VIRTUALDESK`, ou en pilotant depuis un écran unique.
 
 - **Le plein écran sans bordure rend la capture aveugle.** Windows passe ces
   fenêtres en *independent flip*, qui court-circuite le compositeur ; GDI ne

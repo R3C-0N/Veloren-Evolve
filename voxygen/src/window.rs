@@ -124,10 +124,101 @@ pub type MouseButton = winit::event::MouseButton;
 pub type PressState = winit::event::ElementState;
 pub type EventLoop = winit::event_loop::EventLoop<()>;
 
+/// Le sens d'un cran de molette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub enum SensMolette {
+    Haut,
+    Bas,
+}
+
+/// Les modificateurs tenus au moment d'un cran de molette.
+///
+/// Ils ne vivent que dans `KeyMouse::Molette` : le clavier ordinaire n'en a
+/// jamais eu, et lui en donner obligerait a revoir les quatre tables de
+/// `ControlSettings`. Ici la variante entiere est la cle de hachage, donc
+/// `Molette(Bas, rien)` et `Molette(Bas, ctrl)` sont deux liaisons distinctes
+/// sans qu'aucune detection de conflit ait a l'apprendre.
+///
+/// **`Shift` n'en fait pas partie, et c'est delibere.** Il porte `Sneak`,
+/// `SwimDown` et `CancelClimb` — des actions qu'on *tient* en se deplacant. Le
+/// compter ici rendrait la molette muette a tout joueur accroupi, puisque la
+/// correspondance est exacte : il resterait sur le bord d'une corniche sans
+/// pouvoir changer de bloc.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct Modificateurs {
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
+impl Modificateurs {
+    pub const RIEN: Self = Self {
+        ctrl: false,
+        alt: false,
+    };
+    pub const ALT: Self = Self {
+        ctrl: false,
+        alt: true,
+    };
+    pub const CTRL: Self = Self {
+        ctrl: true,
+        alt: false,
+    };
+}
+
+impl SensMolette {
+    fn nom(self) -> &'static str {
+        match self {
+            SensMolette::Haut => "Wheel Up",
+            SensMolette::Bas => "Wheel Down",
+        }
+    }
+
+    fn fleche(self) -> &'static str {
+        match self {
+            SensMolette::Haut => "Wh^",
+            SensMolette::Bas => "Whv",
+        }
+    }
+}
+
+impl Modificateurs {
+    fn prefixe(self) -> String {
+        let mut prefixe = String::new();
+        if self.ctrl {
+            prefixe.push_str("Ctrl + ");
+        }
+        if self.alt {
+            prefixe.push_str("Alt + ");
+        }
+        prefixe
+    }
+
+    fn prefixe_court(self) -> String {
+        let mut prefixe = String::new();
+        if self.ctrl {
+            prefixe.push_str("C+");
+        }
+        if self.alt {
+            prefixe.push_str("A+");
+        }
+        prefixe
+    }
+}
+
+impl From<winit::keyboard::ModifiersState> for Modificateurs {
+    fn from(etat: winit::keyboard::ModifiersState) -> Self {
+        Self {
+            ctrl: etat.control_key(),
+            alt: etat.alt_key(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum KeyMouse {
     Key(winit::keyboard::Key),
     Mouse(winit::event::MouseButton),
+    Molette(SensMolette, Modificateurs),
 }
 
 impl KeyMouse {
@@ -159,6 +250,7 @@ impl KeyMouse {
                 // Additional mouse buttons after middle click start at 1
                 format!("Mouse {}", button + 3)
             },
+            Molette(sens, mods) => format!("{}{}", mods.prefixe(), sens.nom()),
         }
     }
 
@@ -174,6 +266,9 @@ impl KeyMouse {
             Mouse(MouseButton::Other(button)) => {
                 // Additional mouse buttons after middle click start at 1
                 return Some(format!("M{}", button + 3));
+            },
+            Molette(sens, mods) => {
+                return Some(format!("{}{}", mods.prefixe_court(), sens.fleche()));
             },
             _ => return None,
         };
@@ -227,6 +322,11 @@ pub struct Window {
     pub mouse_y_inversion: bool,
     fullscreen: FullScreenSettings,
     modifiers: winit::keyboard::ModifiersState,
+    /// Fraction de cran de molette pas encore consommee.
+    ///
+    /// Une souris envoie des crans entiers, un pave tactile un flux continu :
+    /// sans accumulateur, un seul geste balaierait les dix cases de la barre.
+    crans_accumules: f32,
     // Track if at least one Resized event has occured since the last `fetch_events` call
     // Used for deduplication of resizes.
     resized: bool,
@@ -344,6 +444,7 @@ impl Window {
             mouse_y_inversion: settings.gameplay.mouse_y_inversion,
             fullscreen: FullScreenSettings::default(),
             modifiers: Default::default(),
+            crans_accumules: 0.0,
             scale_factor,
             resized: false,
             needs_refresh_resize: false,
@@ -877,22 +978,74 @@ impl Window {
                     self.cursor_position = position;
                 }
             },
+            // La molette est une entree comme une autre : elle passe par
+            // `map_input`, donc elle se rebinde dans les parametres et porte
+            // ses modificateurs. Le garde `cursor_grabbed` reste ce qui laisse
+            // le defilement au sac, au chat et a la carte.
             WindowEvent::MouseWheel { delta, .. } if self.cursor_grabbed && self.focused => {
                 const DIFFERENCE_FROM_DEVICE_EVENT_ON_X11: f32 = -15.0;
-                self.events.push(Event::Zoom({
-                    let y = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
-                        // TODO: Check to see if there is a better way to find the "line
-                        // height" than just hardcoding 16.0 pixels.  Alternately we could
-                        // get rid of this and have the user set zoom sensitivity, since
-                        // it's unlikely people would expect a configuration file to work
-                        // across operating systems.
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.y / 16.0) as f32,
-                    };
-                    y * (self.zoom_sensitivity as f32 / 100.0)
-                        * if self.zoom_inversion { -1.0 } else { 1.0 }
-                        * DIFFERENCE_FROM_DEVICE_EVENT_ON_X11
-                }))
+                let y = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
+                    // TODO: Check to see if there is a better way to find the "line
+                    // height" than just hardcoding 16.0 pixels.  Alternately we could
+                    // get rid of this and have the user set zoom sensitivity, since
+                    // it's unlikely people would expect a configuration file to work
+                    // across operating systems.
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.y / 16.0) as f32,
+                };
+                if y == 0.0 {
+                    return;
+                }
+                let sens = if y > 0.0 {
+                    SensMolette::Haut
+                } else {
+                    SensMolette::Bas
+                };
+                // Un cran est une impulsion ; ce qui n'atteint pas l'unite
+                // attend le geste suivant.
+                if self.crans_accumules != 0.0 && self.crans_accumules.signum() != y.signum() {
+                    self.crans_accumules = 0.0;
+                }
+                self.crans_accumules += y;
+                let crans = self.crans_accumules.abs().trunc();
+                self.crans_accumules -= crans * self.crans_accumules.signum();
+                // En attente d'un remappage, le moindre mouvement compte : c'est
+                // lui qu'on cherche a capturer.
+                let en_remappage = !matches!(self.remapping_mode, RemappingMode::None);
+                if crans < 1.0 && !en_remappage {
+                    return;
+                }
+                // L'amplitude reste analogique pour le zoom ; c'est la liaison
+                // qui en donne le sens, et le reglage d'inversion le retourne.
+                let amplitude = y.abs()
+                    * (self.zoom_sensitivity as f32 / 100.0)
+                    * DIFFERENCE_FROM_DEVICE_EVENT_ON_X11.abs();
+                let inversion = if self.zoom_inversion { -1.0 } else { 1.0 };
+                let map_input = Window::map_input(
+                    KeyMouse::Molette(sens, Modificateurs::from(self.modifiers)),
+                    controls,
+                    &mut self.remapping_mode,
+                    &mut self.last_input,
+                    self.menu_open,
+                );
+                if let Some(MappedInput::Game(game_inputs)) = map_input {
+                    for game_input in game_inputs {
+                        match game_input {
+                            GameInput::ZoomIn => {
+                                self.events.push(Event::Zoom(-amplitude * inversion))
+                            },
+                            GameInput::ZoomOut => {
+                                self.events.push(Event::Zoom(amplitude * inversion))
+                            },
+                            input => {
+                                for _ in 0..crans as u32 {
+                                    self.events.push(Event::InputUpdate(*input, true));
+                                    self.events.push(Event::InputUpdate(*input, false));
+                                }
+                            },
+                        }
+                    }
+                }
             },
             _ => {},
         }

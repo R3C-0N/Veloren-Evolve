@@ -227,6 +227,7 @@ impl ServerEvent for PlaceBlockEvent {
         ReadExpect<'a, comp::item::tool::AbilityMap>,
         WriteStorage<'a, comp::Inventory>,
         WriteStorage<'a, comp::InventoryUpdateBuffer>,
+        ReadStorage<'a, comp::ModeDeJeu>,
         crate::sys::msg::in_game::TerrainPersistenceData<'a>,
     );
 
@@ -239,10 +240,18 @@ impl ServerEvent for PlaceBlockEvent {
             ability_map,
             mut inventories,
             mut inventory_update_buffers,
+            modes,
             mut _terrain_persistence,
         ): Self::SystemData<'_>,
     ) {
         for ev in events {
+            // En combat, les deux clics sont a l'arme : rien n'arrive ici de
+            // bonne foi, et ce qui y arriverait quand meme ne doit pas poser.
+            // Meme refus que le creusement, plus haut.
+            if modes.get(ev.entity).is_some_and(|mode| mode.combat) {
+                continue;
+            }
+
             let Some(mut inventory) = inventories.get_mut(ev.entity) else {
                 continue;
             };

@@ -27,20 +27,66 @@ pub enum SlotContents {
     Ability(usize),
 }
 
+/// Laquelle des deux barres repond.
+///
+/// Elle n'est pas un etat qu'on garde : elle se deduit de `ModeDeJeu`, que le
+/// serveur ecrit et que le HUD relit a chaque image. Une seule source de
+/// verite, donc la barre suit toute seule le coup recu qui met en combat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Barre {
+    #[default]
+    Aventure = 0,
+    Combat = 1,
+}
+
+/// La barre d'objets, en deux exemplaires.
+///
+/// L'aventure ne porte que de la matiere, le combat que des potions et des
+/// capacites. C'est ce qui permet aux deux clics d'appartenir entierement a
+/// l'un ou a l'autre : plus rien a filtrer case par case.
+///
+/// Chaque barre garde **sa** selection, pour qu'un aller-retour rende la case
+/// qu'on avait.
 #[derive(Clone, Default)]
 pub struct State {
-    pub slots: [Option<SlotContents>; 10],
+    barres: [[Option<SlotContents>; 10]; 2],
     inputs: [bool; 10],
-    pub currently_selected_slot: Slot,
+    selections: [Slot; 2],
+    barre: Barre,
 }
 
 impl State {
-    pub fn new(slots: [Option<SlotContents>; 10]) -> Self {
+    pub fn new(aventure: [Option<SlotContents>; 10], combat: [Option<SlotContents>; 10]) -> Self {
         Self {
-            slots,
+            barres: [aventure, combat],
             inputs: [false; 10],
-            currently_selected_slot: Slot::default(),
+            selections: [Slot::default(); 2],
+            barre: Barre::default(),
         }
+    }
+
+    pub fn barre(&self) -> Barre { self.barre }
+
+    pub fn definir_barre(&mut self, barre: Barre) { self.barre = barre; }
+
+    pub fn slots(&self) -> &[Option<SlotContents>; 10] { self.slots_de(self.barre) }
+
+    pub fn slots_de(&self, barre: Barre) -> &[Option<SlotContents>; 10] {
+        &self.barres[barre as usize]
+    }
+
+    pub fn selection(&self) -> Slot { self.selections[self.barre as usize] }
+
+    pub fn selection_de(&self, barre: Barre) -> Slot { self.selections[barre as usize] }
+
+    pub fn definir_selection(&mut self, slot: Slot) {
+        self.selections[self.barre as usize] = slot;
+    }
+
+    pub fn selection_suivante(&mut self) { self.selections[self.barre as usize].next_slot(); }
+
+    pub fn selection_precedente(&mut self) {
+        self.selections[self.barre as usize].previous_slot();
     }
 
     /// Returns true if the button was just pressed
@@ -51,14 +97,26 @@ impl State {
         just_pressed
     }
 
-    pub fn get(&self, slot: Slot) -> Option<SlotContents> { self.slots[slot as usize].clone() }
+    pub fn get(&self, slot: Slot) -> Option<SlotContents> { self.get_de(self.barre, slot) }
 
-    pub fn swap(&mut self, a: Slot, b: Slot) { self.slots.swap(a as usize, b as usize); }
+    pub fn get_de(&self, barre: Barre, slot: Slot) -> Option<SlotContents> {
+        self.barres[barre as usize][slot as usize].clone()
+    }
 
-    pub fn clear_slot(&mut self, slot: Slot) { self.slots[slot as usize] = None; }
+    pub fn swap(&mut self, a: Slot, b: Slot) {
+        self.barres[self.barre as usize].swap(a as usize, b as usize);
+    }
+
+    pub fn clear_slot(&mut self, slot: Slot) {
+        self.barres[self.barre as usize][slot as usize] = None;
+    }
 
     pub fn add_inventory_link(&mut self, slot: Slot, item: &Item) {
-        self.slots[slot as usize] = Some(SlotContents::Inventory(
+        self.add_inventory_link_de(self.barre, slot, item);
+    }
+
+    pub fn add_inventory_link_de(&mut self, barre: Barre, slot: Slot, item: &Item) {
+        self.barres[barre as usize][slot as usize] = Some(SlotContents::Inventory(
             item.item_hash(),
             ItemKey::from(item),
         ));
@@ -67,8 +125,12 @@ impl State {
     // TODO: remove pending UI
     // Adds ability slots if missing and should be present
     // Removes ability slots if not there and shouldn't be present
+    //
+    // **La barre de combat seule.** Les capacites ne peuvent plus ecraser une
+    // case de matiere : elles n'ont acces qu'a l'autre barre.
     pub fn maintain_abilities(&mut self, client: &client::Client, info: &HudInfo) {
         use specs::WorldExt;
+        let combat = &mut self.barres[Barre::Combat as usize];
         if let Some(active_abilities) = client
             .state()
             .ecs()
@@ -86,7 +148,7 @@ impl State {
                 )
                 .iter()
                 .enumerate()
-                .zip(self.slots.iter_mut())
+                .zip(combat.iter_mut())
             {
                 if matches!(ability, AuxiliaryAbility::Empty) {
                     if matches!(hotbar_slot, Some(SlotContents::Ability(_))) {
@@ -99,7 +161,7 @@ impl State {
                 }
             }
         } else {
-            self.slots
+            combat
                 .iter_mut()
                 .filter(|slot| matches!(slot, Some(SlotContents::Ability(_))))
                 .for_each(|slot| *slot = None)
