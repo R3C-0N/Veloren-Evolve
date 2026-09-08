@@ -3,6 +3,7 @@ pub mod load;
 mod volume;
 
 pub(super) use cache::FigureModelCache;
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use common_net::synced_components::Heads;
 pub use load::load_mesh; // TODO: Don't make this public.
 pub use volume::VolumeKey;
@@ -58,7 +59,7 @@ use common::{
         body::{self, parts::HeadState},
         inventory::slot::EquipSlot,
         item::{Hands, ItemKind, ToolKind, armor::ArmorKind},
-        ship::{self, figuredata::VOXEL_COLLIDER_MANIFEST},
+        ship::{self},
         slot::ArmorSlot,
     },
     interaction::InteractionKind,

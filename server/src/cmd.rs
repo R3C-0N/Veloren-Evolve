@@ -2423,7 +2423,7 @@ fn handle_spawn_airship(
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
         .state
-        .create_ship(pos, ori, ship, |ship| ship.make_collider());
+        .create_ship(pos, ori, ship, |ship| comp::make_collider(&ship));
     if let Some(pos) = destination {
         let agent = comp::Agent::from_body(&comp::Body::Ship(ship))
             .with_destination(pos)
@@ -2470,7 +2470,7 @@ fn handle_spawn_ship(
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
         .state
-        .create_ship(pos, ori, ship, |ship| ship.make_collider());
+        .create_ship(pos, ori, ship, |ship| comp::make_collider(&ship));
 
     if let Some(pos) = destination {
         let agent = comp::Agent::from_body(&comp::Body::Ship(ship))
@@ -2540,7 +2540,7 @@ fn handle_make_volume(
     args: Vec<String>,
     _action: &ServerChatCommand,
 ) -> CmdResult<()> {
-    use comp::body::ship::figuredata::VoxelCollider;
+    use common::figure::ship_spec::VoxelCollider;
 
     //let () = parse_cmd_args!(args);
     let pos = position(server, target, "target")?;

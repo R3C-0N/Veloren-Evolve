@@ -98,6 +98,7 @@ pub use self::{
     ori::Ori,
     pet::Pet,
     phys::{
+        make_collider,
         CapsulePrism, Collider, Density, ForceUpdate, Immovable, Mass, PhysicsState, Pos,
         PosVelOriDefer, PreviousPhysCache, Scale, Sticky, Vel,
     },

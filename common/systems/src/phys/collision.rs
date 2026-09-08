@@ -1,7 +1,7 @@
 use common::{
     comp::{
         CharacterState, Collider, Mass, Ori, PhysicsState, Pos, PreviousPhysCache, Scale, Vel,
-        body::ship::figuredata::VoxelCollider,
+
         fluid_dynamics::{Fluid, LiquidKind},
     },
     consts::FRIC_GROUND,
@@ -11,6 +11,7 @@ use common::{
     uid::Uid,
     vol::{BaseVol, ReadVol},
 };
+use common::figure::ship_spec::VoxelCollider;
 use specs::Entity;
 use std::ops::Range;
 use vek::*;

@@ -905,7 +905,7 @@ impl Body {
     /// Body collider
     pub fn collider(&self) -> Collider {
         if let Body::Ship(ship) = self {
-            ship.make_collider()
+            crate::comp::phys::make_collider(ship)
         } else {
             let (p0, p1, radius) = self.sausage();
 

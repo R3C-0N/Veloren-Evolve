@@ -11,6 +11,7 @@ pub mod terrain;
 pub mod tether;
 pub mod trail;
 
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use std::collections::HashSet;
 
 pub use self::{
@@ -45,7 +46,7 @@ use common::{
     calendar::Calendar,
     comp::{
         self, CapsulePrism, CharacterState, item::ItemDesc,
-        ship::figuredata::VOXEL_COLLIDER_MANIFEST, slot::EquipSlot, tool::ToolKind,
+        slot::EquipSlot, tool::ToolKind,
     },
     outcome::Outcome,
     resources::{DeltaTime, TimeOfDay, TimeScale},

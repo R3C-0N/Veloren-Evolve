@@ -1,6 +1,7 @@
-use super::{Fluid, Ori, ship::figuredata::ShipSpec};
+use super::{Fluid, Ori};
+use crate::figure::ship_spec::{ShipSpec, VoxelCollider};
 use crate::{
-    comp::{body::ship::figuredata::VoxelCollider, inventory::item::armor::Friction},
+    comp::inventory::item::armor::Friction,
     consts::WATER_DENSITY,
     terrain::Block,
     uid::Uid,
@@ -121,6 +122,30 @@ pub enum Collider {
     /// Capsule prism with line segment from p0 to p1
     CapsulePrism(CapsulePrism),
     Point,
+}
+
+/// La geometrie de collision d'un aeronef.
+///
+/// Vivait dans `comp::body::ship` sous forme de methode ; elle y faisait entrer
+/// `terrain` et `Collider` dans le module des corps pour un seul usage. Elle est
+/// ici, aupres de `Collider` qu'elle construit.
+pub fn make_collider(ship: &super::body::ship::Body) -> Collider {
+    match ship.manifest_entry() {
+        Some(manifest_entry) => Collider::Voxel {
+            id: manifest_entry.to_string(),
+        },
+        None => {
+            use rand::prelude::*;
+            let sz = vek::Vec3::broadcast(11);
+            Collider::Volume(std::sync::Arc::new(VoxelCollider::from_fn(sz, |_pos| {
+                if rand::rng().random_bool(0.25) {
+                    Block::new(crate::terrain::BlockKind::Rock, vek::Rgb::new(255, 0, 0))
+                } else {
+                    Block::air(crate::terrain::SpriteKind::Empty)
+                }
+            })))
+        },
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

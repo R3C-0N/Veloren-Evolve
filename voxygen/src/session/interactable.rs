@@ -1,5 +1,6 @@
 use std::{cmp::Reverse, collections::HashSet};
 
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use specs::{Join, LendJoin, ReadStorage, WorldExt};
 use vek::*;
 
@@ -8,7 +9,7 @@ use client::Client;
 use common::{
     CachedSpatialGrid,
     comp::{
-        self, Alignment, Collider, Content, pet, ship::figuredata::VOXEL_COLLIDER_MANIFEST,
+        self, Alignment, Collider, Content, pet,
         tool::ToolKind,
     },
     consts,

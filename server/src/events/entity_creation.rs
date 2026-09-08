@@ -2,6 +2,7 @@ use crate::{
     CharacterUpdater, Server, StateExt, client::Client, events::player::handle_exit_ingame,
     persistence::PersistedComponents, pet::tame_pet, presence::RepositionToFreeSpace, sys,
 };
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use common::{
     CachedSpatialGrid,
     combat::AttackTarget,
@@ -12,7 +13,7 @@ use common::{
         body,
         buff::{BuffCategory, BuffChange, BuffData, BuffKind, BuffSource},
         item::MaterialStatManifest,
-        ship::figuredata::VOXEL_COLLIDER_MANIFEST,
+
     },
     consts::MAX_CAMPFIRE_RANGE,
     event::{
@@ -297,7 +298,7 @@ pub fn handle_create_npc_group(server: &mut Server, ev: CreateNpcGroupEvent) {
 }
 
 pub fn handle_create_ship(server: &mut Server, ev: CreateShipEvent) {
-    let collider = ev.ship.make_collider();
+    let collider = comp::make_collider(&ev.ship);
     let voxel_colliders_manifest = VOXEL_COLLIDER_MANIFEST.read();
 
     // TODO: Find better solution for this, maybe something like a serverside block

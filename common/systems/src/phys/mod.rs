@@ -2,7 +2,7 @@ use common::{
     comp::{
         Body, CapsulePrism, CharacterState, Collider, Density, Immovable, Mass, Ori, PhysicsState,
         Pos, PosVelOriDefer, PreviousPhysCache, Projectile, Scale, Stats, Sticky, Vel,
-        body::ship::{self, figuredata::VOXEL_COLLIDER_MANIFEST},
+        body::ship::{self},
         fluid_dynamics::{Fluid, Wings},
         inventory::item::armor::Friction,
     },
@@ -21,6 +21,7 @@ use common::{
     volumes::vol_grid_2d::VueRepliee,
     weather::WeatherGrid,
 };
+use common::figure::ship_spec::VOXEL_COLLIDER_MANIFEST;
 use common_base::{prof_span, span};
 use common_ecs::{Job, Origin, ParMode, Phase, PhysicsMetrics, System};
 use rayon::iter::ParallelIterator;
