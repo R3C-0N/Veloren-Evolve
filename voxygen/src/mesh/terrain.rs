@@ -59,26 +59,217 @@ enum Amorcage {
 #[cfg(test)]
 static GRAINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn calc_light<
-    V: RectRasterableVol<Vox = Block> + ReadVol + Debug,
-    L: Iterator<Item = (Vec3<i32>, u8)>,
->(
+/// Comment inventorier les blocs lumineux qui peuvent eclairer l'etendue.
+///
+/// [`Lueur::Balayage`] est l'algorithme d'origine : sonder chaque position de
+/// l'etendue. Il n'est plus employe en jeu — jusqu'a 3,2 millions de lectures
+/// par colonne remaillee, 17 % du remaillage — mais il reste ici comme
+/// **specification** de [`Lueur::ParGroupes`], auquel le test d'equivalence
+/// le compare graine par graine. Le retirer rendrait l'optimisation
+/// inverifiable.
+#[derive(Clone, Copy, PartialEq)]
+enum Lueur {
+    /// On part des neuf chonks et des seuls groupes qu'ils stockent.
+    ParGroupes,
+    /// On sonde toutes les positions. Lent, et c'est le point de comparaison.
+    Balayage,
+}
+
+/// Le nombre de blocs examines depuis la derniere remise a zero, pour le seul
+/// test.
+///
+/// Meme role que [`GRAINES`] pour l'amorcage : sans lui, le test prouverait que
+/// les deux inventaires trouvent les memes sources — y compris dans le cas ou
+/// la collecte par groupes en examinerait autant que le balayage, c'est-a-dire
+/// ou l'optimisation ne ferait rien. C'est exactement ce qui est arrive a la
+/// premiere tentative, a la maille du sous-chunk.
+///
+/// Compte les blocs *examines*, emission comprise : un groupe implicite lumineux
+/// en coute 64, tout comme au balayage.
+#[cfg(test)]
+static SONDES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[inline(always)]
+fn sonde() {
+    #[cfg(test)]
+    SONDES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Les blocs lumineux qui peuvent atteindre l'etendue eclairee.
+///
+/// Le balayage d'origine sondait `volume.get` sur les 82 x 82 x (d+2) positions
+/// de l'etendue — jusqu'a 3,2 millions d'appels par colonne remaillee. On
+/// renverse la boucle : on part des neuf `Chonk` que l'echantillon contient, et
+/// on ne visite que les **groupes de 64 blocs reellement stockes**. Un
+/// sous-chunk de terrain a peine entame en garde une minorite ; le reste est
+/// implicite, et ne coute qu'un test.
+///
+/// **La maille compte, et c'est la lecon de la premiere tentative.** A la
+/// maille du sous-chunk, `iter_changed` parcourait les 16 384 positions
+/// *logiques* des sous-chunks fragmentes : la collecte examinait alors **plus**
+/// de blocs que le balayage qu'elle remplacait.
+///
+/// **Ce n'est pas `BlocksOfInterest`**, contrairement a ce que suggerait le
+/// TODO d'amont. Son champ `lights` echantillonne **au hasard 64** des blocs
+/// lumineux sans sprite (`scene/terrain/watcher.rs`, `MAX_MINOR_LIGHTS`), avec
+/// un generateur reensemence a chaque appel, et il ne couvre que le chunk
+/// central alors qu'il faut porter a 24 blocs dans les voisins. Une nappe de
+/// lave y perdrait la quasi-totalite de ses sources, et pas deux fois les
+/// memes.
+///
+/// **Les cles sont enumerees, et non prises de `vol.iter()`.** `iter()` ne
+/// parcourt que les chunks presents, alors que `get_key` retombe sur le chunk
+/// par defaut hors carte : au bord du monde, `iter()` en verrait six la ou le
+/// balayage en lisait neuf. Le determinisme vient en prime.
+fn graines_de_lueur(
+    vol: &VolGrid2d<TerrainChunk>,
+    bounds: Aabb<i32>,
+    lueur: Lueur,
+) -> Vec<(Vec3<i32>, u8)> {
+    span!(_guard, "graines_de_lueur");
+    let etendue = etendue_eclairee(bounds);
+    let (w, h, d) = etendue.clone().size().into_tuple();
+    // Semi-ouvert des deux cotes : voir [`etendue_eclairee`]. Surtout pas
+    // `Aabb::contains_point`, inclusif en max.
+    let dans_etendue = |wpos: Vec3<i32>| {
+        let r = wpos - etendue.min;
+        r.x >= 0 && r.x < w && r.y >= 0 && r.y < h && r.z >= 0 && r.z < d
+    };
+
+    let mut graines = Vec::new();
+
+    if lueur == Lueur::Balayage {
+        // La boucle d'origine, redite sur l'etendue. C'est la meme : elle
+        // allait de `range.min - 24` a `range.min + taille + 24` exclus en x et
+        // en y, et de `range.min - 1` a `range.min + d + 1` exclus en z, ce qui
+        // est mot pour mot `[etendue.min, etendue.max)`.
+        let mut volume = vol.cached();
+        for x in 0..w {
+            for y in 0..h {
+                for z in 0..d {
+                    let wpos = etendue.min + Vec3::new(x, y, z);
+                    sonde();
+                    if let Some(g) = volume.get(wpos).ok().and_then(|b| b.get_glow()) {
+                        graines.push((wpos, g));
+                    }
+                }
+            }
+        }
+        return graines;
+    }
+
+    let cle_min = vol.pos_key(etendue.min);
+    let cle_max = vol.pos_key(etendue.max - 1);
+    let groupe = TerrainChunk::group_size().map(|e| e as i32);
+
+    for cx in cle_min.x..=cle_max.x {
+        for cy in cle_min.y..=cle_max.y {
+            let cle = Vec2::new(cx, cy);
+            let Some(chonk) = vol.get_key(cle) else {
+                continue;
+            };
+            let coin = vol.key_pos(cle);
+
+            // `iter_stored` rend x et y **relatifs** au chunk mais z **deja
+            // absolu** : le decalage ne vaut qu'en x et en y.
+            for (pos, bloc) in chonk.iter_stored() {
+                sonde();
+                let Some(g) = bloc.get_glow() else { continue };
+                let wpos = Vec3::new(pos.x + coin.x, pos.y + coin.y, pos.z);
+                if dans_etendue(wpos) {
+                    graines.push((wpos, g));
+                }
+            }
+
+            // Les groupes implicites, que `iter_stored` saute — c'est tout son
+            // interet, et c'est exactement ce qui perdrait une nappe de lave
+            // assez large pour en remplir un. `world/src/layer/cave.rs` en
+            // produit, et la generation defragmente juste apres.
+            //
+            // Un groupe ne fait que 4 x 4 x 4 blocs : quand il luit, l'emettre
+            // en entier coute 64 graines, contre 16 384 s'il avait fallu le
+            // faire a la maille du sous-chunk. C'est ce qui rend l'exactitude
+            // abordable ici.
+            for (coin_groupe, bloc) in chonk.iter_groupes_implicites() {
+                sonde();
+                let Some(g) = bloc.get_glow() else { continue };
+                for dz in 0..groupe.z {
+                    for dx in 0..groupe.x {
+                        for dy in 0..groupe.y {
+                            sonde();
+                            let wpos = Vec3::new(
+                                coin_groupe.x + dx + coin.x,
+                                coin_groupe.y + dy + coin.y,
+                                coin_groupe.z + dz,
+                            );
+                            if dans_etendue(wpos) {
+                                graines.push((wpos, g));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Les deux iterateurs ne rendent que le contenu des sous-chunks :
+            // les bandes `below` et `above` du chonk, qui s'etendent sans fin en
+            // z, leur echappent — et le balayage, lui, les lisait. L'equivalence
+            // tient parce que ces deux remplissages ne luisent jamais : `world`
+            // batit ses chonks avec (pierre, air), et le chunk hors carte avec
+            // (eau, air). On le verifie au lieu de le supposer.
+            debug_assert!(
+                chonk
+                    .get(Vec3::new(0, 0, chonk.get_min_z() - 1))
+                    .is_ok_and(|b| b.get_glow().is_none())
+                    && chonk
+                        .get(Vec3::new(0, 0, chonk.get_max_z()))
+                        .is_ok_and(|b| b.get_glow().is_none()),
+                "le remplissage du chonk {cle:?} luit : la collecte par groupes le manquerait"
+            );
+        }
+    }
+
+    graines
+}
+
+/// L'etendue que [`calc_light`] eclaire reellement : `bounds` elargi de la
+/// portee de la lumiere en x et y, et d'un bloc en z.
+///
+/// Elle est ici, et non enfouie dans [`calc_light`], parce que l'inventaire des
+/// blocs lumineux doit filtrer ses graines dessus. Les deux bornes doivent etre
+/// *la meme*, et pas seulement egales aujourd'hui : `calc_light` convertit ses
+/// graines en `(u8, u8, u16)` sans borne-check. Une graine hors de cette boite
+/// indexerait `light_map` avec un composant negatif — ou, ce qui est pire,
+/// serait repliee par le `as u8` et atterrirait silencieusement a une position
+/// sans rapport.
+///
+/// **Semi-ouverte.** `light_map` est indexee sur `0..size()`, donc les positions
+/// valides sont `[min, max)`. `Aabb::contains_point` est inclusif en max : ne
+/// pas l'employer contre cette boite.
+fn etendue_eclairee(bounds: Aabb<i32>) -> Aabb<i32> {
+    Aabb {
+        min: bounds.min - Vec3::new(MAX_LIGHT_DIST, MAX_LIGHT_DIST, 1),
+        max: bounds.max + Vec3::new(MAX_LIGHT_DIST, MAX_LIGHT_DIST, 1),
+    }
+}
+
+/// Le generique sur le volume a saute : la voie de la descente bornee demande
+/// `Chonk::get_max_z`, que `RectRasterableVol` n'expose pas. `calc_light`
+/// n'etait de toute facon appelee qu'avec `TerrainChunk`, ici comme dans les
+/// tests, et [`graines_de_lueur`] etait deja specialisee ainsi.
+fn calc_light<L: Iterator<Item = (Vec3<i32>, u8)>>(
     is_sunlight: bool,
     amorcage: Amorcage,
     // When above bounds
     default_light: u8,
     bounds: Aabb<i32>,
-    vol: &VolGrid2d<V>,
+    vol: &VolGrid2d<TerrainChunk>,
     lit_blocks: L,
-) -> impl Fn(Vec3<i32>) -> f32 + 'static + Send + Sync + use<V, L> {
+) -> impl Fn(Vec3<i32>) -> f32 + 'static + Send + Sync + use<L> {
     span!(_guard, "calc_light");
     const UNKNOWN: u8 = 255;
     const OPAQUE: u8 = 254;
 
-    let outer = Aabb {
-        min: bounds.min - Vec3::new(SUNLIGHT as i32, SUNLIGHT as i32, 1),
-        max: bounds.max + Vec3::new(SUNLIGHT as i32, SUNLIGHT as i32, 1),
-    };
+    let outer = etendue_eclairee(bounds);
 
     let mut vol_cached = vol.cached();
 
@@ -136,7 +327,18 @@ fn calc_light<
         // test explicite d'`UNKNOWN`. L'omettre perdrait exactement les
         // cellules par lesquelles `propagate` decouvre les blocs fluides encore
         // sombres, et l'interieur des cavites resterait noir.
-        let (w, h, d) = outer.size().into_tuple();
+        //
+        // **Ce balayage a ete borne par le haut, puis debome.** L'idee etait de
+        // sauter le ciel : au-dessus du sommet de chaque chonk il n'y a que de
+        // l'air a `SUNLIGHT`, entoure d'air a `SUNLIGHT`, donc jamais une
+        // graine. Mesure a position et hauteurs identiques : le balayage tombait
+        // bien de 17 %, mais la descente ne gagnait que 6 % et le remplissage du
+        // ciel coutait 5 ms — soit **3,6 % sur `calc_light`** et 2 % de bout en
+        // bout, pour une enumeration, deux tableaux et deux tests. Sous le seuil
+        // qu'on s'etait donne. Ne pas le refaire sans mesurer d'abord *ou* est
+        // le temps : depuis, c'est la **propagation** qui domine (40 %), et elle
+        // ne dependait d'aucune de ces bornes.
+        let (w, h, d) = outer.clone().size().into_tuple();
         for z in 0..d {
             for x in 0..w {
                 for y in 0..h {
@@ -181,13 +383,12 @@ fn calc_light<
             }
         }
     }
-
     // Determines light propagation
     let propagate = |src: u8,
                      dest: &mut u8,
                      pos: Vec3<i32>,
                      prop_que: &mut VecDeque<_>,
-                     vol: &mut CachedVolGrid2d<V>| {
+                     vol: &mut CachedVolGrid2d<TerrainChunk>| {
         if *dest != OPAQUE {
             if *dest == UNKNOWN {
                 if vol.get(outer.min + pos).ok().is_some_and(|b| b.is_fluid()) {
@@ -286,12 +487,17 @@ fn calc_light<
         let (w, h, _) = min_bounds.clone().size().into_tuple();
         move |x, y, z| (w * h * z + h * x + y) as usize
     };
+    // `off` vaut `(24 - 1, 24 - 1, 0)` : les z sont **alignes**, et les deux
+    // tableaux ont la meme foulee en y. La recopie se fait donc par tranches
+    // contigues de `min_bounds.size().h` octets, au lieu de 620 000 indexations
+    // dont l'index source avance d'un pas different de l'index destination.
+    let off = min_bounds.min - outer.min;
+    let n = min_bounds.size().h as usize;
     for z in 0..min_bounds.size().d {
         for x in 0..min_bounds.size().w {
-            for y in 0..min_bounds.size().h {
-                let off = min_bounds.min - outer.min;
-                light_map2[lm_idx2(x, y, z)] = light_map[lm_idx(x + off.x, y + off.y, z + off.z)];
-            }
+            let src = lm_idx(x + off.x, off.y, z + off.z);
+            let dst = lm_idx2(x, 0, z);
+            light_map2[dst..dst + n].copy_from_slice(&light_map[src..src + n]);
         }
     }
 
@@ -336,33 +542,14 @@ pub fn generate_mesh<'a>(
         "<&VolGrid2d as Meshable<_, _>>::generate_mesh"
     );
 
-    // Find blocks that should glow
-    // TODO: Search neighbouring chunks too!
-    // let glow_blocks = boi.lights
-    //     .iter()
-    //     .map(|(pos, glow)| (*pos + range.min.xy(), *glow));
-    /*  DefaultVolIterator::new(vol, range.min - MAX_LIGHT_DIST, range.max + MAX_LIGHT_DIST)
-    .filter_map(|(pos, block)| block.get_glow().map(|glow| (pos, glow))); */
+    // Les sources de lumiere. Voir [`graines_de_lueur`] pour pourquoi ce n'est
+    // pas `boi.lights` : ce champ tire **64 sources au hasard** parmi les blocs
+    // lumineux sans sprite, et ne couvre que le chunk central.
 
     // CHRONO JETABLE (etape 0) — a retirer avant le commit final.
     let t0 = std::time::Instant::now();
 
-    let mut glow_blocks = Vec::new();
-
-    // TODO: This expensive, use BlocksOfInterest instead
-    let mut volume = vol.cached();
-    for x in -MAX_LIGHT_DIST..range.size().w + MAX_LIGHT_DIST {
-        for y in -MAX_LIGHT_DIST..range.size().h + MAX_LIGHT_DIST {
-            for z in -1..range.size().d + 1 {
-                let wpos = range.min + Vec3::new(x, y, z);
-                volume
-                    .get(wpos)
-                    .ok()
-                    .and_then(|b| b.get_glow())
-                    .map(|glow| glow_blocks.push((wpos, glow)));
-            }
-        }
-    }
+    let glow_blocks = graines_de_lueur(vol, range, Lueur::ParGroupes);
 
     // Calculate chunk lighting (sunlight defaults to 1.0, glow to 0.0)
     // CHRONO JETABLE (etape 0)
@@ -379,14 +566,27 @@ pub fn generate_mesh<'a>(
     // CHRONO JETABLE (etape 0)
     let t_soleil = t0.elapsed() - t_lueur;
 
-    let glow = calc_light(
-        false,
-        Amorcage::Frontiere,
-        0,
-        range,
-        vol,
-        glow_blocks.into_iter(),
-    );
+    // Une carte de lueur sans source est la fonction nulle, et rien d'autre.
+    // `default_light` vaut 0 pour la lueur et `UNKNOWN` se lit `0.0` : les deux
+    // branches de la fermeture rendent zero. Fabriquer 3,2 Mo, les initialiser
+    // et en recopier 620 Ko pour l'apprendre est du travail pur — et c'est le
+    // cas courant, en plein jour hors d'une ville.
+    //
+    // `calc_light(false, ...)` ne fait ni descente ni balayage de frontiere :
+    // les deux sont sous `if is_sunlight`. Il ne reste que l'allocation, la
+    // propagation depuis les graines, et la recopie.
+    let glow: Box<dyn Fn(Vec3<i32>) -> f32 + Send + Sync> = if glow_blocks.is_empty() {
+        Box::new(|_| 0.0)
+    } else {
+        Box::new(calc_light(
+            false,
+            Amorcage::Frontiere,
+            0,
+            range,
+            vol,
+            glow_blocks.into_iter(),
+        ))
+    };
     // CHRONO JETABLE (etape 0)
     let t_glow = t0.elapsed() - t_lueur - t_soleil;
     debug!(
@@ -942,5 +1142,216 @@ mod tests {
             }
             assert!(compares > 90_000, "l'etendue comparee est trop maigre");
         }
+    }
+
+    const LAVE: Block = Block::new(BlockKind::Lava, Rgb::new(255, 65, 0));
+
+    /// Le monde temoin, defragmente et augmente de ce que l'inventaire des
+    /// sources de lumiere doit eprouver et que la lumiere solaire n'avait pas
+    /// besoin de voir.
+    ///
+    /// | Ajout | Ce qu'il eprouve |
+    /// |---|---|
+    /// | Une aiguille de roche montant a z = 200, coiffant une caverne a z 40..48 | des sous-chunks homogenes **au milieu** de la pile — la caverne interrompt le drainage par le bas, sans quoi `defragment` les emporterait —, et une colonne assez haute pour que le balayage, qui paie la hauteur totale des neuf chunks, ait quelque chose a perdre |
+    /// | Une nappe de lave remplissant **exactement** un sous-chunk du chunk (-1, 0) | le seul cas ou `iter_stored` perdrait une source : c'est lui qui justifie `iter_groupes_implicites`. Ce chunk n'entre dans l'etendue que sur 25 de ses 32 colonnes, ce qui eprouve du meme coup le **clippage** d'un groupe implicite |
+    /// | Une lampe murale | le chemin `get_sprite` de `get_glow`, que les blocs pleins ne prennent pas |
+    /// | Huit lampes posees **a cheval sur le bord** de l'etendue, en x et en y | le filtre, et lui seul — c'est le piege de troncature du `as u8` de `calc_light` |
+    /// | `defragment()` sur chaque chunk | sans lui aucun sous-chunk n'est homogene et la nappe de lave n'eprouve rien. C'est aussi ce que `world` fait avant d'envoyer un chunk |
+    ///
+    /// Les lampes du bord se posent **en dernier**, une fois `bounds` connu :
+    /// l'etendue s'en deduit, et on ne peut pas viser son bord avant de l'avoir.
+    fn monde_temoin_lumineux() -> (VolGrid2d<TerrainChunk>, Aabb<i32>) {
+        let mut vol = monde_temoin();
+        let (sx, sy) = (
+            TerrainChunkSize::RECT_SIZE.x as i32,
+            TerrainChunkSize::RECT_SIZE.y as i32,
+        );
+        let hauteur = TerrainChunk::sub_chunk_height() as i32;
+
+        // Une aiguille de roche dans le chunk (1, 0), creusee d'une caverne.
+        for x in sx..2 * sx {
+            for y in 0..sy {
+                for z in 0..200 {
+                    let bloc = if (40..48).contains(&z) {
+                        Block::empty()
+                    } else {
+                        ROCHE
+                    };
+                    vol.set(Vec3::new(x, y, z), bloc).expect("aiguille");
+                }
+            }
+        }
+
+        // Une nappe de lave qui remplit exactement le quatrieme sous-chunk du
+        // chunk (-1, 0). L'alignement est le point : c'est lui qui rend le
+        // sous-chunk homogene, donc invisible a `iter_changed`.
+        for x in -sx..0 {
+            for y in 0..sy {
+                for z in 3 * hauteur..4 * hauteur {
+                    vol.set(Vec3::new(x, y, z), LAVE).expect("nappe de lave");
+                }
+            }
+        }
+
+        let cles: Vec<Vec2<i32>> = vol.iter().map(|(cle, _)| cle).collect();
+        for cle in cles {
+            let mut chonk = (*vol.remove(cle).expect("chunk present")).clone();
+            chonk.defragment();
+            vol.insert(cle, Arc::new(chonk));
+        }
+
+        // `bounds` comme `Terrain::maintain` le construit : l'aabr du chunk
+        // central deborde d'un bloc, et l'etendue verticale est l'union des
+        // neuf.
+        let aabr = Aabr {
+            min: Vec2::new(-1, -1),
+            max: Vec2::new(sx + 1, sy + 1),
+        };
+        let (mut min_z, mut max_z) = (i32::MAX, i32::MIN);
+        for cx in -1..=1 {
+            for cy in -1..=1 {
+                let chonk = vol.get_key(Vec2::new(cx, cy)).expect("chunk du 3x3");
+                min_z = min_z.min(chonk.get_min_z());
+                max_z = max_z.max(chonk.get_max_z());
+            }
+        }
+        let bounds = Aabb {
+            min: Vec3::from(aabr.min) + Vec3::unit_z() * (min_z - 2),
+            max: Vec3::from(aabr.max) + Vec3::unit_z() * (max_z + 2),
+        };
+
+        // Les lampes-sondes. En z on ne sonde pas le bord : la borne basse tombe
+        // sous le chonk, ou `set` n'a rien a ecrire — et c'est le `as u8` sur x
+        // et y qui replie, pas le `as u16` sur z.
+        let etendue = etendue_eclairee(bounds);
+        let lampe = Block::air(SpriteKind::WallLamp);
+        let z_sonde = 40;
+        for x in [
+            etendue.min.x - 1,
+            etendue.min.x,
+            etendue.max.x - 1,
+            etendue.max.x,
+        ] {
+            vol.set(Vec3::new(x, 8, z_sonde), lampe)
+                .expect("lampe-sonde en x");
+        }
+        for y in [
+            etendue.min.y - 1,
+            etendue.min.y,
+            etendue.max.y - 1,
+            etendue.max.y,
+        ] {
+            vol.set(Vec3::new(8, y, z_sonde), lampe)
+                .expect("lampe-sonde en y");
+        }
+        vol.set(Vec3::new(4, 4, 60), lampe)
+            .expect("lampe bien a l'interieur");
+
+        // Poser les lampes ne doit pas avoir allonge un chonk, sans quoi
+        // `bounds` ne serait plus celui sur lequel elles ont ete visees.
+        for cx in -1..=1 {
+            for cy in -1..=1 {
+                let chonk = vol.get_key(Vec2::new(cx, cy)).expect("chunk du 3x3");
+                assert!(
+                    chonk.get_min_z() >= min_z && chonk.get_max_z() <= max_z,
+                    "une lampe-sonde a allonge le chonk {:?}",
+                    (cx, cy)
+                );
+            }
+        }
+
+        (vol, bounds)
+    }
+
+    /// La collecte par sous-chunks trouve exactement les memes sources de
+    /// lumiere que le balayage exhaustif.
+    ///
+    /// Comme pour l'amorcage, c'est la seule chose qui distingue l'optimisation
+    /// d'un pari : le gain se mesure au chronometre, mais une source oubliee ne
+    /// se voit pas — une grotte de lave restee noire ne saute pas aux yeux, et
+    /// personne n'ira l'y chercher.
+    ///
+    /// On compare les **graines** et non la lumiere qui en sort : les deux
+    /// inventaires etant exacts, un ecart se lit alors comme une position, pas
+    /// comme une divergence de point fixe.
+    #[test]
+    fn collecte_par_groupes_egale_balayage() {
+        use std::sync::atomic::Ordering::Relaxed;
+
+        let (vol, bounds) = monde_temoin_lumineux();
+
+        SONDES.store(0, Relaxed);
+        let mut par_groupes = graines_de_lueur(&vol, bounds, Lueur::ParGroupes);
+        let n_groupes = SONDES.swap(0, Relaxed);
+        let mut balayage = graines_de_lueur(&vol, bounds, Lueur::Balayage);
+        let n_balayage = SONDES.swap(0, Relaxed);
+
+        let cle = |(p, _): &(Vec3<i32>, u8)| (p.x, p.y, p.z);
+        par_groupes.sort_unstable_by_key(cle);
+        balayage.sort_unstable_by_key(cle);
+
+        // L'assertion porteuse.
+        assert_eq!(
+            par_groupes, balayage,
+            "les deux inventaires de sources lumineuses divergent"
+        );
+
+        // Redondante avec la precedente — mais seulement si l'on fait confiance
+        // a la specification. Celle-ci dit *pourquoi* une graine hors bornes est
+        // fatale, et rend l'echec lisible.
+        let etendue = etendue_eclairee(bounds);
+        let (w, h, d) = etendue.clone().size().into_tuple();
+        for (pos, _) in &par_groupes {
+            let r = *pos - etendue.min;
+            assert!(
+                r.x >= 0 && r.x < w && r.y >= 0 && r.y < h && r.z >= 0 && r.z < d,
+                "graine hors de l'etendue en {pos:?} : calc_light la replierait silencieusement \
+                 sur une autre position"
+            );
+        }
+
+        // `calc_light` ecrit ses graines sans `max` : deux graines a la meme
+        // position rendraient le resultat dependant de l'ordre.
+        assert!(
+            par_groupes.windows(2).all(|f| f[0].0 != f[1].0),
+            "graine en double"
+        );
+
+        // Le gain, et non seulement la correction. Sans cette assertion, une
+        // collecte qui sonderait tout passerait le test en beneficiant de
+        // l'egalite qu'elle rendrait triviale.
+        //
+        // Mesure sur ce monde temoin : 99 262 blocs examines contre 1 331 352,
+        // soit un facteur 13,4. Le seuil est pose a 8 pour garder de la marge
+        // sans cesser de mordre.
+        //
+        // **Le seuil doit mordre, et voici pourquoi.** La version precedente, a
+        // la maille du sous-chunk, passait ce meme test avec un facteur 5,4 —
+        // tout en etant **plus lente en jeu** que le balayage qu'elle
+        // remplacait. Elle sautait bien les sous-chunks homogenes, mais
+        // `ChunkVolIter` parcourt le volume *logique* des autres : 16 384
+        // positions pour un sous-chunk a peine entame. Un seuil complaisant
+        // aurait laisse passer la regression.
+        eprintln!("sondes : par_groupes = {n_groupes}, balayage = {n_balayage}");
+        assert!(
+            n_balayage > 8 * n_groupes,
+            "la collecte par groupes n'elague pas : {n_groupes} blocs examines contre \
+             {n_balayage}"
+        );
+
+        // Et le temoin eprouve bien ce qu'il pretend : sans groupe implicite
+        // lumineux, le cas que `iter_groupes_implicites` existe pour couvrir
+        // n'est pas atteint, et l'egalite ci-dessus ne dit rien de lui.
+        let groupes_lumineux = (-1..=1)
+            .flat_map(|cx| (-1..=1).map(move |cy| Vec2::new(cx, cy)))
+            .filter_map(|cle| vol.get_key(cle))
+            .flat_map(|chonk| chonk.iter_groupes_implicites())
+            .filter(|(_, bloc)| bloc.get_glow().is_some())
+            .count();
+        assert!(
+            groupes_lumineux > 0,
+            "le monde temoin n'a aucun groupe implicite lumineux : defragment n'a pas fait son \
+             travail, ou la nappe de lave n'est pas alignee"
+        );
     }
 }
