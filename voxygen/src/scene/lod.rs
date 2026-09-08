@@ -4,7 +4,7 @@ use crate::{
         LodTerrainVertex, Mesh, Model, Quad, Renderer, Tri,
         pipelines::lod_terrain::{LodData, Vertex},
     },
-    scene::{Camera, camera},
+    scene::Camera,
     settings::Settings,
 };
 use client::Client;
@@ -17,7 +17,7 @@ use common::{
 };
 use hashbrown::HashMap;
 use std::ops::Range;
-use treeculler::{AABB, BVol, Frustum};
+use treeculler::{AABB, BVol};
 use vek::*;
 
 bitflags::bitflags! {
@@ -181,6 +181,15 @@ impl Lod {
             ));
         }
 
+        // De quoi reposer les volumes des objets lointains sur la planète (D27).
+        // `None` sur une carte plate, et tout ce qui suit reprend alors son
+        // ancien chemin, à la ligne près.
+        let pose = crate::scene::cube::PoseSpherique::nouvelle(
+            client.state().terrain().map_size_lg(),
+            camera.cube_origine(),
+            focus_pos.map(|e| e.trunc()),
+        );
+
         // Create new LoD groups when a new zone has loaded
         for (p, zone) in client.lod_zones() {
             self.zone_objects.entry(*p).or_insert_with(|| {
@@ -193,10 +202,28 @@ impl Lod {
                     let pos = p.map(|e| lod::to_wpos(e) as f32).with_z(0.0)
                         + object.pos.map(|e| e as f32)
                         + Vec2::broadcast(0.5).with_z(0.0);
-                    let rad = Vec2::broadcast(*radius);
-                    let obj_bounds = Aabb {
-                        min: pos + (-rad).with_z(z_range.start),
-                        max: pos + rad.with_z(z_range.end),
+                    let obj_bounds = if let Some(pose) = &pose {
+                        // Sur une planète, une boîte alignée sur les axes du
+                        // patron ne veut rien dire : `+Z` n'est la verticale
+                        // que sur une face. On repose donc l'ancre, et on prend
+                        // une demi-arête **isotrope** — un objet lointain est
+                        // petit devant le rayon, et une borne trop large ne
+                        // coûte que des tirages. Une borne trop étroite, elle,
+                        // ferait clignoter la zone : c'est le pire symptôme.
+                        let place = pose.place(pos);
+                        let demi = radius
+                            .max(z_range.start.abs())
+                            .max(z_range.end.abs());
+                        Aabb {
+                            min: place - Vec3::broadcast(demi),
+                            max: place + Vec3::broadcast(demi),
+                        }
+                    } else {
+                        let rad = Vec2::broadcast(*radius);
+                        Aabb {
+                            min: pos + (-rad).with_z(z_range.start),
+                            max: pos + rad.with_z(z_range.end),
+                        }
                     };
                     bounds = Some(bounds.map_or(obj_bounds, |b: Aabb<f32>| b.union(obj_bounds)));
                     objects
@@ -222,16 +249,11 @@ impl Lod {
         self.zone_objects
             .retain(|p, _| client.lod_zones().contains_key(p));
 
-        // Determine visibility of zones based on view frustum
-        let camera::Dependents {
-            view_mat,
-            proj_mat_treeculler,
-            ..
-        } = camera.dependents();
-        let focus_off = focus_pos.map(|e| e.trunc());
-        let frustum = Frustum::from_modelview_projection(
-            (proj_mat_treeculler * view_mat * Mat4::translation_3d(-focus_off)).into_col_arrays(),
-        );
+        // Le frustum de la caméra, et non un second calculé ici : sur un patron
+        // de cube le recentrage vaut identité — les sommets sont déjà ramenés au
+        // point de convergence — et une branche de topologie posée à un endroit
+        // sur deux défait l'autre. C'est la leçon de D37.
+        let frustum = camera.frustum();
         for groups in &mut self.zone_objects.values_mut() {
             for group in groups.values_mut() {
                 if let Some(bounds) = &group.bounds {

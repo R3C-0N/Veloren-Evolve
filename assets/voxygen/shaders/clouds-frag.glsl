@@ -182,7 +182,9 @@ void main() {
 
                         // Don't reflect back into the surface by snapping the reflection to the *actual* (i.e: not normal-mapped) surface plane
                         // TODO: Find a good way to know the *actual* surface normal, minus normal mapping
-                        vec3 flat_norm = vec3(0, 0, 1);//round(surf_norm);
+                        // La verticale du lieu, et non `+Z` du monde — le `TODO` ci-dessous disait
+    // déjà que cette normale supposait une surface alignée sur les axes.
+    vec3 flat_norm = cube_actif() ? cube_direction_de_rendu(wpos) : vec3(0, 0, 1);//round(surf_norm);
                         if (dot(refl_dir, flat_norm) <= 0.0) {
                             // TODO: This assumes that the surface is axis-aligned!
                             refl_dir = normalize(refl_dir.xyz * (1.0 - abs(flat_norm)));
@@ -231,7 +233,7 @@ void main() {
                         #ifdef EXPERIMENTAL_SMEARREFLECTIONS
                             if (true) {
                         #else
-                            if (mat.a != MAT_WATER && surf_norm.z < 0.1) {
+                            if (mat.a != MAT_WATER && dot(surf_norm, cube_actif() ? cube_direction_de_rendu(wpos) : vec3(0, 0, 1)) < 0.1) {
                         #endif
                             const float SMEAR_FRAC = 0.2;
                             vec2 anew_uv = abs(new_uv - 0.5) * 2;
@@ -261,7 +263,7 @@ void main() {
                         float not_underground = 1.0;
                         // Make underground water look more correct
                         #if (REFLECTION_MODE >= REFLECTION_MODE_MEDIUM)
-                            float f_alt = alt_at(wpos.xy);
+                            float f_alt = alt_at_rendu(wpos);
                             not_underground = clamp((wpos.z - f_alt) / 32.0 + 1.0, 0.0, 1.0);
                         #endif
                         // Did we hit a surface during reflection?

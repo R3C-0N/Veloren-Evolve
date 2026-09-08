@@ -1,6 +1,7 @@
 #version 440 core
 
 #include <globals.glsl>
+#include <cube.glsl>
 
 layout (location = 0)
 in vec3 v_pos;
@@ -50,6 +51,15 @@ void main() {
     rotation_matrix[2] = vec3(r20, r21, r22);
 
     f_pos = (v_pos * rotation_matrix + w_pos.xyz) - focus_off.xyz;
+
+    // Boîtes de collision, voies, repères : une forme locale posée à une
+    // position du monde. L'ancre est cette position, et `cube_poser` fait alors
+    // tourner le déplacement local dans le repère du lieu — ce qui est
+    // exactement ce qu'on veut d'une boîte.
+    if (cube_actif()) {
+        f_pos = cube_poser(w_pos.xyz, f_pos);
+    }
+
     f_norm = normalize(v_norm);
     gl_Position = all_mat * vec4(f_pos, 1);
 }

@@ -221,10 +221,11 @@ impl SpriteLayout {
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
         conforme: &Texture,
+        inverse: &Texture,
         sprite_verts: &SpriteVerts,
     ) -> wgpu::BindGroup {
         let mut entries =
-            GlobalsLayouts::bind_base_globals(global_model, lod_data, noise, conforme);
+            GlobalsLayouts::bind_base_globals(global_model, lod_data, noise, conforme, inverse);
 
         entries.extend_from_slice(&[
             // sprite_verts
@@ -248,6 +249,7 @@ impl SpriteLayout {
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
         conforme: &Texture,
+        inverse: &Texture,
         sprite_verts: &SpriteVerts,
     ) -> SpriteGlobalsBindGroup {
         let bind_group = self.bind_globals_inner(
@@ -256,6 +258,7 @@ impl SpriteLayout {
             lod_data,
             noise,
             conforme,
+            inverse,
             sprite_verts,
         );
 

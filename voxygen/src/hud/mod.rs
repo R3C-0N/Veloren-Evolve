@@ -35,7 +35,7 @@ pub mod util;
 
 pub use chat::MessageBacklog;
 pub use crafting::CraftingTab;
-pub use hotbar::{SlotContents as HotbarSlotContents, State as HotbarState};
+pub use hotbar::{Barre as BarreHotbar, SlotContents as HotbarSlotContents, State as HotbarState};
 pub use item_imgs::animate_by_pulse;
 pub use loot_scroller::LootMessage;
 pub use settings_window::ScaleChange;
@@ -1430,8 +1430,9 @@ impl Hud {
         };
 
         // Create a new HotbarState from the persisted slots.
-        let hotbar_state =
-            HotbarState::new(global_state.profile.get_hotbar_slots(server, character_id));
+        let (barre_aventure, barre_combat) =
+            global_state.profile.get_hotbar_slots(server, character_id);
+        let hotbar_state = HotbarState::new(barre_aventure, barre_combat);
 
         let slot_manager = slots::SlotManager::new(
             ui.id_generator(),
@@ -4418,8 +4419,8 @@ impl Hud {
                         // Remove item from crafting input
                         self.show.crafting_fields.recipe_inputs.remove(&c.index);
                     } else if let (Ability(AbilitySlot::Ability(ability)), Hotbar(slot)) = (a, b)
-                        && let Some(Some(HotbarSlotContents::Ability(index))) =
-                            self.hotbar.slots.get(slot as usize)
+                        && let Some(HotbarSlotContents::Ability(index)) =
+                            &self.hotbar.slots()[slot as usize]
                     {
                         events.push(Event::ChangeAbility(*index, ability));
                     }
@@ -4713,6 +4714,15 @@ impl Hud {
                 },
             }
         }
+        // La barre courante se relit du mode a chaque image, et pas seulement
+        // quand une touche arrive : on entre en combat *en etant frappe*, sans
+        // qu'aucune entree ne passe. Sans ca, le HUD dessinerait la barre de
+        // l'autre mode jusqu'au prochain geste du joueur.
+        self.hotbar.definir_barre(if info.en_combat {
+            hotbar::Barre::Combat
+        } else {
+            hotbar::Barre::Aventure
+        });
         self.hotbar.maintain_abilities(client, &info);
 
         // Temporary Example Quest
@@ -4971,9 +4981,16 @@ impl Hud {
     }
 
     /// L'emplacement d'inventaire designe par la barre d'objets, s'il porte
-    /// bien un objet. C'est ce que le joueur pose en mode construction.
+    /// bien un objet. C'est ce que le joueur pose en aventure.
+    ///
+    /// Toujours la barre d'aventure, nommee et non deduite : la barre courante
+    /// suit le mode, qui vient du serveur, donc elle peut avoir une image de
+    /// retard — et poser depuis la barre de combat consommerait une potion.
     pub fn selected_build_slot(&self, inventory: &comp::Inventory) -> Option<InvSlotId> {
-        match self.hotbar.get(self.hotbar.currently_selected_slot)? {
+        match self
+            .hotbar
+            .get_de(hotbar::Barre::Aventure, self.hotbar.selection_de(hotbar::Barre::Aventure))?
+        {
             hotbar::SlotContents::Inventory(hash, _) => inventory.get_slot_from_hash(hash),
             hotbar::SlotContents::Ability(_) => None,
         }
@@ -4986,7 +5003,10 @@ impl Hud {
     /// geste echouerait pour la seule raison que le joueur n'a pas range sa
     /// barre lui-meme.
     pub fn aim_hotbar_at_item(&mut self, item_id: &str, inventory: &comp::Inventory) -> bool {
-        let holds_item = |slot: &hotbar::Slot| match self.hotbar.get(*slot) {
+        let holds_item = |slot: &hotbar::Slot| match self
+            .hotbar
+            .get_de(hotbar::Barre::Aventure, *slot)
+        {
             Some(hotbar::SlotContents::Inventory(hash, _)) => inventory
                 .get_slot_from_hash(hash)
                 .and_then(|slot| inventory.get(slot))
@@ -4995,7 +5015,7 @@ impl Hud {
         };
 
         if let Some(slot) = hotbar::Slot::iter().find(holds_item) {
-            self.hotbar.currently_selected_slot = slot;
+            self.hotbar.definir_selection(slot);
             return true;
         }
 
@@ -5007,8 +5027,11 @@ impl Hud {
             return false;
         };
 
-        self.hotbar
-            .add_inventory_link(self.hotbar.currently_selected_slot, item);
+        self.hotbar.add_inventory_link_de(
+            hotbar::Barre::Aventure,
+            self.hotbar.selection_de(hotbar::Barre::Aventure),
+            item,
+        );
         self.events
             .push(Event::ChangeHotbarState(Box::new(self.hotbar.to_owned())));
         true
@@ -5021,6 +5044,15 @@ impl Hud {
         client_inventory: Option<&comp::Inventory>,
         en_combat: bool,
     ) -> bool {
+        // La barre courante n'est pas un etat qu'on garde : elle se relit du
+        // mode, que le serveur ecrit. On la pose avant tout aiguillage, pour que
+        // la molette, les chiffres et le rendu voient tous la meme.
+        self.hotbar.definir_barre(if en_combat {
+            hotbar::Barre::Combat
+        } else {
+            hotbar::Barre::Aventure
+        });
+
         // Helper
         fn handle_slot(
             slot: hotbar::Slot,
@@ -5151,14 +5183,22 @@ impl Hud {
             // hotbar keys
             WinEvent::InputUpdate(key, state) if !self.show.ui => {
                 if let Some(slot) = try_hotbar_slot_from_input(key) {
-                    handle_slot(
-                        slot,
-                        state,
-                        &mut self.events,
-                        &mut self.slot_manager,
-                        &mut self.hotbar,
-                        client_inventory,
-                    );
+                    // Interface masquee ou non, la regle est la meme : en
+                    // aventure la touche choisit, en combat elle emploie.
+                    if self.hotbar.barre() == hotbar::Barre::Aventure {
+                        if state {
+                            self.hotbar.definir_selection(slot);
+                        }
+                    } else {
+                        handle_slot(
+                            slot,
+                            state,
+                            &mut self.events,
+                            &mut self.slot_manager,
+                            &mut self.hotbar,
+                            client_inventory,
+                        );
+                    }
                     true
                 } else {
                     false
@@ -5332,8 +5372,13 @@ impl Hud {
                             false
                         }
                     },
+                    // En aventure, la case selectionnee se pose au clic droit :
+                    // l'employer mangerait la pierre qu'on allait poser.
+                    GameInput::CurrentSlot if self.hotbar.barre() == hotbar::Barre::Aventure => {
+                        true
+                    },
                     GameInput::CurrentSlot => {
-                        let current_slot = self.hotbar.currently_selected_slot;
+                        let current_slot = self.hotbar.selection();
                         handle_slot(
                             current_slot,
                             state,
@@ -5345,29 +5390,22 @@ impl Hud {
                         true
                     },
                     GameInput::NextSlot if state => {
-                        self.hotbar.currently_selected_slot.next_slot();
+                        self.hotbar.selection_suivante();
                         true
                     },
                     GameInput::PreviousSlot if state => {
-                        self.hotbar.currently_selected_slot.previous_slot();
+                        self.hotbar.selection_precedente();
                         true
                     },
                     // Skillbar
                     input => {
                         if let Some(slot) = try_hotbar_slot_from_input(input) {
-                            // **La barre a deux visages.** Son contenu ne change
-                            // pas ; c'est sa reponse qui suit le mode.
-                            //
-                            // En aventure, les dix touches choisissent la
-                            // matiere qu'on pose : manger sa pierre en
-                            // batissant un mur n'aurait aucun sens, et il faut
-                            // bien la designer.
-                            //
-                            // En combat, seules les trois premieres restent la
-                            // matiere — de quoi barricader, pas de quoi batir —
-                            // et les sept autres redeviennent la barre de
-                            // Veloren : potions et capacites, qui sont
-                            // justement ce dont on a besoin quand on se bat.
+                            // **Il y a deux barres, et le mode dit laquelle
+                            // repond.** Plus rien a filtrer case par case : la
+                            // barre d'aventure ne porte que de la matiere, donc
+                            // une touche y choisit ; la barre de combat ne porte
+                            // que des potions et des capacites, donc une touche
+                            // y emploie.
                             //
                             // Sauf quand un objet de l'inventaire est saisi :
                             // c'est alors le geste qui l'assigne a la barre, et
@@ -5379,14 +5417,9 @@ impl Hud {
                                     ..
                                 }))
                             );
-                            let case_de_matiere = !en_combat
-                                || matches!(
-                                    slot,
-                                    hotbar::Slot::One | hotbar::Slot::Two | hotbar::Slot::Three
-                                );
-                            if case_de_matiere && !assigning {
+                            if self.hotbar.barre() == hotbar::Barre::Aventure && !assigning {
                                 if state {
-                                    self.hotbar.currently_selected_slot = slot;
+                                    self.hotbar.definir_selection(slot);
                                 }
                             } else {
                                 handle_slot(

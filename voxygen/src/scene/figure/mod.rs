@@ -1013,7 +1013,9 @@ impl FigureMgr {
             } = camera.dependents();
 
             let sun_dir = scene_data.get_sun_dir();
-            let is_daylight = sun_dir.z < 0.0/*0.6*/;
+            // L'élévation locale, non `z` (D48) : sur quatre faces sur six,
+            // l'axe `z` du monde est une direction horizontale.
+            let is_daylight = sun_dir.dot(camera.verticale()) < 0.0;
             // Are shadows enabled at all?
             let can_shadow_sun = renderer.pipeline_modes().shadow.is_map() && is_daylight;
 
@@ -1291,8 +1293,16 @@ impl FigureMgr {
         // shadow correctly until their next update.  For now, we treat this
         // as an acceptable tradeoff.
         let radius = scale.unwrap_or(&Scale(1.0)).0 * 2.0;
+        // **Le tronc de vue est celui du rendu.** Une figure est posée sur la
+        // planète par `pose.appliquer` au moment de la dessiner ; la tester à sa
+        // place du patron revenait à la chercher là où elle n'est pas, et sur la
+        // face `+X` l'écart est une rotation, pas un décalage.
+        let centre = match &data.pose_cube {
+            Some(pose) => pose.place(vek::Vec3::new(pos.0.x, pos.0.y, pos.0.z)),
+            None => vek::Vec3::new(pos.0.x, pos.0.y, pos.0.z),
+        };
         let (in_frustum, _lpindex) = if let Some(ref mut meta) = state {
-            let (in_frustum, lpindex) = BoundingSphere::new(pos.0.into_array(), radius)
+            let (in_frustum, lpindex) = BoundingSphere::new(centre.into_array(), radius)
                 .coherent_test_against_frustum(data.frustum, meta.lpindex);
             let in_frustum = in_frustum
                 || matches!(body, Body::Ship(_))

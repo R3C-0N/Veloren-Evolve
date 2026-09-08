@@ -368,9 +368,272 @@ pub fn coin_attendu() -> C {
     (c, c)
 }
 
+// --------------------------------------------------------------------------
+// L'inverse, tabulé
+// --------------------------------------------------------------------------
+
+/// Côté de la table inverse. Même finesse que la table directe : rien ne
+/// justifierait d'en avoir moins, et la fonction y est lisse.
+pub const COTE_INVERSE: usize = 513;
+
+/// L'inverse de la projection conforme, tabulé sur le carré gnomonique.
+///
+/// [`Table::depuis_locale`] fait un Newton de douze itérations : c'est le bon
+/// prix pour un clic, jamais pour un demi-million de pixels — ni pour un
+/// demi-million de sommets de nappe — à chaque image. On le paie donc une
+/// fois, sur une grille régulière de `(a, b)`.
+///
+/// Le domaine est exactement `[-1, 1]²` : dans ces coordonnées le bord d'une
+/// face vaut `a = ±1`, si bien qu'il n'y a ni coin perdu ni bord à deviner.
+///
+/// **Elle vit ici, et non chez son premier client, parce qu'il y en a deux.**
+/// Le globe du HUD (D38) et la nappe lointaine lisent la même planète ; deux
+/// tables inverses, ce serait deux mondes, et la visée dériverait de l'un à
+/// l'autre. C'est l'argument qui a déjà mis la table directe à cet endroit.
+///
+/// **C'est aussi ce qui remplace la nappe équirectangulaire, et pour une raison
+/// de forme, pas de vitesse.** Une nappe a des pôles — ses colonnes s'y
+/// effondrent, des dizaines d'entre elles retombent sur le même pixel du
+/// patron, et le plus proche voisin en fait une rosace de secteurs, bien
+/// visible dès qu'on zoome. Un cube n'a pas de pôle : les six faces sont
+/// équivalentes, et le défaut n'a nulle part où naître.
+pub struct TableInverse {
+    /// `(s, t)` pour chaque `(a, b)` de la grille.
+    ///
+    /// En `f32`, pour la même raison que [`Table::ab`] : c'est exactement ce
+    /// que le shader lira.
+    st: Vec<[f32; 2]>,
+    /// Côté de la grille. Toujours [`COTE_INVERSE`], sauf pour les tables de
+    /// mesure que construit [`TableInverse::avec_cote`].
+    cote: usize,
+}
+
+static INVERSE: OnceLock<TableInverse> = OnceLock::new();
+
+/// La table inverse, construite au premier appel.
+pub fn inverse() -> &'static TableInverse {
+    INVERSE.get_or_init(|| TableInverse::avec_cote(COTE_INVERSE))
+}
+
+impl TableInverse {
+    /// Construit la table inverse pour un côté donné.
+    ///
+    /// Le paramètre n'est pas un réglage offert au jeu : il n'existe que pour
+    /// que la mesure puisse montrer l'erreur **bouger** quand la finesse
+    /// change. Une erreur mesurée à une seule finesse ne prouve rien.
+    pub fn avec_cote(cote: usize) -> Self {
+        use rayon::prelude::*;
+
+        let table = table();
+        let mut st = vec![[0.0f32; 2]; cote * cote];
+        st.par_chunks_mut(cote).enumerate().for_each(|(j, ligne)| {
+            let b = 2.0 * j as f64 / (cote - 1) as f64 - 1.0;
+            for (i, sortie) in ligne.iter_mut().enumerate() {
+                let a = 2.0 * i as f64 / (cote - 1) as f64 - 1.0;
+                // La direction locale dont `(a, b)` est la gnomonique : le
+                // troisième terme vaut 1 par définition du plan tangent.
+                let l = (1.0 + a * a + b * b).sqrt();
+                let (s, t) = table.depuis_locale([a / l, b / l, 1.0 / l]);
+                *sortie = [s as f32, t as f32];
+            }
+        });
+        Self { st, cote }
+    }
+
+    /// Le côté de la grille.
+    pub fn cote(&self) -> usize { self.cote }
+
+    /// Bilinéaire sur la grille. La fonction est lisse — pas de couture ici,
+    /// contrairement au patron : on peut filtrer sans rien mélanger.
+    #[inline]
+    pub fn lire(&self, a: f64, b: f64) -> (f64, f64) {
+        let n = self.cote;
+        let m = (n - 1) as f64;
+        let x = ((a + 1.0) * 0.5 * m).clamp(0.0, m);
+        let y = ((b + 1.0) * 0.5 * m).clamp(0.0, m);
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let (x0, y0) = (x0 as usize, y0 as usize);
+        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
+        let p = |i: usize, j: usize| self.st[j * n + i];
+        let (c00, c10, c01, c11) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+        let mel = |a: f32, b: f32, f: f64| a as f64 * (1.0 - f) + b as f64 * f;
+        (
+            mel(
+                mel(c00[0], c10[0], fx) as f32,
+                mel(c01[0], c11[0], fx) as f32,
+                fy,
+            ),
+            mel(
+                mel(c00[1], c10[1], fx) as f32,
+                mel(c01[1], c11[1], fx) as f32,
+                fy,
+            ),
+        )
+    }
+
+    /// La table serrée, sans marge de ligne — la même forme, et pour la même
+    /// raison, que [`Table::octets_serres`].
+    pub fn octets_serres(&self) -> Vec<u8> {
+        let mut octets = Vec::with_capacity(self.cote * self.cote * 8);
+        for v in &self.st {
+            octets.extend_from_slice(&v[0].to_le_bytes());
+            octets.extend_from_slice(&v[1].to_le_bytes());
+        }
+        octets
+    }
+
+    /// La table telle que le shader la lira : lignes complétées au multiple de
+    /// 256 octets qu'exige la copie vers une texture.
+    pub fn octets(&self) -> (Vec<u8>, u32) {
+        let n = self.cote;
+        let brut = n * 8;
+        let pas = brut.div_ceil(256) * 256;
+        let mut octets = vec![0u8; pas * n];
+        for j in 0..n {
+            for i in 0..n {
+                let v = self.st[j * n + i];
+                let o = j * pas + i * 8;
+                octets[o..o + 4].copy_from_slice(&v[0].to_le_bytes());
+                octets[o + 4..o + 8].copy_from_slice(&v[1].to_le_bytes());
+            }
+        }
+        (octets, pas as u32)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Combien de chunks vaut une unité de `(s, t)` : une demi-face.
+    fn chunks_par_unite() -> f64 {
+        use crate::terrain::{MapSizeLg, cube};
+        let map = MapSizeLg::nouvelle_cubique(vek::Vec2::new(6, 6)).expect("carte cubique");
+        cube::face_chunks(map) as f64 / 2.0
+    }
+
+    /// **La table inverse dit la même chose que le Newton qu'elle remplace.**
+    ///
+    /// C'est le seul endroit où le raccourci pourrait mentir : `depuis_locale`
+    /// reste la définition, la table n'en est qu'un cache. On balaie le carré
+    /// gnomonique et on compare, en **chunks du patron** — l'unité dans
+    /// laquelle l'erreur se verrait à l'écran.
+    #[test]
+    fn la_table_inverse_suit_le_newton() {
+        let fc2 = chunks_par_unite();
+        let t = table();
+        let inv = inverse();
+        let mut pire: f64 = 0.0;
+        for i in 0..=200 {
+            for j in 0..=200 {
+                let a = 2.0 * i as f64 / 200.0 - 1.0;
+                let b = 2.0 * j as f64 / 200.0 - 1.0;
+                let l = (1.0 + a * a + b * b).sqrt();
+                let (s0, u0) = t.depuis_locale([a / l, b / l, 1.0 / l]);
+                let (s1, u1) = inv.lire(a, b);
+                pire = pire.max((s1 - s0).abs().max((u1 - u0).abs()) * fc2);
+            }
+        }
+        assert!(pire < 0.05, "table inverse : {pire} chunk d'écart");
+    }
+
+    /// **L'erreur de la table inverse bouge avec sa finesse.**
+    ///
+    /// Le test précédent donne un chiffre ; celui-ci montre que ce chiffre
+    /// mesure quelque chose. Une table deux fois plus grossière doit se tromper
+    /// environ quatre fois plus — c'est la signature d'une bilinéaire sur une
+    /// fonction lisse. Une erreur qui ne bougerait pas dirait qu'on mesure
+    /// autre chose que l'interpolation, et le chiffre du test précédent
+    /// cesserait d'être opposable.
+    #[test]
+    fn l_erreur_de_la_table_inverse_suit_sa_finesse() {
+        let fc2 = chunks_par_unite();
+        let t = table();
+        let mesure = |cote: usize| {
+            let inv = TableInverse::avec_cote(cote);
+            let mut pire: f64 = 0.0;
+            // Les points doivent tomber **entre** les nœuds, sinon on ne mesure
+            // que les nœuds eux-mêmes, où la bilinéaire est exacte par
+            // construction — et l'erreur serait nulle à toutes les finesses.
+            for i in 0..=97 {
+                for j in 0..=97 {
+                    let a = 2.0 * (i as f64 + 0.5) / 98.0 - 1.0;
+                    let b = 2.0 * (j as f64 + 0.5) / 98.0 - 1.0;
+                    let l = (1.0 + a * a + b * b).sqrt();
+                    let (s0, u0) = t.depuis_locale([a / l, b / l, 1.0 / l]);
+                    let (s1, u1) = inv.lire(a, b);
+                    pire = pire.max((s1 - s0).abs().max((u1 - u0).abs()) * fc2);
+                }
+            }
+            pire
+        };
+
+        let grossiere = mesure(129);
+        let fine = mesure(COTE_INVERSE);
+        assert!(
+            grossiere > fine * 4.0,
+            "l'erreur ne suit pas la finesse : {grossiere} chunk à 129, {fine} à {COTE_INVERSE}"
+        );
+    }
+
+    /// **Le shader lira la même table inverse que le CPU.**
+    ///
+    /// Miroir exact de [`le_shader_lit_la_meme_table`], et pour la même raison :
+    /// la nappe lointaine décide quel texel de la carte lire à partir de cette
+    /// table. Si le GPU et le CPU n'en voyaient pas les mêmes octets, le relief
+    /// dessiné et le relief simulé se décaleraient l'un de l'autre.
+    #[test]
+    fn le_shader_lit_la_meme_table_inverse() {
+        let inv = inverse();
+        let n = inv.cote();
+        let octets = inv.octets_serres();
+        assert_eq!(octets.len(), n * n * 8);
+
+        let texel = |i: usize, j: usize| {
+            let o = (j * n + i) * 8;
+            let lis = |k: usize| {
+                f32::from_le_bytes([
+                    octets[o + k],
+                    octets[o + k + 1],
+                    octets[o + k + 2],
+                    octets[o + k + 3],
+                ])
+            };
+            (lis(0), lis(4))
+        };
+
+        // La bilinéaire du shader, écrite comme il l'écrit.
+        let comme_le_shader = |a: f64, b: f64| {
+            let m = (n - 1) as f32;
+            let x = ((a as f32 + 1.0) * 0.5 * m).clamp(0.0, m - 0.0001);
+            let y = ((b as f32 + 1.0) * 0.5 * m).clamp(0.0, m - 0.0001);
+            let (i, j) = (x as usize, y as usize);
+            let (fx, fy) = (x - i as f32, y - j as f32);
+            let (c00, c10, c01, c11) = (
+                texel(i, j),
+                texel(i + 1, j),
+                texel(i, j + 1),
+                texel(i + 1, j + 1),
+            );
+            let melange =
+                |p: (f32, f32), q: (f32, f32), t: f32| (p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t);
+            melange(melange(c00, c10, fx), melange(c01, c11, fx), fy)
+        };
+
+        let mut pire: f64 = 0.0;
+        for i in 0..=97 {
+            for j in 0..=97 {
+                let a = 2.0 * (i as f64 + 0.5) / 98.0 - 1.0;
+                let b = 2.0 * (j as f64 + 0.5) / 98.0 - 1.0;
+                let (s, u) = inv.lire(a, b);
+                let (gs, gu) = comme_le_shader(a, b);
+                pire = pire.max((gs as f64 - s).abs().max((gu as f64 - u).abs()));
+            }
+        }
+        // Le seul écart admis est celui du `f32` : la table est la même.
+        assert!(pire < 1e-6, "le shader lit autre chose : {pire}");
+    }
 
     /// Taille d'un bloc, en blocs, pour une table donnée : c'est la longueur
     /// d'un pas de grille rapportée à celle du centre d'une face.

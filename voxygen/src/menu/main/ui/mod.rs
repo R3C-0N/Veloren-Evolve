@@ -136,10 +136,27 @@ impl WorldChange {
             WorldChange::Name(name) => world.name = name,
             WorldChange::Seed(seed) => world.seed = seed,
             WorldChange::DayLength(d) => world.day_length = d,
+            // Le patron d'un cube exige une grille carrée (D27) : les deux
+            // curseurs n'en font qu'un. Sans ça, `FileOpts::map_size` retombe
+            // **en silence** sur une carte plate par défaut, et le monde perd
+            // sa forme sans que rien ne le dise.
+            WorldChange::SizeX(s) | WorldChange::SizeY(s)
+                if gen_opts.map_kind == common::resources::MapKind::Cube =>
+            {
+                gen_opts.x_lg = s;
+                gen_opts.y_lg = s;
+            },
             WorldChange::SizeX(s) => gen_opts.x_lg = s,
             WorldChange::SizeY(s) => gen_opts.y_lg = s,
             WorldChange::Scale(scale) => gen_opts.scale = scale,
-            WorldChange::MapKind(kind) => gen_opts.map_kind = kind,
+            WorldChange::MapKind(kind) => {
+                gen_opts.map_kind = kind;
+                if kind == common::resources::MapKind::Cube {
+                    let cote = gen_opts.x_lg.min(gen_opts.y_lg).max(4);
+                    gen_opts.x_lg = cote;
+                    gen_opts.y_lg = cote;
+                }
+            },
             WorldChange::ErosionQuality(q) => gen_opts.erosion_quality = q,
             WorldChange::DefaultGenOps => world.gen_opts = Some(Default::default()),
         }

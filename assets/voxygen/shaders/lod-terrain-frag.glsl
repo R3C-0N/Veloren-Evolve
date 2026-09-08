@@ -34,12 +34,28 @@ layout(location = 1) out uvec4 tgt_mat;
 
 void main() {
 #ifdef EXPERIMENTAL_BAREMINIMUM
-    tgt_color = vec4(simple_lighting(f_pos.xyz, lod_col(f_pos.xy), 1.0), 1);
+    tgt_color = vec4(simple_lighting(f_pos.xyz, lod_col_rendu(f_pos.xyz), 1.0), 1);
     tgt_mat = uvec4(uvec3((f_norm + 1.0) * 127.0), MAT_LOD);
 #else
 
-    float my_alt = alt_at_real(f_pos.xy);
-    vec3 f_pos = vec3(f_pos.xy, my_alt);
+    // Le sommet interpolé, avant qu'on ne le repose sur la surface. On le nomme
+    // pour de bon : `vec3 f_pos = ...f_pos...` s'appuierait sur une règle de
+    // portée que rien n'oblige à relire deux fois de la même façon.
+    vec3 pos_recu = f_pos;
+    float my_alt;
+    vec3 f_pos;
+    if (cube_actif()) {
+        // Un fragment retrouve sa direction gratuitement : tout point rendu
+        // vaut `dir*(R + alt) - cube_origine`. Pas de varying à interpoler,
+        // donc rien qui mente en travers d'une couture.
+        vec3 dir = cube_direction_de_rendu(pos_recu);
+        float alt = cube_alt_at(dir);
+        my_alt = alt - focus_off.z;
+        f_pos = dir * (cube.x + alt) - cube_origine.xyz;
+    } else {
+        my_alt = alt_at_real(pos_recu.xy);
+        f_pos = vec3(pos_recu.xy, my_alt);
+    }
     vec3 cam_to_frag = normalize(f_pos - cam_pos.xyz);
     vec3 view_dir = -cam_to_frag;
     
@@ -49,12 +65,12 @@ void main() {
     float f_ao;
     lod_voxels(f_pos, f_norm, cam_to_frag, voxel_pos, voxel_norm, voxel_sz, f_ao);
     
-    vec3 f_col_raw = mix(lod_col(f_pos.xy), vec3(0), clamp(pull_down / 30, 0, 1));
+    vec3 f_col_raw = mix(lod_col_rendu(f_pos), vec3(0), clamp(pull_down / 30, 0, 1));
 
     float shadow_alt = my_alt;
 
 #if (SHADOW_MODE == SHADOW_MODE_CHEAP || SHADOW_MODE == SHADOW_MODE_MAP)
-    vec4 f_shadow = textureMaybeBicubic(t_horizon, s_horizon, pos_to_tex(f_pos.xy));
+    vec4 f_shadow = horizon_rendu(f_pos);
     float sun_shade_frac = horizon_at2(f_shadow, shadow_alt, f_pos, sun_dir);
 #elif (SHADOW_MODE == SHADOW_MODE_NONE)
     float sun_shade_frac = 1.0;
@@ -72,7 +88,7 @@ void main() {
     const float R_s1s0 = pow(abs((1.3325 - n2) / (1.3325 + n2)), 2);
     const float R_s2s1 = pow(abs((1.0 - 1.3325) / (1.0 + 1.3325)), 2);
     const float R_s1s2 = pow(abs((1.3325 - 1.0) / (1.3325 + 1.0)), 2);
-    float cam_alt = alt_at(cam_pos.xy);
+    float cam_alt = alt_at_rendu(cam_pos.xyz);
     float fluid_alt = medium.x == MEDIUM_WATER ? max(cam_alt + 1, floor(shadow_alt)) : view_distance.w;
     float R_s = (f_pos.z < my_alt) ? mix(R_s2s1 * R_s1s0, R_s1s0, medium.x) : mix(R_s2s0, R_s1s2 * R_s2s0, medium.x);
 

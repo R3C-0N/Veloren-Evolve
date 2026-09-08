@@ -177,12 +177,18 @@ pub struct GenOpts {
 }
 
 impl Default for GenOpts {
+    /// Le monde par défaut est **le patron d'un cube** (D27).
+    ///
+    /// `MapKind::Square` était le défaut de Veloren, et c'est le monde borné
+    /// qu'on garde comme oracle de non-régression de l'érosion (D37) — mais
+    /// c'est un choix à faire, plus un défaut à subir. La grille reste carrée
+    /// parce que le patron l'exige : `nouvelle_cubique` refuse tout le reste.
     fn default() -> Self {
         Self {
             x_lg: 10,
             y_lg: 10,
             scale: 2.0,
-            map_kind: MapKind::Square,
+            map_kind: MapKind::Cube,
             erosion_quality: 1.0,
         }
     }

@@ -1156,58 +1156,18 @@ impl<'a> Skillbar<'a> {
                 slot.set(entry.widget_id, ui);
             }
 
-            // selection box around current hotbar index
-            match self.global_state.window.last_input() {
-                LastInput::Controller => {
-                    // enable UI if gamepad binding is set for CurrentSlot
-                    if self
-                        .global_state
-                        .settings
-                        .controller
-                        .get_game_button_binding(GameInput::CurrentSlot)
-                        .is_some()
-                        || self
-                            .global_state
-                            .settings
-                            .controller
-                            .get_layer_button_binding(GameInput::CurrentSlot)
-                            .is_some()
-                    {
-                        let current_hotbar_selection =
-                            self.hotbar.currently_selected_slot == entry.slot;
-                        if current_hotbar_selection {
-                            let selection_image = self.imgs.skillbar_index;
-
-                            Image::new(selection_image)
-                                .w_h(42.0, 42.0)
-                                .middle_of(entry.widget_id)
-                                .graphics_for(entry.widget_id)
-                                .set(state.ids.slot_highlight, ui);
-                        }
-                    }
-                },
-                LastInput::Keyboard | LastInput::Mouse => {
-                    // enable UI if keyboard binding is set for CurrentSlot
-                    if self
-                        .global_state
-                        .settings
-                        .controls
-                        .get_binding(GameInput::CurrentSlot)
-                        .is_some()
-                    {
-                        let current_hotbar_selection =
-                            self.hotbar.currently_selected_slot == entry.slot;
-                        if current_hotbar_selection {
-                            let selection_image = self.imgs.skillbar_index;
-
-                            Image::new(selection_image)
-                                .w_h(42.0, 42.0)
-                                .middle_of(entry.widget_id)
-                                .graphics_for(entry.widget_id)
-                                .set(state.ids.slot_highlight, ui);
-                        }
-                    }
-                },
+            // Le lisere de la case selectionnee, sans condition.
+            //
+            // Il n'apparaissait qu'a la manette, ou quand `CurrentSlot` avait
+            // une liaison — c'est-a-dire jamais au clavier. Depuis que la
+            // molette choisit, une selection qu'on ne voit pas est une
+            // selection qu'on ne peut pas faire.
+            if self.hotbar.selection() == entry.slot {
+                Image::new(self.imgs.skillbar_index)
+                    .w_h(42.0, 42.0)
+                    .middle_of(entry.widget_id)
+                    .graphics_for(entry.widget_id)
+                    .set(state.ids.slot_highlight, ui);
             }
 
             // shortcuts

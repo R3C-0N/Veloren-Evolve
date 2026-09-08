@@ -58,6 +58,15 @@ pub enum GameInput {
     /// Degainer et ranger : la bascule entre aventure et combat.
     #[strum(serialize = "gameinput-basculercombat")]
     BasculerCombat,
+    /// Passer en aventure, quel que soit le mode courant.
+    ///
+    /// Une affectation, pas une bascule : un cran de molette de trop ne doit
+    /// pas defaire le precedent.
+    #[strum(serialize = "gameinput-modeaventure")]
+    ModeAventure,
+    /// Passer en combat, quel que soit le mode courant.
+    #[strum(serialize = "gameinput-modecombat")]
+    ModeCombat,
     #[strum(serialize = "gameinput-togglewield")]
     ToggleWield,
     #[strum(serialize = "gameinput-sneak")]

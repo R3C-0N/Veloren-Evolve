@@ -44,6 +44,10 @@ layout(std140, set = 0, binding = 0) uniform u_globals {
     vec4 cube;
     // Le point de convergence, déjà projeté.
     vec4 cube_origine;
+    // Le repère de la nappe lointaine : `.xyz` l'est du lieu du foyer, `.w`
+    // l'angle au centre au-delà duquel il n'y a plus rien à dessiner.
+    // Le « haut » n'y est pas : c'est `normalize(cube_origine.xyz)`.
+    vec4 cube_repere;
 };
 
 float distance_divider = 2.0;

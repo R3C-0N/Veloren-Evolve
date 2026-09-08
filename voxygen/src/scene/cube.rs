@@ -69,6 +69,17 @@ impl PoseSpherique {
         }
     }
 
+    /// La place projetée d'un point, **sans son repère**.
+    ///
+    /// C'est ce qu'il faut pour borner un volume, pas pour l'orienter : une
+    /// seule lecture de table au lieu des quatre que coûte le repère.
+    pub fn place(&self, wpos: Vec3<f32>) -> Vec3<f32> {
+        let Some(d) = cube::direction(self.map, wpos.xy().map(|e| e as f64)) else {
+            return wpos;
+        };
+        (d * (cube::rayon(self.map) + wpos.z as f64)).map(|e| e as f32) - self.origine
+    }
+
     /// Pour les objets dont la matrice porte **tout**, translation comprise —
     /// un sprite, une particule.
     ///

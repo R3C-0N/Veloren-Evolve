@@ -1,6 +1,6 @@
 use crate::{
     game_input::GameInput,
-    window::{KeyMouse, MenuInput},
+    window::{KeyMouse, MenuInput, Modificateurs, SensMolette},
 };
 use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
@@ -214,7 +214,7 @@ impl ControlSettings {
         Some(KeyMouse::Key(match game_input {
             GameInput::Primary => return Some(KeyMouse::Mouse(MouseButton::Left)),
             GameInput::Secondary => return Some(KeyMouse::Mouse(MouseButton::Right)),
-            GameInput::Block => Key::Named(NamedKey::Alt),
+            GameInput::Block => char("U"),
             GameInput::ToggleCursor => char(","),
             GameInput::Escape => Key::Named(NamedKey::Escape),
             GameInput::Chat => Key::Named(NamedKey::Enter),
@@ -229,7 +229,7 @@ impl ControlSettings {
             GameInput::Crawl => Key::Named(NamedKey::ArrowDown),
             GameInput::Dance => char("J"),
             GameInput::Greet => char("H"),
-            GameInput::Glide => Key::Named(NamedKey::Control),
+            GameInput::Glide => Key::Named(NamedKey::ArrowUp),
             GameInput::SwimUp => Key::Named(NamedKey::Space),
             GameInput::SwimDown => Key::Named(NamedKey::Shift),
             GameInput::Fly => char("H"),
@@ -258,11 +258,15 @@ impl ControlSettings {
             GameInput::GiveUp => Key::Named(NamedKey::Space),
             GameInput::Respawn => Key::Named(NamedKey::Space),
             GameInput::Interact => char("E"),
-            GameInput::ToggleWield => char("R"),
+            GameInput::ToggleWield => return None,
             GameInput::FreeLook => char("L"),
             GameInput::AutoWalk => char("."),
-            GameInput::ZoomIn => char(")"),
-            GameInput::ZoomOut => char("("),
+            GameInput::ZoomIn => {
+                return Some(KeyMouse::Molette(SensMolette::Haut, Modificateurs::ALT));
+            },
+            GameInput::ZoomOut => {
+                return Some(KeyMouse::Molette(SensMolette::Bas, Modificateurs::ALT));
+            },
             GameInput::ZoomLock => return None,
             GameInput::CameraClamp => char("'"),
             GameInput::CycleCamera => char("0"),
@@ -276,18 +280,28 @@ impl ControlSettings {
             GameInput::Slot8 => char("8"),
             GameInput::Slot9 => char("9"),
             GameInput::Slot10 => char("Q"),
-            GameInput::NextSlot => return None,
-            GameInput::PreviousSlot => return None,
+            GameInput::NextSlot => {
+                return Some(KeyMouse::Molette(SensMolette::Bas, Modificateurs::RIEN));
+            },
+            GameInput::PreviousSlot => {
+                return Some(KeyMouse::Molette(SensMolette::Haut, Modificateurs::RIEN));
+            },
             GameInput::CurrentSlot => return None,
             GameInput::SwapLoadout => Key::Named(NamedKey::Tab),
             GameInput::BasculerCombat => char("R"),
+            GameInput::ModeAventure => {
+                return Some(KeyMouse::Molette(SensMolette::Haut, Modificateurs::CTRL));
+            },
+            GameInput::ModeCombat => {
+                return Some(KeyMouse::Molette(SensMolette::Bas, Modificateurs::CTRL));
+            },
             GameInput::Select => char("X"),
             GameInput::AcceptGroupInvite => char("Y"),
             GameInput::DeclineGroupInvite => char("N"),
             GameInput::MapZoomIn => char("+"),
             GameInput::MapZoomOut => char("-"),
             GameInput::MapSetMarker => return Some(KeyMouse::Mouse(MouseButton::Middle)),
-            GameInput::SpectateSpeedBoost => Key::Named(NamedKey::Control),
+            GameInput::SpectateSpeedBoost => Key::Named(NamedKey::ArrowUp),
             GameInput::SpectateViewpoint => return Some(KeyMouse::Mouse(MouseButton::Middle)),
             GameInput::MuteMaster => Key::Named(NamedKey::AudioVolumeMute),
             GameInput::MuteInactiveMaster => return None,

@@ -459,7 +459,18 @@ void main() {
         case SNOW:
             float height = mix(-4, 60, pow(start_end(1, 0), 3));
             vec3 offset = linear_motion(vec3(0), vec3(inst_start_wind_vel, 0.0));
-            float end_alt = alt_at(start_pos.xy + offset.xy);
+            // `alt_at_rendu` attend une position du repère du rendu (D46) ; ici
+            // on est encore dans le patron, `cube_poser` n'intervenant qu'à la
+            // fin du shader. Livrée telle quelle, elle perturbe `cube_origine`
+            // selon les axes de la grille au lieu de (est, nord, haut) : la
+            // direction échantillonnée saute d'une particule à l'autre, et
+            // l'altitude de chute avec elle. Mesuré en sondant l'écart à
+            // l'altitude du bloc émetteur : bruit de 0 à 256 blocs avant,
+            // 16 à 64 après. **Reste à trancher :** ces 16 à 64 blocs sont
+            // l'écart du LOD au bloc, et ils suffisent à mettre la neige en
+            // l'air. Comparer au monde plat avant de conclure.
+            vec3 sonde = vec3(start_pos.xy + offset.xy, start_pos.z);
+            float end_alt = alt_at_rendu(cube_actif() ? cube_poser(inst_pos, sonde) : sonde);
             attr = Attr(
                 offset + vec3(0, 0, end_alt - start_pos.z + height) + vec3(sin(lifetime()), sin(lifetime() + 0.7), sin(lifetime() * 0.5)) * 3,
                 vec3(mix(4, 0, pow(start_end(1, 0), 4))),

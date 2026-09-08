@@ -168,12 +168,14 @@ pub enum ControlEvent {
         auxiliary_key: ability::AuxiliaryKey,
         new_ability: ability::AuxiliaryAbility,
     },
-    /// Basculer entre aventure et combat.
+    /// Poser le mode : `true` pour le combat, `false` pour l'aventure.
     ///
-    /// Dans les deux sens : le joueur degaine quand il veut engager, et range
-    /// quand il juge que c'est fini. Un coup recu force l'entree de son cote,
-    /// si bien que sortir au mauvais moment ne coute qu'un coup encaisse.
-    BasculerCombat,
+    /// Une affectation, jamais une inversion. Le geste qui la porte est un cran
+    /// de molette, et un cran de trop ne doit pas defaire le precedent — c'est
+    /// aussi ce qui rend la commande sure malgre l'aller-retour reseau. Un coup
+    /// recu force l'entree de son cote, si bien que sortir au mauvais moment ne
+    /// coute qu'un coup encaisse.
+    DefinirMode(bool),
     ActivatePortal(Uid),
     InteractWith {
         target: Uid,

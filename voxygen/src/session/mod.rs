@@ -44,8 +44,8 @@ use crate::{
     error::Error,
     game_input::GameInput,
     hud::{
-        AutoPressBehavior, DebugInfo, Event as HudEvent, Hud, HudCollectFailedReason, HudInfo,
-        LootMessage, PersistedHudState, PromptDialogSettings,
+        AutoPressBehavior, BarreHotbar, DebugInfo, Event as HudEvent, Hud, HudCollectFailedReason,
+        HudInfo, LootMessage, PersistedHudState, PromptDialogSettings,
     },
     key_state::KeyState,
     menu::{char_selection::CharSelectionState, main::get_client_msg_error},
@@ -111,6 +111,8 @@ pub struct SessionState {
     freecam_pos: Vec3<f32>,
     auto_walk: bool,
     walking_speed: bool,
+    /// Le mode de l'image precedente, pour n'accorder l'arme qu'au changement.
+    en_combat_precedent: bool,
     camera_clamp: bool,
     zoom_lock: bool,
     is_aiming: bool,
@@ -191,6 +193,7 @@ impl SessionState {
             freecam_pos: Vec3::zero(),
             auto_walk: false,
             walking_speed: false,
+            en_combat_precedent: false,
             camera_clamp: false,
             zoom_lock: false,
             is_aiming: false,
@@ -712,9 +715,12 @@ impl PlayState for SessionState {
                 .read_storage::<comp::ModeDeJeu>()
                 .get(player_entity)
                 .is_some_and(|mode| mode.combat);
-            // En combat on ne creuse pas, mais on barricade : le reticule doit
-            // donc continuer d'accrocher un bloc, pour la pose.
-            let vise_un_bloc = true;
+            // En combat, les deux clics reviennent a l'arme : le reticule
+            // cesse d'accrocher un bloc, sans quoi le clic droit poserait au
+            // lieu de parer des qu'un mur passe dans la ligne de mire. On ne
+            // barricade donc plus en se battant — il faut repasser en aventure,
+            // ce qui tient en un cran de molette.
+            let vise_un_bloc = !en_combat;
 
             let active_mine_tool: Option<ToolKind> = if client.is_wielding() == Some(true) {
                 client
@@ -772,6 +778,22 @@ impl PlayState for SessionState {
             }
 
             drop(client);
+
+            // **L'arme suit le mode, quelle que soit la cause.** La touche et la
+            // molette accordent l'arme elles-memes, mais on entre aussi en
+            // combat *en etant frappe* — et ce chemin-la vient du serveur. Sans
+            // ce rattrapage, un coup recu rendrait les clics a l'arme sans la
+            // degainer.
+            if en_combat != self.en_combat_precedent {
+                self.en_combat_precedent = en_combat;
+                let mut client = self.client.borrow_mut();
+                if client.is_wielding().is_some_and(|tenue| tenue != en_combat) {
+                    if en_combat {
+                        self.walking_speed = false;
+                    }
+                    client.toggle_wield();
+                }
+            }
 
             self.maybe_auto_zoom_lock(
                 global_state.settings.gameplay.zoom_lock,
@@ -860,7 +882,13 @@ impl PlayState for SessionState {
                             GameInput::Secondary => {
                                 self.walking_speed = false;
                                 let mut client = self.client.borrow_mut();
-                                if let Some(build_target) = build_target.filter(|_| state) {
+                                // Le clic droit pose en aventure et frappe en
+                                // combat, comme le clic gauche. `build_target`
+                                // est deja vide en combat ; le dire ici garde la
+                                // regle lisible a l'endroit ou elle s'applique.
+                                if let Some(build_target) =
+                                    build_target.filter(|_| state && !en_combat)
+                                {
                                     // Le bloc pose est celui de l'objet
                                     // designe dans la barre : le serveur le
                                     // deduit, le client n'envoie que
@@ -1070,9 +1098,30 @@ impl PlayState for SessionState {
                                     self.client.borrow_mut().swap_loadout();
                                 }
                             },
-                            GameInput::BasculerCombat => {
+                            // Le mode se pose, il ne s'inverse plus. La touche
+                            // vise « l'autre », les deux crans de molette visent
+                            // chacun le sien — et repeter un cran ne fait rien.
+                            GameInput::BasculerCombat
+                            | GameInput::ModeAventure
+                            | GameInput::ModeCombat => {
                                 if state && controlling_char {
-                                    self.client.borrow_mut().basculer_combat();
+                                    let combat = match input {
+                                        GameInput::ModeAventure => false,
+                                        GameInput::ModeCombat => true,
+                                        _ => !en_combat,
+                                    };
+                                    let mut client = self.client.borrow_mut();
+                                    client.definir_mode(combat);
+                                    // L'arme suit le mode, et c'est la seule
+                                    // chose qui la degaine desormais : sans ca,
+                                    // la touche et la molette n'auraient pas le
+                                    // meme effet.
+                                    if client.is_wielding().is_some_and(|tenue| tenue != combat) {
+                                        if combat {
+                                            self.walking_speed = false;
+                                        }
+                                        client.toggle_wield();
+                                    }
                                 }
                             },
                             GameInput::ToggleLantern if state && controlling_char => {
@@ -2142,7 +2191,8 @@ impl PlayState for SessionState {
                         global_state.profile.set_hotbar_slots(
                             server_name,
                             character_id,
-                            state.slots,
+                            state.slots_de(BarreHotbar::Aventure).clone(),
+                            state.slots_de(BarreHotbar::Combat).clone(),
                         );
 
                         global_state

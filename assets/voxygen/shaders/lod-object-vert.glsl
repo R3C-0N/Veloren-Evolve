@@ -16,6 +16,7 @@
 #include <srgb.glsl>
 #include <random.glsl>
 #include <lod.glsl>
+#include <cube.glsl>
 
 layout(location = 0) in vec3 v_pos;
 layout(location = 1) in vec3 v_norm;
@@ -49,6 +50,38 @@ void main() {
     f_pos = obj_pos + local_pos;
     model_pos = v_pos;
 
+    if (cube_actif()) {
+        // Un arbre lointain est petit devant le rayon : la projection ne lui
+        // fait subir qu'une transformation rigide, et le repère se prend à son
+        // ancre — jamais par sommet, ce qui le déchirerait à une couture.
+        // C'est le même chemin que les particules.
+        f_pos = cube_poser(inst_pos, f_pos);
+        vec3 ancre = cube_poser(inst_pos, obj_pos);
+        vec3 haut = normalize(ancre + cube_origine.xyz);
+
+        // La distance **géodésique** au foyer, qui est ce que la version plate
+        // appelle sa distance horizontale : l'angle entre les deux verticales,
+        // multiplié par le rayon. Une différence de coordonnées du patron ne
+        // dirait rien — au-delà d'une couture, deux voisins sont séparés d'une
+        // face entière — et une corde 3D compterait en plus le dénivelé, que la
+        // version plate ignore.
+        float portee = cube.x * acos(clamp(dot(haut, cube_haut()), -1.0, 1.0));
+        float portee2 = portee * portee;
+
+        // **Le retrait est radial, et il s'enfonce peu.** Enfoncer de dix mille
+        // sur l'axe Z du monde ne ferait pas descendre un objet de la face +X :
+        // ça le translaterait de côté. Et radialement, dix mille blocs sur un
+        // rayon de cinq mille ressortent **de l'autre côté de la planète**.
+        // Sur une sphère, enfoncer ne supprime pas, ça creuse : on s'en tient
+        // donc à la même profondeur modeste que la nappe.
+        float enfoncement = CUBE_ENFONCEMENT;
+        #ifdef EXPERIMENTAL_TERRAINPOP
+            float pull_down = min(1.0 / pow(portee / (view_distance.x * 0.95), 150.0), enfoncement);
+            f_pos -= haut * pull_down;
+        #else
+            f_pos -= haut * step(portee2, pow(view_distance.x * 0.95, 2)) * enfoncement;
+        #endif
+    } else {
     #ifdef EXPERIMENTAL_TERRAINPOP
         float pull_down = 1.0 / pow(distance(focus_pos.xy, obj_pos.xy) / (view_distance.x * 0.95), 150.0);
         f_pos.z -= pull_down;
@@ -59,6 +92,7 @@ void main() {
     #ifdef EXPERIMENTAL_CURVEDWORLD
         f_pos.z -= pow(distance(f_pos.xy + focus_off.xy, focus_pos.xy + focus_off.xy) * 0.05, 2);
     #endif
+    }
 
     f_norm = vec3(rot * v_norm.xy, v_norm.z);
 

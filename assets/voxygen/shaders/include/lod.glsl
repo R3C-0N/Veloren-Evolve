@@ -4,6 +4,7 @@
 #include <random.glsl>
 #include <sky.glsl>
 #include <srgb.glsl>
+#include <cube.glsl>
 
 layout(set = 0, binding = 7) uniform texture2D t_horizon;
 layout(set = 0, binding = 8) uniform sampler s_horizon;
@@ -194,6 +195,145 @@ vec3 lod_pos(vec2 pos, vec2 focus_pos) {
     return vec3(hpos, alt_at_real(hpos));
 }
 
+// --------------------------------------------------------------------------
+// La nappe sur la planète (D27)
+// --------------------------------------------------------------------------
+//
+// Rien de ce qui suit ne remplace ce qui précède : le monde plat garde ses
+// fonctions mot pour mot, parce qu'il est l'oracle de non-régression de
+// l'érosion (D37). Ce sont des branches, pas des réécritures.
+
+// `splay`, sur une planète.
+//
+// Même courbe de densité — fine au pied du joueur, lâche au loin — mais deux
+// changements de nature. L'échelle n'est plus la carte entière : c'est la
+// **portée du lointain**, l'angle au-delà duquel plus rien n'est visible, et
+// sur cette planète il vaut quelques milliers de blocs, pas trente mille. Et le
+// bord ne part plus à cinquante fois la carte : il **ferme la calotte** à
+// l'horizon, parce que le monde s'y arrête pour de bon.
+//
+// C'est le point où le balayage de rectangle disparaît. La grille reste un
+// carré de paramètres, mais ce qu'elle paramètre est un disque géodésique
+// centré sur le joueur — on marche sur la surface, on ne balaye plus le patron.
+vec2 splay_cube(vec2 pos) {
+    float scale = cube.x * cube_portee();
+    float lod_dist = view_distance.x * 0.95 / scale;
+    float dist = abs(pos.x) + abs(pos.y);
+    float stretch = (pow(dist, 5.5) * 0.75 + dist * 0.25) * (1.0 - lod_dist) + lod_dist;
+    vec2 splayed = pos * stretch * scale;
+    float r = length(splayed);
+    return r > scale ? splayed * (scale / r) : splayed;
+}
+
+// L'altitude **absolue** de la carte dans une direction du monde.
+//
+// À la différence d'`alt_at`, elle ne retire pas `focus_off.z` : on en a besoin
+// telle quelle pour former `R + alt`, qui est une longueur comptée depuis le
+// centre de la planète et non depuis le foyer. Le nom porte l'écart de
+// convention, faute de quoi on se tromperait un jour de plusieurs milliers de
+// blocs sans que rien ne le signale.
+float cube_alt_at(vec3 dir) {
+    vec2 st;
+    int face = cube_face_de_direction(dir, st);
+    return cube_atlas_alt16(t_alt, face, st) * view_distance.w + view_distance.z;
+}
+
+// L'altitude d'un point du plan tangent, par la carte exponentielle.
+float cube_alt_de(vec2 d) {
+    vec3 e, n;
+    return cube_alt_at(cube_exp(d, e, n));
+}
+
+// La part horizontale de la normale, **dans le plan tangent** : ce que
+// `lod_norm` rend sur une carte plate, transposé au chart.
+vec2 cube_pente(vec2 d) {
+    const float W = 32.0;
+    float ax0 = cube_alt_de(d - vec2(W, 0.0));
+    float ax1 = cube_alt_de(d + vec2(W, 0.0));
+    float ay0 = cube_alt_de(d - vec2(0.0, W));
+    float ay1 = cube_alt_de(d + vec2(0.0, W));
+    return normalize(vec3((ax0 - ax1) / (2.0 * W), (ay0 - ay1) / (2.0 * W), 1.0)).xy;
+}
+
+// La borne de la boucle qui pousse un sommet vers l'optimum local, exclusive
+// comme celle du monde plat : cinq tours ici, neuf là-bas.
+//
+// Le disque géodésique couvre quelques milliers de blocs là où le drap plat en
+// couvrait trente mille : à nombre de sommets égal la trame y est **une dizaine
+// de fois plus fine**, donc bien moins exposée aux pics qui ont fait écrire
+// cette boucle. Et chaque tour coûte ici huit lectures de texel là où la version
+// plate en payait une — c'est ce rapport, et non le nombre de tours, qui décide
+// du budget.
+const int CUBE_LOD_TOURS = 6;
+
+// La position d'un sommet de la nappe, son repère et sa normale.
+//
+// Tout se passe dans le plan tangent au joueur : `d` est un déplacement en
+// blocs, `length(d)` est la distance géodésique, et la carte exponentielle
+// n'intervient qu'au moment de lire le monde. Aucune position du patron n'est
+// jamais soustraite d'une autre — au-delà d'une couture, deux points voisins
+// sont séparés d'une face entière de grille.
+vec3 cube_lod_pos(vec2 pos, out vec3 f_norm, out float portee) {
+    vec2 d = splay_cube(pos);
+
+    // Le même lissage que `lod_pos`, mené dans le chart.
+    vec2 sens = normalize(pos);
+    float shift = 150.0 * pow(length(pos), 3.0);
+    for (int i = 1; i < CUBE_LOD_TOURS; i++) {
+        d -= sens * dot(cube_pente(d), sens) * shift / float(i);
+    }
+
+    portee = length(d);
+    vec3 est_p, nord_p;
+    vec3 dir = cube_exp(d, est_p, nord_p);
+
+    // La normale, avec le repère analytique du point atteint : la verticale y
+    // est `dir`, jamais `+Z`.
+    //
+    // La demi-largeur du stencil suit **l'écartement local de la trame**, comme
+    // sur une carte plate où elle vient de `splay(v_pos ± dims)`. Une largeur
+    // fixe sous-échantillonnerait au loin, là où deux sommets voisins sont
+    // distants de centaines de blocs, et la nappe s'y couvrirait de bruit.
+    vec2 dims = vec2(1.0 / view_distance.y);
+    float w = max(0.5 * length(splay_cube(pos + dims) - splay_cube(pos - dims)), 1.0);
+    float dx = (cube_alt_de(d + vec2(w, 0.0)) - cube_alt_de(d - vec2(w, 0.0))) / (2.0 * w);
+    float dy = (cube_alt_de(d + vec2(0.0, w)) - cube_alt_de(d - vec2(0.0, w))) / (2.0 * w);
+    f_norm = normalize(dir - est_p * dx - nord_p * dy);
+
+    return dir;
+}
+
+// --------------------------------------------------------------------------
+// Les enveloppes : lire la carte depuis une position de rendu
+// --------------------------------------------------------------------------
+//
+// `alt_at` et `pos_to_tex` attendent une position **du patron**, décalée du
+// foyer. Sur une planète, ce qu'un shader tient est une position **de rendu**,
+// qui vit dans le repère 3D du cube : sur la face `+X`, son `.xy` mélange la
+// verticale à l'horizontale. Ce n'est pas une erreur de flèche, c'est une
+// rotation et un facteur d'échelle — et quatre faces sur six sont franchement
+// fausses.
+//
+// D'où ces enveloppes. Elles branchent en interne, et la version plate y est
+// l'ancienne expression, inchangée.
+
+float alt_at_rendu(vec3 f_pos) {
+    if (cube_actif()) {
+        return cube_alt_at(cube_direction_de_rendu(f_pos)) - focus_off.z;
+    }
+    return alt_at(f_pos.xy);
+}
+
+vec4 horizon_rendu(vec3 f_pos) {
+    if (cube_actif()) {
+        vec2 st;
+        int face = cube_face_de_direction(cube_direction_de_rendu(f_pos), st);
+        return cube_atlas_lire(t_horizon, face, st);
+    }
+    return textureMaybeBicubic(t_horizon, s_horizon, pos_to_tex(f_pos.xy));
+}
+
+
 #ifdef HAS_LOD_FULL_INFO
 layout(set = 0, binding = 10)
 uniform texture2D t_map;
@@ -218,11 +358,40 @@ vec3 lod_col(vec2 pos) {
 
     return col;
 }
+
+// La couleur de la carte pour une position **de rendu**, bornée à la face.
+//
+// Le decalage procedural, quand il est allume, se prend dans le plan tangent :
+// c'est deux lignes de moins que de le desactiver, et il garde son grain.
+vec3 lod_col_rendu(vec3 f_pos) {
+    if (!cube_actif()) {
+        return lod_col(f_pos.xy);
+    }
+    vec3 dir = cube_direction_de_rendu(f_pos);
+    #ifdef EXPERIMENTAL_PROCEDURALLODDETAIL
+        vec2 wpos = cube_wpos_de_direction(dir);
+        vec2 shift = vec2(
+            textureLod(sampler2D(t_noise, s_noise), wpos / 200, 0).x - 0.5,
+            textureLod(sampler2D(t_noise, s_noise), wpos / 200 + 0.5, 0).x - 0.5
+        ) * 32 + vec2(
+            textureLod(sampler2D(t_noise, s_noise), wpos / 50, 0).x - 0.5,
+            textureLod(sampler2D(t_noise, s_noise), wpos / 50 + 0.5, 0).x - 0.5
+        ) * 16;
+        vec3 est_p, nord_p;
+        vec3 haut = cube_haut();
+        vec3 est = cube_repere.xyz;
+        vec3 nord = cross(haut, est);
+        dir = normalize(dir + est * shift.x / cube.x + nord * shift.y / cube.x);
+    #endif
+    vec2 st;
+    int face = cube_face_de_direction(dir, st);
+    return cube_atlas_lire(t_map, face, st).rgb;
+}
 #endif
 
 vec3 water_diffuse(vec3 color, vec3 dir, float max_dist) {
     if (medium.x == 1) {
-        float f_alt = alt_at(cam_pos.xy);
+        float f_alt = alt_at_rendu(cam_pos.xyz);
         float fluid_alt = max(cam_pos.z + 1, floor(f_alt + 1));
 
         float water_dist = clamp((fluid_alt - cam_pos.z) / pow(max(dir.z, 0), 2), 0, max_dist);
@@ -242,19 +411,96 @@ void lod_voxels(vec3 f_pos, vec3 f_norm, vec3 cam_dir, out vec3 voxel_pos, out v
     voxel_norm = f_norm;
     voxel_sz = 1.0;
     f_ao = 1.0;
-    
+
     #ifndef EXPERIMENTAL_NOLODVOXELS
-        const float VOXEL_SCALE_FACTOR = 100000.0;
-        vec3 wpos = f_pos + focus_off.xyz;
-        
-        voxel_sz = clamp(exp(floor(log(distance(cam_pos.xy, f_pos.xy) * 0.0001 + noise_2d(wpos.xy * 0.01) * 0.02) * 3) / 3) * VOXEL_SCALE_FACTOR / (internal_res.x + internal_res.y), 1.0, 128.0);
-        
         #ifdef EXPERIMENTAL_PROCEDURALLODDETAIL
             const float MARCH_THRESHOLD = 4.0;
         #else
             const float MARCH_THRESHOLD = 2.0;
         #endif
-        
+        const float VOXEL_SCALE_FACTOR = 100000.0;
+
+        // **Sur une planète, la marche se fait dans la carte géodésique.**
+        //
+        // Le réseau cubique de Veloren est aligné sur les axes du monde. Sur une
+        // sphère il est donc oblique par rapport au sol dès qu'on quitte le
+        // sommet d'une face, et il y ferait des dalles qui scintillent. On le
+        // pose donc dans les **coordonnées normales** centrées sur le foyer :
+        // `(x, y)` le déplacement du plan tangent rendu par `cube_log`, `z` la
+        // hauteur au-dessus de la sphère.
+        //
+        // Ce chart est global sur toute la calotte et continu, ce qui est la
+        // condition pour que le `floor` du réseau donne la même case à deux
+        // fragments voisins. Un repère refait par sommet, lui, tournerait, et
+        // c'est exactement ce qu'on cherche à éviter.
+        if (cube_actif()) {
+            vec3 dir = cube_direction_de_rendu(f_pos);
+            vec3 est_p, nord_p;
+            vec2 d = cube_log(dir);
+            cube_exp(d, est_p, nord_p);
+
+            // Le chart est une isométrie au point : la direction de vue s'y
+            // pousse par simple projection sur le repère local.
+            vec3 marche = normalize(vec3(
+                dot(cam_dir, est_p),
+                dot(cam_dir, nord_p),
+                dot(cam_dir, dir)
+            ));
+            vec3 norme_l = vec3(dot(f_norm, est_p), dot(f_norm, nord_p), dot(f_norm, dir));
+            vec3 wpos = vec3(d, cube_hauteur_rendu(f_pos));
+
+            // La distance à la caméra est **géodésique** : la version plate
+            // prend `distance(cam_pos.xy, f_pos.xy)`, qui ne veut rien dire ici.
+            float portee = cube.x * acos(clamp(
+                dot(cube_direction_de_rendu(cam_pos.xyz), dir), -1.0, 1.0
+            ));
+            voxel_sz = clamp(
+                exp(floor(log(portee * 0.0001 + noise_2d(wpos.xy * 0.01) * 0.02) * 3) / 3)
+                    * VOXEL_SCALE_FACTOR / (internal_res.x + internal_res.y),
+                1.0, 128.0
+            );
+
+            float t = -MARCH_THRESHOLD * voxel_sz;
+            int i = 0;
+            while (t < MARCH_THRESHOLD * voxel_sz && i++ < 40) {
+                vec3 deltas = (fract((wpos + marche * t) / voxel_sz) - step(vec3(0), marche * voxel_sz)) / -marche * voxel_sz;
+                t += max(min(min(deltas.x, deltas.y), deltas.z), 0.001);
+
+                vec3 centre = (floor((wpos + marche * t) / voxel_sz) + 0.5) * voxel_sz;
+                float surf_depth = 0.0;
+                #ifdef EXPERIMENTAL_PROCEDURALLODDETAIL
+                    // `norme_l.z` est ce que `f_norm.z` était sur une carte
+                    // plate : la part de la normale qui regarde le ciel.
+                    surf_depth = (noise_3d(centre / voxel_sz * 0.01) - 0.5)
+                        * 10.0
+                        * voxel_sz
+                        * pow(mix(0.0, mix(1.0, 0.0, max(norme_l.z, 0.0)), max(norme_l.z, 0.0)), 0.5);
+                #endif
+                if (dot(centre - wpos, -norme_l) > surf_depth) {
+                    vec3 to_center = abs(centre - (wpos + marche * t));
+                    vec3 n_l = step(max(max(to_center.x, to_center.y), to_center.z), to_center) * sign(-marche);
+                    // La normale repart dans le monde : le réseau est local, ce
+                    // qui l'éclaire ne l'est pas.
+                    voxel_norm = normalize(est_p * n_l.x + nord_p * n_l.y + dir * n_l.z);
+                    float dist = dot(marche * t, norme_l) + surf_depth;
+                    f_ao = clamp(dist / voxel_sz + max(norme_l.z, 0.5), 0.25, 1.0);
+                    // Et la position aussi : on repasse par la carte
+                    // exponentielle, qui est l'inverse exact de `cube_log`.
+                    vec3 e2, n2;
+                    voxel_pos = cube_exp(centre.xy, e2, n2) * (cube.x + centre.z) - cube_origine.xyz;
+                    return;
+                }
+            }
+            voxel_pos = f_pos;
+            vec3 n_l = step(max(max(norme_l.x, norme_l.y), norme_l.z), norme_l) * sign(-marche);
+            voxel_norm = normalize(est_p * n_l.x + nord_p * n_l.y + dir * n_l.z);
+            return;
+        }
+
+        vec3 wpos = f_pos + focus_off.xyz;
+
+        voxel_sz = clamp(exp(floor(log(distance(cam_pos.xy, f_pos.xy) * 0.0001 + noise_2d(wpos.xy * 0.01) * 0.02) * 3) / 3) * VOXEL_SCALE_FACTOR / (internal_res.x + internal_res.y), 1.0, 128.0);
+
         float t = -MARCH_THRESHOLD * voxel_sz;
         int i = 0;
         while (t < MARCH_THRESHOLD * voxel_sz && i++<40) {

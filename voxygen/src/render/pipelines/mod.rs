@@ -89,6 +89,12 @@ pub struct Globals {
     /// vivraient à 2 500 blocs de l'origine et la précision des `f32` y
     /// laisserait des plumes.
     cube_origine: [f32; 4],
+    /// Le repère de la nappe lointaine : l'est du lieu du foyer, puis l'angle
+    /// au centre au-delà duquel il n'y a plus rien à dessiner (D27).
+    ///
+    /// Le « haut » n'y figure pas : il vaut `normalize(cube_origine)`, que le
+    /// shader a déjà. Le nord se retrouve par `haut × est`.
+    cube_repere: [f32; 4],
 }
 /// Make sure Globals is 16-byte-aligned.
 const _: () = assert!(core::mem::size_of::<Globals>().is_multiple_of(16));
@@ -144,6 +150,8 @@ impl Globals {
         cube: (f32, f32, bool),
         // Le point de convergence, déjà projeté.
         cube_origine: Vec3<f32>,
+        // L'est du lieu du foyer, et la portée angulaire du lointain.
+        cube_repere: (Vec3<f32>, f32),
     ) -> Self {
         Self {
             view_mat: view_mat.into_col_arrays(),
@@ -220,6 +228,12 @@ impl Globals {
             globals_dummy: [0.0; 3],
             cube: [cube.0, cube.1, if cube.2 { 1.0 } else { 0.0 }, 0.0],
             cube_origine: [cube_origine.x, cube_origine.y, cube_origine.z, 0.0],
+            cube_repere: [
+                cube_repere.0.x,
+                cube_repere.0.y,
+                cube_repere.0.z,
+                cube_repere.1,
+            ],
         }
     }
 }
@@ -256,6 +270,7 @@ impl Default for Globals {
             1.0,
             (0.0, 0.0, false),
             Vec3::zero(),
+            (Vec3::zero(), 0.0),
         )
     }
 }
@@ -597,6 +612,28 @@ impl GlobalsLayouts {
                 },
                 count: None,
             },
+            // La table conforme **inverse** (D27).
+            //
+            // Mêmes règles que la directe, et pour la même raison : la nappe
+            // lointaine s'en sert pour décider quel texel de la carte lire, et
+            // le CPU s'en sert pour dire où l'on est. Deux tables, ce seraient
+            // deux planètes.
+            //
+            // **17 et non 16 :** la disposition des sprites ajoute son tampon de
+            // sommets à la suite de celle-ci, et il occupait déjà 16. Une
+            // disposition de base qui empiète dessus casse la création du groupe
+            // de liaison, et le message — « Conflicting binding at index 16 » —
+            // ne dit pas lequel des deux est l'intrus.
+            wgpu::BindGroupLayoutEntry {
+                binding: 17,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ]
     }
 
@@ -677,6 +714,7 @@ impl GlobalsLayouts {
         lod_data: &'a lod_terrain::LodData,
         noise: &'a Texture,
         conforme: &'a Texture,
+        inverse: &'a Texture,
     ) -> Vec<wgpu::BindGroupEntry<'a>> {
         vec![
             // Global uniform
@@ -748,10 +786,14 @@ impl GlobalsLayouts {
                 binding: 14,
                 resource: global_model.rain_occlusion_mats.buf().as_entire_binding(),
             },
-            // La table conforme (D27).
+            // La table conforme (D27), puis son inverse.
             wgpu::BindGroupEntry {
                 binding: 15,
                 resource: wgpu::BindingResource::TextureView(&conforme.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 17,
+                resource: wgpu::BindingResource::TextureView(&inverse.view),
             },
         ]
     }
@@ -763,11 +805,12 @@ impl GlobalsLayouts {
         lod_data: &lod_terrain::LodData,
         noise: &Texture,
         conforme: &Texture,
+        inverse: &Texture,
     ) -> GlobalsBindGroup {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.globals,
-            entries: &Self::bind_base_globals(global_model, lod_data, noise, conforme),
+            entries: &Self::bind_base_globals(global_model, lod_data, noise, conforme, inverse),
         });
 
         GlobalsBindGroup { bind_group }

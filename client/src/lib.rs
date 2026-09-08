@@ -2034,7 +2034,9 @@ impl Client {
     pub fn swap_loadout(&mut self) { self.control_action(ControlAction::SwapEquippedWeapons) }
 
     /// Degainer ou rengainer : basculer entre aventure et combat.
-    pub fn basculer_combat(&mut self) { self.control_event(ControlEvent::BasculerCombat) }
+    pub fn definir_mode(&mut self, combat: bool) {
+        self.control_event(ControlEvent::DefinirMode(combat))
+    }
 
     /// Determine whether the player is wielding, if they're even capable of
     /// being in a wield state.

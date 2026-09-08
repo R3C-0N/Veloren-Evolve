@@ -618,15 +618,27 @@ impl Scene {
                 .get(scene_data.viewpoint_entity)
         {
             // TODO: Don't hard-code this offset
-            char_state
-                .wpos_of(
-                    char_state
-                        .computed_skeleton
-                        .head
-                        .mul_point(Vec3::unit_z() * 0.6),
-                )
-                .z
-                - interpolated.pos.z
+            let tete = char_state
+                .computed_skeleton
+                .head
+                .mul_point(Vec3::unit_z() * 0.6);
+            // **`wpos_of` rend une position projetée, `interpolated.pos` non.**
+            // Sous cube la figure est posée sur la sphère (`figure/mod.rs`), si
+            // bien que `mount_world_pos` quitte le patron ; leur différence
+            // cesse d'être une hauteur. Sur la face `+X` elle valait −218 blocs
+            // : l'œil de la première personne se retrouvait enterré, et la
+            // moitié basse de l'écran vide sous un arc net — l'horizon local vu
+            // du dessous. Le déplacement de l'os est déjà en blocs, et sa
+            // composante verticale est la hauteur cherchée.
+            // **Contrepartie :** monté, la correction de monture est perdue.
+            if self.camera.est_cubique() {
+                // Le bloc et demi ajouté : l'os de la tête se mesure depuis
+                // l'origine de la figure, plus bas que la référence du chemin
+                // plat, et la vue s'en trouvait rasante. Réglé à l'œil.
+                tete.z + 1.85
+            } else {
+                char_state.wpos_of(tete).z - interpolated.pos.z
+            }
         } else {
             // When not in first-person, just use the game-provided eye height, combined
             // with a per-state factor
@@ -983,6 +995,9 @@ impl Scene {
         // caméra vit précisément dans l'espace que ce point définit.
         let cube = self.camera.cube_params();
         let cube_origine = self.camera.cube_origine();
+        let cube_repere = self
+            .camera
+            .cube_repere(self.map_bounds, self.loaded_distance);
 
         renderer.update_consts(&mut self.data.globals, &[Globals::new(
             view_mat,
@@ -1022,6 +1037,7 @@ impl Scene {
             self.screen_fade,
             cube,
             cube_origine,
+            cube_repere,
         )]);
         renderer.update_clouds_locals(CloudsLocals::new(proj_mat_inv, view_mat_inv));
         renderer.update_postprocess_locals(PostProcessLocals::new(proj_mat_inv, view_mat_inv));
@@ -1063,7 +1079,18 @@ impl Scene {
 
         let fov = self.camera.get_effective_fov();
         let aspect_ratio = self.camera.get_aspect_ratio();
-        let view_dir = ((focus_pos.map(f32::fract)) - cam_pos).normalized();
+        // **`fract(foyer) − cam_pos` n'est pas une direction sur une planète.**
+        // `cam_pos` vit dans le repère du rendu, `fract(focus_pos)` est une
+        // fraction de case du patron : leur différence mélange deux repères, et
+        // elle s'annule dès que le foyer tombe sur des coordonnées entières —
+        // ce qu'un `/goto` fait exactement. `normalized()` rend alors des NaN,
+        // qui traversent tout le calcul de la carte d'ombres jusqu'à un
+        // `clamp(NaN, NaN)` qui panique. La caméra, elle, sait où elle regarde.
+        let view_dir = if self.camera.est_cubique() {
+            self.camera.dependents().cam_dir
+        } else {
+            ((focus_pos.map(f32::fract)) - cam_pos).normalized()
+        };
 
         // We need to compute these offset matrices to transform world space coordinates
         // to the translated ones we use when multiplying by the light space
@@ -1369,7 +1396,9 @@ impl Scene {
         }
 
         let sun_dir = scene_data.get_sun_dir();
-        let is_daylight = sun_dir.z < 0.0;
+        // L'élévation locale, non `z` : sur la face `+X` du cube, l'axe `z` du
+        // monde est horizontal, et le soleil de midi n'y "monte" jamais.
+        let is_daylight = sun_dir.dot(self.camera.verticale()) < 0.0;
         if renderer.pipeline_modes().shadow.is_map() && (is_daylight || !lights.is_empty()) {
             let (point_shadow_res, _directed_shadow_res) = renderer.get_shadow_resolution();
             // NOTE: The aspect ratio is currently always 1 for our cube maps, since they
@@ -1485,7 +1514,9 @@ impl Scene {
     ) {
         span!(_guard, "render", "Scene::render");
         let sun_dir = scene_data.get_sun_dir();
-        let is_daylight = sun_dir.z < 0.0;
+        // L'élévation locale, non `z` : sur la face `+X` du cube, l'axe `z` du
+        // monde est horizontal, et le soleil de midi n'y "monte" jamais.
+        let is_daylight = sun_dir.dot(self.camera.verticale()) < 0.0;
         let focus_pos = self.camera.get_focus_pos();
         let cam_pos = self.camera.dependents().cam_pos + focus_pos.map(|e| e.trunc());
         let is_rain = state.max_weather_near(cam_pos.xy()).rain > RAIN_THRESHOLD;
