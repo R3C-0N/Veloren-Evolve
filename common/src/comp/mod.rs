@@ -20,6 +20,7 @@ mod hardcore;
 mod health;
 mod inputs;
 pub mod inventory;
+pub mod item_body;
 pub mod invite;
 mod last;
 mod location;

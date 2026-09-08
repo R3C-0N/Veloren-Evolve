@@ -8956,6 +8956,7 @@ dependencies = [
  "rand 0.10.1",
  "serde",
  "specs",
+ "strum",
  "tracing",
  "vek 0.17.2",
 ]

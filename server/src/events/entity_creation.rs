@@ -10,7 +10,7 @@ use common::{
         self, Alignment, BehaviorCapability, Body, Group, Inventory, ItemDrops, LightEmitter,
         Object, Ori, Pos, ThrownItem, TradingBehavior, Vel, WaypointArea,
         aura::{Aura, AuraKind, AuraTarget},
-        body,
+
         buff::{BuffCategory, BuffChange, BuffData, BuffKind, BuffSource},
         item::MaterialStatManifest,
 
@@ -487,7 +487,7 @@ pub fn handle_throw(server: &mut Server, ev: ThrowEvent) {
         });
 
     if let Some(thrown_item) = thrown_item {
-        let body = Body::Item(body::item::Body::from(&thrown_item));
+        let body = Body::Item(comp::item_body::thrown_item_body(&thrown_item));
 
         let pos = ev.pos.0;
 

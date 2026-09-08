@@ -1,15 +1,9 @@
 use crate::{
-    comp::{
-        Density, Mass, Ori, ThrownItem,
-        item::{
-            Item, ItemKind, Utility,
-            armor::ArmorKind,
-            tool::{Tool, ToolKind},
-        },
-    },
+    comp::{Density, Mass, Ori},
     consts::WATER_DENSITY,
     util::Dir,
 };
+use common_vocab::outils::ToolKind;
 use common_base::enum_iter;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -58,54 +52,6 @@ enum_iter! {
 
 impl From<Body> for super::Body {
     fn from(body: Body) -> Self { super::Body::Item(body) }
-}
-
-impl From<&Item> for Body {
-    fn from(item: &Item) -> Self {
-        match &*item.kind() {
-            ItemKind::Tool(Tool { kind, .. }) => Body::Tool(*kind),
-            ItemKind::ModularComponent(_) => Body::ModularComponent,
-            ItemKind::Lantern(_) => Body::Lantern,
-            ItemKind::Glider => Body::Glider,
-            ItemKind::Armor(armor) => match armor.kind {
-                ArmorKind::Shoulder => Body::Armor(ItemArmorKind::Shoulder),
-                ArmorKind::Chest => Body::Armor(ItemArmorKind::Chest),
-                ArmorKind::Belt => Body::Armor(ItemArmorKind::Belt),
-                ArmorKind::Hand => Body::Armor(ItemArmorKind::Hand),
-                ArmorKind::Pants => Body::Armor(ItemArmorKind::Pants),
-                ArmorKind::Foot => Body::Armor(ItemArmorKind::Foot),
-                ArmorKind::Back => Body::Armor(ItemArmorKind::Back),
-                ArmorKind::Backpack => Body::Armor(ItemArmorKind::Back),
-                ArmorKind::Ring => Body::Armor(ItemArmorKind::Ring),
-                ArmorKind::Neck => Body::Armor(ItemArmorKind::Neck),
-                ArmorKind::Head => Body::Armor(ItemArmorKind::Head),
-                ArmorKind::Tabard => Body::Armor(ItemArmorKind::Tabard),
-                ArmorKind::Bag => Body::Armor(ItemArmorKind::Bag),
-            },
-            ItemKind::Utility { kind, .. } => match kind {
-                Utility::Coins => {
-                    if item.amount() > 100 {
-                        Body::CoinPouch
-                    } else {
-                        Body::Coins
-                    }
-                },
-                _ => Body::Utility,
-            },
-            ItemKind::Consumable { .. } => Body::Consumable,
-            ItemKind::Ingredient { .. } => Body::Ingredient,
-            _ => Body::Empty,
-        }
-    }
-}
-
-impl From<&ThrownItem> for Body {
-    fn from(thrown_item: &ThrownItem) -> Self {
-        match &*thrown_item.0.kind() {
-            ItemKind::Tool(Tool { kind, .. }) => Body::Thrown(*kind),
-            _ => Body::Empty,
-        }
-    }
 }
 
 impl Body {

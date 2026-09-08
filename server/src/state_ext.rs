@@ -316,7 +316,7 @@ impl StateExt for State {
 
         let spawned_at = *self.ecs().read_resource::<Time>();
 
-        let item_body = comp::body::item::Body::from(world_item.item());
+        let item_body = comp::item_body::item_body(world_item.item());
         let body = comp::Body::Item(item_body);
         let light_emitter = match &*world_item.item().kind() {
             ItemKind::Lantern(lantern) => Some(comp::LightEmitter {

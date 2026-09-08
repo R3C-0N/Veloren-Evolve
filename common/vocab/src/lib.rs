@@ -9,6 +9,7 @@
 
 pub mod consts;
 pub mod geometrie;
+pub mod outils;
 pub mod phys;
 pub mod temps;
 pub mod typed;
