@@ -460,6 +460,11 @@ pub struct Terrain<V: RectRasterableVol = TerrainChunk> {
     mesh_todo: HashMap<Vec2<i32>, ChunkMeshState>,
     mesh_todos_active: Arc<AtomicU64>,
     mesh_recv_overflow: f32,
+    // CHRONO JETABLE (etape 0) — le bout en bout d'une actualisation declenchee
+    // par un changement de bloc : instant du changement, chunks encore
+    // attendus, et leur nombre initial. Un changement suivant ecrase la mesure
+    // en cours, donc on casse un bloc a la fois.
+    chrono_bloc: Option<(std::time::Instant, hashbrown::HashSet<Vec2<i32>>, usize)>,
 
     // GPU data
     // Maps sprite kind + variant to data detailing how to render it
@@ -695,6 +700,8 @@ impl<V: RectRasterableVol> Terrain<V> {
             mesh_todo: HashMap::default(),
             mesh_todos_active: Arc::new(AtomicU64::new(0)),
             mesh_recv_overflow: 0.0,
+            // CHRONO JETABLE (etape 0)
+            chrono_bloc: None,
             sprite_render_state: sprite_render_context.state,
             sprite_globals: renderer.bind_sprite_globals(
                 global_model,
@@ -958,6 +965,9 @@ impl<V: RectRasterableVol> Terrain<V> {
         // be meshed
         span!(guard, "Add chunks with modified blocks to mesh todo list");
         // TODO: would be useful if modified blocks were grouped by chunk
+        // CHRONO JETABLE (etape 0)
+        let mut chrono_attendus = hashbrown::HashSet::new();
+        let chrono_blocs = scene_data.state.terrain_changes().modified_blocks.len();
         for (&pos, &old_block) in scene_data.state.terrain_changes().modified_blocks.iter() {
             // terrain_changes() are both set and applied during the same tick on the
             // client, so the current state is the new state and modified_blocks
@@ -1047,9 +1057,17 @@ impl<V: RectRasterableVol> Terrain<V> {
                         todo.skip_remesh &= skip_remesh;
                         todo.is_worker_active = false;
                         todo.started_tick = current_tick;
+                        // CHRONO JETABLE (etape 0)
+                        chrono_attendus.insert(neighbour_chunk_pos);
                     }
                 }
             }
+        }
+        // CHRONO JETABLE (etape 0)
+        if !chrono_attendus.is_empty() {
+            let n = chrono_attendus.len();
+            debug!("chrono depart : {chrono_blocs} bloc(s) modifie(s), {n} chunks a remailler");
+            self.chrono_bloc = Some((std::time::Instant::now(), chrono_attendus, n));
         }
         drop(guard);
 
@@ -1294,6 +1312,27 @@ impl<V: RectRasterableVol> Terrain<V> {
 
                     if response.started_tick == started_tick {
                         self.mesh_todo.remove(&response.pos);
+                    }
+
+                    // CHRONO JETABLE (etape 0)
+                    let fini = match self.chrono_bloc.as_mut() {
+                        Some((t0, attendus, total)) => {
+                            attendus.remove(&response.pos);
+                            if attendus.is_empty() {
+                                debug!(
+                                    "chrono bloc->ecran {:?} pour {} chunks",
+                                    t0.elapsed(),
+                                    total
+                                );
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        None => false,
+                    };
+                    if fini {
+                        self.chrono_bloc = None;
                     }
                 },
                 // Chunk must have been removed, or it was spawned on an old tick. Drop the mesh
