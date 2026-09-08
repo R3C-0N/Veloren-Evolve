@@ -1,4 +1,4 @@
-use crate::comp::Ori;
+use super::Ori;
 
 use super::{Plane, Projection};
 use rand::RngExt;

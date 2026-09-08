@@ -1,14 +1,11 @@
 mod cardinal_directions;
 mod color;
-pub mod dir;
 pub mod div;
 pub mod find_dist;
 mod grid_hasher;
 pub mod lines;
 mod macros;
 mod option;
-pub mod plane;
-pub mod projection;
 mod ron_recover;
 /// Contains [`SpatialGrid`] which is useful for accelerating queries of nearby
 /// entities
@@ -46,12 +43,13 @@ fn append_date(version: &str, timestamp: i64) -> String {
     }
 }
 
+// La geometrie est dans `common-vocab` : `Dir`, `Plane`, `Projection` et
+// `Ori` se tiennent mutuellement, et `comp::body` en a besoin.
+pub use common_vocab::geometrie::{Plane, Projection, dir, dir::*, plane, projection};
+
 pub use cardinal_directions::*;
 pub use color::*;
-pub use dir::*;
 pub use grid_hasher::GridHasher;
 pub use option::either_with;
-pub use plane::Plane;
-pub use projection::Projection;
 pub use ron_recover::ron_from_path_recoverable;
 pub use spatial_grid::SpatialGrid;

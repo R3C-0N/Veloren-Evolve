@@ -8,7 +8,12 @@ license.workspace = true
 [lints]
 workspace = true
 
+[dev-dependencies]
+approx = "0.5.1"
+
 [dependencies]
 serde = { workspace = true }
 vek = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
 specs = { workspace = true, features = ["serde", "storage-event-control"] }

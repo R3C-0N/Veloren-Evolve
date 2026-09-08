@@ -8952,8 +8952,11 @@ dependencies = [
 name = "veloren-common-vocab"
 version = "0.18.0"
 dependencies = [
+ "approx 0.5.1",
+ "rand 0.10.1",
  "serde",
  "specs",
+ "tracing",
  "vek 0.17.2",
 ]
 
